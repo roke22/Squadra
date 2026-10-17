@@ -51,6 +51,7 @@ const outside = join(work, 'elsewhere')
 const fakeClaude = join(work, 'fake-claude.sh')
 const pluginState = join(work, 'plugin-installed')
 const pluginCalls = join(work, 'plugin-calls')
+const marketplaceFile = join(work, 'marketplace')
 let hostStderr = ''
 
 before(async () => {
@@ -64,6 +65,17 @@ if [ "$1" = "plugin" ]; then
   case "$2" in
     list) if [ -f "${pluginState}" ]; then echo '[{"id":"squadra@squadra","version":"0.0.1","enabled":true}]'; else echo '[]'; fi ;;
     install) touch "${pluginState}" ;;
+    marketplace)
+      case "$3" in
+        add) echo "$4" > "${marketplaceFile}" ;;
+        remove) rm -f "${marketplaceFile}" "${pluginState}" ;;
+        list)
+          if [ -f "${marketplaceFile}" ]; then
+            src=$(cat "${marketplaceFile}"); repo=\${src%%#*}; ref=""
+            case "$src" in *#*) ref=\${src#*#} ;; esac
+            printf '[{"name":"squadra","source":"github","repo":"%s","ref":"%s"}]' "$repo" "$ref"
+          else echo '[]'; fi ;;
+      esac ;;
   esac
   exit 0
 fi
@@ -150,6 +162,8 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.match(calls, /plugin marketplace add roke22\/Squadra/)
   assert.match(calls, /plugin install squadra@squadra/)
   assert.deepEqual(h.info.plugin, { installed: true, enabled: true, version: '0.0.1' })
+  // Pinned to this program's release tag.
+  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), 'roke22/Squadra#v0.0.1')
 
   // Credential saved with private permissions; the plugin configured.
   const creds = JSON.parse(readFileSync(join(hostDir, 'credentials.json'), 'utf8'))
@@ -291,6 +305,30 @@ test('without the Squadra plugin, the machine refuses to open sessions', { skip:
   const ok = await dash('terminals/open', { host: hostId, spec: { name: 'np1', role: 'worker', folder: allowed } })
   assert.ok(ok.ok, ok.description)
   await dash('terminals/kill', { host: hostId, term: 'np1' })
+})
+
+test('squadra-host plugin re-pins a marketplace that follows the default branch', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  // As if the user had added it by hand, without a version.
+  writeFileSync(marketplaceFile, 'roke22/Squadra\n')
+  writeFileSync(pluginState, '')
+  writeFileSync(pluginCalls, '')
+  execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'plugin'], {
+    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
+    stdio: 'ignore',
+  })
+  const calls = readFileSync(pluginCalls, 'utf8')
+  assert.match(calls, /plugin marketplace remove squadra/)
+  assert.match(calls, /plugin marketplace add roke22\/Squadra#v0\.0\.1/)
+  assert.match(calls, /plugin install squadra@squadra/)
+  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), 'roke22/Squadra#v0.0.1')
+  assert.ok(existsSync(pluginState), 'plugin installed again')
+  // Already pinned: nothing is removed the next time.
+  writeFileSync(pluginCalls, '')
+  execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'plugin'], {
+    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
+    stdio: 'ignore',
+  })
+  assert.doesNotMatch(readFileSync(pluginCalls, 'utf8'), /marketplace remove/)
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {

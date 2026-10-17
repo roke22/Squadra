@@ -240,15 +240,30 @@ const PLUGIN_REPO = 'roke22/Squadra'
 const PLUGIN_MARKETPLACE = `${PLUGIN_REPO}#v${VERSION}`
 const PLUGIN_COMMANDS = `claude plugin marketplace add ${PLUGIN_MARKETPLACE} && claude plugin install ${PLUGIN_ID}`
 
+// The "squadra" marketplace, as Claude Code has it (or null).
 // A marketplace called "squadra" that isn't this project's would be trusted
 // blindly by "plugin install squadra@squadra": refuse it.
 async function checkMarketplace(cmd) {
   let list = []
-  try { list = JSON.parse((await run(cmd, ['plugin', 'marketplace', 'list', '--json'], { timeout: 30_000 })).stdout) } catch { return }
+  try { list = JSON.parse((await run(cmd, ['plugin', 'marketplace', 'list', '--json'], { timeout: 30_000 })).stdout) } catch { return null }
   const m = Array.isArray(list) ? list.find(x => x?.name === 'squadra') : null
   if (m && String(m.repo ?? '').toLowerCase() !== PLUGIN_REPO.toLowerCase()) {
     throw new Error(`a different marketplace named "squadra" is installed (${plain(m.repo ?? m.source ?? 'unknown source')}). Remove it with: claude plugin marketplace remove squadra`)
   }
+  return m ?? null
+}
+
+// A marketplace added without a version (or another one) follows whatever the
+// repository holds: replace it with this program's release tag. Removing a
+// marketplace uninstalls its plugins, so the plugin is installed again after.
+async function pinMarketplace(cmd, opts) {
+  const m = await checkMarketplace(cmd)
+  if (!m || String(m.ref ?? '') === `v${VERSION}`) return false
+  await run(cmd, ['plugin', 'marketplace', 'remove', 'squadra'], opts)
+  await run(cmd, ['plugin', 'marketplace', 'add', PLUGIN_MARKETPLACE], opts)
+  await run(cmd, ['plugin', 'install', PLUGIN_ID], opts)
+  log(`Squadra marketplace pinned to v${VERSION} (it was ${m.ref ? `at ${plain(m.ref)}` : 'following the default branch'})`)
+  return true
 }
 let PLUGIN = null // { installed, version, enabled }, or null when it can't be told
 
@@ -269,8 +284,9 @@ async function ensurePlugin({ update = false } = {}) {
   const opts = { timeout: 180_000 }
   let st = await pluginStatus(cmd)
   if (st === null) throw new Error(`cannot run "${cmd} plugin list": install Claude Code (or set claude_command in ${SETTINGS_FILE})`)
-  await checkMarketplace(cmd)
-  if (!st.installed) {
+  if (await pinMarketplace(cmd, opts)) {
+    st = await pluginStatus(cmd)
+  } else if (!st.installed) {
     // "add" fails if the marketplace is already there: the install decides.
     try { await run(cmd, ['plugin', 'marketplace', 'add', PLUGIN_MARKETPLACE], opts) } catch {}
     await run(cmd, ['plugin', 'install', PLUGIN_ID], opts)
