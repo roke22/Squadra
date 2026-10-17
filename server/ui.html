@@ -548,9 +548,11 @@
       termHostDown: 'The machine is disconnected. Waiting for it to come back…',
       termLinkDown: 'Reconnecting to the server…',
       termLoading: 'Loading the terminal…',
-      termLoadFailed: 'Could not load the terminal component (xterm.js from cdn.jsdelivr.net).',
+      termLoadFailed: 'Could not load the terminal component (/vendor/xterm.js on this server).',
       onHost: h => `on ${h}`,
       back: 'Back',
+      openLink: 'Open this link from the terminal in a new tab?',
+      httpWarn: 'This address is plain http: machines refuse it unless you add --insecure, and only do that on a trusted private network. Serve the dashboard over https.',
     },
     es: {
       offline: ago => `Desconectada · vista hace ${ago}`,
@@ -733,9 +735,11 @@
       termHostDown: 'La máquina está desconectada. Esperando a que vuelva…',
       termLinkDown: 'Reconectando con el servidor…',
       termLoading: 'Cargando el terminal…',
-      termLoadFailed: 'No se ha podido cargar el componente del terminal (xterm.js desde cdn.jsdelivr.net).',
+      termLoadFailed: 'No se ha podido cargar el componente del terminal (/vendor/xterm.js de este servidor).',
       onHost: h => `en ${h}`,
       back: 'Volver',
+      openLink: '¿Abrir este enlace del terminal en una pestaña nueva?',
+      httpWarn: 'Esta dirección es http sin cifrar: las máquinas la rechazan salvo que añadas --insecure, y hazlo solo en una red privada de confianza. Sirve el panel por https.',
     },
   }
   const T = I18N[LANG]
@@ -764,7 +768,8 @@
     const s = Math.max(0, Math.round(ms / 1000))
     return s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
   }
-  const kfmt = n => n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+  const kfmt = v => { const n = Number(v) || 0; return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n) }
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : 0)
   const base = p => String(p ?? '').split('/').filter(Boolean).pop() ?? ''
   const roleOf = name => sessions.get(name)?.role ?? ''
 
@@ -998,7 +1003,7 @@
       switch (it.kind) {
         case 'prompt': return `<div class="row-user"><div class="bubble-head"><b>${T.you}</b> · ${hhmm(it.ts)}</div><div class="bubble">${esc(it.text)}</div></div>`
         case 'text': return `<div class="assistant">${md(it.text)}</div>`
-        case 'stop': return `<div class="divider">${T.turnEnded} · ${hhmm(it.ts)}${it.background_tasks ? ` · ${T.background(it.background_tasks)}` : ''}</div>`
+        case 'stop': return `<div class="divider">${T.turnEnded} · ${hhmm(it.ts)}${num(it.background_tasks) ? ` · ${T.background(num(it.background_tasks))}` : ''}</div>`
         case 'notification': return `<div class="sysline warn">⏳ ${esc(it.text || it.type)} · ${hhmm(it.ts)}</div>`
         case 'compact': return `<div class="sysline">${T.compactingLine} · ${hhmm(it.ts)}</div>`
         case 'compacted': return `<div class="sysline">${T.compactedLine(it.trigger !== 'manual')} · ${hhmm(it.ts)}${it.summary ? `<details style="text-align:left"><summary>${T.compactSummary}</summary><pre style="white-space:pre-wrap;font:12px/1.4 var(--mono);background:var(--panel-2);padding:8px;border-radius:6px;max-height:300px;overflow:auto">${esc(it.summary)}</pre></details>` : ''}</div>`
@@ -1166,17 +1171,19 @@
   let mosaicPanes = new Map() // name -> {pane, view}
   let sessionView = null
 
+  const dec = v => { try { return decodeURIComponent(v) } catch { return v } }
+
   function currentRoute() {
     if (location.hash === '#/archived') return { view: 'archived' }
     if (location.hash === '#/hosts') return { view: 'hosts' }
     const q = location.hash.match(/^#\/q\/(.+)$/)
-    if (q) return { view: 'mosaic', squad: decodeURIComponent(q[1]) }
+    if (q) return { view: 'mosaic', squad: dec(q[1]) }
     const h = location.hash.match(/^#\/h\/(.+)$/)
-    if (h) return { view: 'hosts', host: decodeURIComponent(h[1]) }
+    if (h) return { view: 'hosts', host: dec(h[1]) }
     const t = location.hash.match(/^#\/t\/([^/]+)\/(.+)$/)
-    if (t) return { view: 'terminal', host: decodeURIComponent(t[1]), term: decodeURIComponent(t[2]) }
+    if (t) return { view: 'terminal', host: dec(t[1]), term: dec(t[2]) }
     const m = location.hash.match(/^#\/s\/(.+)$/)
-    return m ? { view: 'session', name: decodeURIComponent(m[1]) } : { view: 'mosaic' }
+    return m ? { view: 'session', name: dec(m[1]) } : { view: 'mosaic' }
   }
 
   function roleTag(role) {
@@ -1222,7 +1229,7 @@
     } else {
       const s = sessions.get(r.name)
       const a = s?.activity ?? {}
-      $('topTitle').innerHTML = `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)}${s?.archived_at ? ' <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>' : ''}`
+      $('topTitle').innerHTML = `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)}${s?.archived_at ? ` <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>` : ''}`
       $('topSub').textContent = [a.cwd, a.context_tokens ? T.context(kfmt(a.context_tokens)) + (a.context_pct != null ? ` (${T.contextPct(a.context_pct)})` : '') : '', s?.role === 'worker' && s.coordinator ? T.coordinatorOf(s.coordinator) : ''].filter(Boolean).join(' · ')
       const acts = []
       const where = terminalOf(r.name)
@@ -1268,10 +1275,10 @@
   // Context gauge: tokens and % of the auto-compact point; amber from 60%, red from 80%.
   function ctxBadge(a) {
     if (!a.context_tokens) return ''
-    const pct = a.context_pct
+    const pct = a.context_pct == null ? null : num(a.context_pct)
     const cls = pct == null ? '' : pct >= 80 ? 'hot' : pct >= 60 ? 'warm' : ''
     const title = pct != null ? T.contextTitle(pct, kfmt(a.context_tokens), kfmt(a.compact_at ?? 0)) : T.context(kfmt(a.context_tokens))
-    return `<span class="ctx ${cls}" title="${esc(title)}">${kfmt(a.context_tokens)}${pct != null ? ` · ${pct}%` : ' tok'}</span>`
+    return `<span class="ctx ${cls}" title="${esc(title)}">${esc(kfmt(a.context_tokens))}${pct != null ? ` · ${esc(pct)}%` : ' tok'}</span>`
   }
 
   function paneClass(s) {
@@ -1723,6 +1730,12 @@
         d.el.querySelector('[data-step="1"]').hidden = true
         d.el.querySelector('[data-step="2"]').hidden = false
         d.el.querySelector('.cmd').textContent = r.command
+        if (/^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)) {
+          const w = document.createElement('p')
+          w.style.cssText = 'color:var(--err);font-size:13px;margin:0 0 10px'
+          w.textContent = T.httpWarn
+          d.el.querySelector('.cmd').after(w)
+        }
         d.el.querySelector('.valid').textContent = T.codeValid(hhmm(r.expires_at))
         hostListeners.add(listener)
         d.el.querySelector('[data-copy]').addEventListener('click', async ev => {
@@ -1819,13 +1832,13 @@
   let xtermReady = null
   function loadXterm() {
     if (xtermReady) return xtermReady
-    const cdn = 'https://cdn.jsdelivr.net/npm/'
+    // Served by squadra-server itself (vendor/): no third-party scripts.
     const css = document.createElement('link')
     css.rel = 'stylesheet'
-    css.href = `${cdn}@xterm/xterm@5.5.0/css/xterm.css`
+    css.href = '/vendor/xterm.css'
     document.head.appendChild(css)
     const script = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s) })
-    xtermReady = script(`${cdn}@xterm/xterm@5.5.0/lib/xterm.js`).then(() => script(`${cdn}@xterm/addon-fit@0.10.0/lib/addon-fit.js`))
+    xtermReady = script('/vendor/xterm.js').then(() => script('/vendor/addon-fit.js'))
     xtermReady.catch(() => { xtermReady = null })
     return xtermReady
   }
@@ -1881,7 +1894,11 @@
 
     start() {
       const dark = { background: '#161513', foreground: '#ecebe7', cursor: '#e0855f', selectionBackground: '#4a4740' }
-      this.x = new window.Terminal({ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13.5, cursorBlink: true, scrollback: 5000, theme: dark, allowProposedApi: false })
+      this.x = new window.Terminal({
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13.5, cursorBlink: true, scrollback: 5000, theme: dark, allowProposedApi: false,
+        // Links printed by the program (OSC 8): only http(s), after a confirmation, in a new tab.
+        linkHandler: { activate: (e, uri) => { if (/^https?:\/\//i.test(uri) && confirm(`${T.openLink}\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer') } },
+      })
       this.fit = new window.FitAddon.FitAddon()
       this.x.loadAddon(this.fit)
       this.x.open(this.box)
@@ -1988,7 +2005,7 @@
       return
     }
     if (type === 'event' || type === 'message') {
-      const it = type === 'event' ? { t: 'event', ...data } : { t: 'message', ts: data.created_at, ...data }
+      const it = type === 'event' ? { ...data, t: 'event' } : { ...data, t: 'message', ts: data.created_at }
       if (it.t === 'event' && it.kind === 'usage') return
       let shown = false
       for (const v of views) if (v.live(it)) shown = true
@@ -2072,7 +2089,7 @@
     const b = e.target.closest('[data-go]')
     if (!b) return
     // The machine's terminal is where a permission is answered, when there is one.
-    const name = decodeURIComponent(b.dataset.go.slice(4))
+    const name = dec(b.dataset.go.slice(4))
     const where = terminalOf(name)
     location.hash = where && sessions.get(name) && status(sessions.get(name)).waiting ? `#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}` : b.dataset.go
   })

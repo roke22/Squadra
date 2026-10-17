@@ -41,21 +41,47 @@ const LIMITS = {
 const SECRET_PATTERNS = [
   /\b(sk-[A-Za-z0-9_-]{16,})/g,                       // Anthropic/OpenAI style keys
   /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g,
-  /\b(AKIA[0-9A-Z]{16})\b/g,                           // AWS access key id
+  /\b((?:A3T[A-Z0-9]|AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16})\b/g, // AWS key ids
+  /\b(AIza[0-9A-Za-z_-]{35})/g,                        // Google API key
+  /\b((?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,})/g,  // Stripe
   /\b(xox[abprs]-[A-Za-z0-9-]{10,})/g,                 // Slack
+  /\b(npm_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,})/g, // npm, GitLab
   /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, // JWT
-  /\b((?:sq|sw)_[A-Za-z0-9_-]{20,})/g,                 // Squadra identity secrets
+  /\b((?:sq|sw|sh|sj)_[A-Za-z0-9_-]{20,})/g,           // Squadra secrets (identity, host, join)
 ]
-const KEY_VALUE = /\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization)(["']?\s*[:=]\s*["']?)([^\s"',;]{4,})/gi
-const BEARER = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/g
+// Private keys, whole block (or up to the end when the output is cut).
+const PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g
+// user:password@ in URLs (postgres://, https://, …).
+const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@]+):([^\s@/]+)@/gi
+// NAME=value where the name mentions a secret, with any prefix or suffix:
+// password=…, DB_PASSWORD=…, SQUADRA_SERVER_TOKEN=…, AWS_SECRET_ACCESS_KEY=…
+const KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credentials?|auth)[A-Za-z0-9_.-]{0,40})(["']?\s*[:=]\s*["']?)([^\s"',;]{4,})/gi
+const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g
 
+const REDACT_MAX = 100_000 // everything sent is clipped well below this anyway
 export function redact(text) {
   if (typeof text !== 'string' || !text) return text
-  let out = text
+  let out = text.length > REDACT_MAX ? text.slice(0, REDACT_MAX) : text
+  out = out.replace(PEM, '[REDACTED PRIVATE KEY]')
   for (const re of SECRET_PATTERNS) out = out.replace(re, '[REDACTED]')
-  out = out.replace(KEY_VALUE, (_, k, sep) => `${k}${sep}[REDACTED]`)
+  out = out.replace(URL_CREDENTIALS, '$1$2:[REDACTED]@')
   out = out.replace(BEARER, '$1 [REDACTED]')
+  out = out.replace(KEY_VALUE, (_, k, sep) => `${k}${sep}[REDACTED]`)
   return out
+}
+
+// Commands and files whose content is likely to be secrets: their output (or,
+// for writes, their content) is not sent at all, whatever the level.
+const SECRET_FILE = /(^|[\/\s'"=])(\.env(\.[\w.-]+)?|id_(rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(pem|key|p12|pfx)|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|credentials(\.json)?|\.aws\/|\.ssh\/|\.kube\/config)(?=$|[\s'";|&)])/i
+const SECRET_COMMAND = /(^|[\s;|&(])(printenv|env|set|export\s+-p)(?=$|[\s;|&)])|\bsecurity\s+find-[a-z-]*password\b|\bgpg\b.*--export-secret|\bkubectl\s+get\s+secrets?\b/i
+export function touchesSecrets(tool, toolInput) {
+  const i = toolInput && typeof toolInput === 'object' ? toolInput : {}
+  if (tool === 'Bash') {
+    const cmd = String(i.command ?? '')
+    return SECRET_FILE.test(cmd) || SECRET_COMMAND.test(cmd)
+  }
+  const path = String(i.file_path ?? i.notebook_path ?? i.path ?? '')
+  return path !== '' && SECRET_FILE.test(path)
 }
 
 function clip(text, max) {
@@ -284,7 +310,9 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           id: input.tool_use_id,
           tool,
           summary: clip(redact(summarizeTool(tool, input.tool_input, cwd)), limits.summary),
-          ...(limits.detail ? { detail: clip(redact(JSON.stringify(input.tool_input ?? {}, null, 2)), limits.detail) } : {}),
+          // Writing a .env or a key: its content is not sent.
+          ...(limits.detail && !(tool !== 'Bash' && touchesSecrets(tool, input.tool_input))
+            ? { detail: clip(redact(JSON.stringify(input.tool_input ?? {}, null, 2)), limits.detail) } : {}),
         })
       }
       case 'PostToolUse': {
@@ -297,7 +325,9 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           ok: true,
           summary: summarizeResult(tool, input.tool_response),
           ...(input.duration_ms != null ? { duration_ms: input.duration_ms } : {}),
-          ...(limits.detail ? { detail: clipMiddle(redact(resultDetail(tool, input.tool_response)), limits.detail) } : {}),
+          ...(limits.detail
+            ? { detail: touchesSecrets(tool, input.tool_input) ? '(output not sent: this command or file may contain secrets)' : clipMiddle(redact(resultDetail(tool, input.tool_response)), limits.detail) }
+            : {}),
         })
       }
       case 'PostToolUseFailure': {
@@ -311,7 +341,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           interrupted: input.is_interrupt === true,
           summary: clip(redact(error.split('\n')[0]), 200),
           ...(input.duration_ms != null ? { duration_ms: input.duration_ms } : {}),
-          ...(limits.detail ? { detail: clipMiddle(redact(error), limits.detail) } : {}),
+          ...(limits.detail && !touchesSecrets(String(input.tool_name ?? ''), input.tool_input) ? { detail: clipMiddle(redact(error), limits.detail) } : {}),
         })
       }
       case 'Notification':

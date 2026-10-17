@@ -61,6 +61,7 @@ const { values: ARGS } = (() => {
         'tls-cert': { type: 'string' },
         'tls-key': { type: 'string' },
         'http-port': { type: 'string' },
+        'trust-proxy': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -89,6 +90,8 @@ HTTPS, built in (no reverse proxy needed):
   --tls-key <file>     Its private key (PEM). Env: TLS_KEY
                        Both are reloaded automatically when the files change.
   --http-port <n>      Port for ACME challenges and the HTTP→HTTPS redirect (default 80)
+  --trust-proxy        Behind a reverse proxy: take the client address from X-Forwarded-For
+                       (for rate limits). Only with a proxy that sets it. Env: TRUST_PROXY=1
 
 With HTTPS the server listens on all interfaces and port 443 by default.
 
@@ -109,6 +112,7 @@ const TLS = TLS_MODE !== 'http'
 const ACME_DIRECTORY = ARGS['acme-directory'] ?? process.env.ACME_DIRECTORY ?? (ARGS['acme-staging'] ? LETS_ENCRYPT_STAGING : LETS_ENCRYPT)
 const ACME_EMAIL = ARGS['acme-email'] ?? process.env.ACME_EMAIL ?? ''
 const HTTP_PORT = Number(ARGS['http-port'] ?? process.env.HTTP_PORT ?? 80)
+const TRUST_PROXY = ARGS['trust-proxy'] === true || process.env.TRUST_PROXY === '1'
 
 const PORT = Number(ARGS.port ?? process.env.PORT ?? (TLS ? 443 : 7787))
 const HOST = ARGS['all-interfaces'] ? '0.0.0.0' : (ARGS.host ?? process.env.HOST ?? (TLS ? '0.0.0.0' : '127.0.0.1'))
@@ -136,11 +140,42 @@ if (PUBLIC_URL && !/^https?:\/\/[^\s/]+/.test(PUBLIC_URL)) {
 const MAX_TEXT = 32_000                    // per message, chars
 const MAX_JSON_BODY = 1024 * 1024          // 1 MB
 const MAX_FILE_BYTES = 50 * 1024 * 1024    // 50 MB
+const UPLOAD_BUDGET_BYTES = 500 * 1024 * 1024 // per identity per hour
+const MAX_IDENTITIES = Number(process.env.SQUADRA_MAX_SESSIONS ?? 500)
 const UPDATE_TTL_MS = 24 * 60 * 60 * 1000  // like Telegram: unconfirmed updates kept 24h
 const FILE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const EVENT_TTL_MS = Number(process.env.OBSERVE_TTL_HOURS ?? 24) * 60 * 60 * 1000 // live-observation events
 const UI_FILE = new URL('./ui.html', import.meta.url)
+// xterm.js for the web terminal, vendored (see vendor/README.md).
+const VENDOR_FILES = {
+  '/vendor/xterm.js': ['./vendor/xterm.js', 'text/javascript; charset=utf-8'],
+  '/vendor/addon-fit.js': ['./vendor/addon-fit.js', 'text/javascript; charset=utf-8'],
+  '/vendor/xterm.css': ['./vendor/xterm.css', 'text/css; charset=utf-8'],
+}
+
+// The dashboard page: a strict Content-Security-Policy (only its own inline
+// script, by hash, and scripts from this server), and no framing.
+function pageHeaders(html) {
+  const text = html.toString('utf8')
+  const hashes = [...text.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(m => `'sha256-${createHash('sha256').update(m[1], 'utf8').digest('base64')}'`)
+  return {
+    'Content-Security-Policy': [
+      "default-src 'none'",
+      `script-src 'self' ${hashes.join(' ')}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ].join('; '),
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+  }
+}
 // Single source of truth: server/package.json.
 const VERSION = (() => {
   try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version } catch { return '0.0.0' }
@@ -177,6 +212,29 @@ const { token: SERVER_TOKEN, source: TOKEN_SOURCE } = (() => {
   writeFileSync(TOKEN_FILE, generated + '\n', { mode: 0o600 })
   return { token: generated, source: `${TOKEN_FILE} (new)` }
 })()
+// Join token: lets a machine register NEW session names (POST /register
+// without reset) and nothing else. It is what plugins and enrolled machines
+// keep on disk; the server token above is the admin credential (dashboard,
+// web terminals, /admin, rotating identities) and never leaves the browser.
+const JOIN_TOKEN_FILE = join(DATA_DIR, 'join-token')
+let { token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE } = (() => {
+  const fromEnv = process.env.SQUADRA_JOIN_TOKEN
+  if (fromEnv) {
+    if (fromEnv.length < 16 || fromEnv === SERVER_TOKEN) {
+      process.stderr.write('squadra-server: SQUADRA_JOIN_TOKEN must be at least 16 chars and differ from the server token\n')
+      process.exit(1)
+    }
+    return { token: fromEnv, source: 'env SQUADRA_JOIN_TOKEN' }
+  }
+  try {
+    const saved = readFileSync(JOIN_TOKEN_FILE, 'utf8').trim()
+    if (saved.length >= 16 && saved !== SERVER_TOKEN) return { token: saved, source: JOIN_TOKEN_FILE }
+  } catch {}
+  const generated = `sj_${randomBytes(24).toString('hex')}`
+  writeFileSync(JOIN_TOKEN_FILE, generated + '\n', { mode: 0o600 })
+  return { token: generated, source: `${JOIN_TOKEN_FILE} (new)` }
+})()
+
 const db = new DatabaseSync(join(DATA_DIR, 'squadra.db'))
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -190,6 +248,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS group_invites (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    invited_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (group_id, name)
   );
   CREATE TABLE IF NOT EXISTS group_members (
     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -263,6 +328,8 @@ for (const [table, column, type] of [
   ['messages', 'system', 'INTEGER NOT NULL DEFAULT 0'], // notices generated by the server
   ['identities', 'cleared_at', 'INTEGER'], // dashboard: the session's chat was cleared at (ms)
   ['identities', 'archived_at', 'INTEGER'], // dashboard: archived (hidden from the main views) at (ms)
+  ['groups', 'owner', 'TEXT'],
+  ['identities', 'host_id', 'TEXT'],       // the machine that opened it from the dashboard (its name is reserved for it)             // who created the group (null: created before groups were private)
 ]) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name)
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
@@ -357,6 +424,16 @@ function messageObj(row, { withReply = true } = {}) {
   return msg
 }
 
+// A message is visible to whoever sent it, received it, or is in its group —
+// and only from that identity's creation on: a name deleted and registered
+// again doesn't inherit the old one's history.
+const identityCreatedAt = name => db.prepare('SELECT created_at FROM identities WHERE name = ?').get(name)?.created_at ?? Infinity
+function canSeeMessage(name, row) {
+  if (row.created_at < identityCreatedAt(name)) return false
+  if (row.from_name === name || row.target === name) return true
+  return row.target.startsWith('#') && !!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(row.target, name)
+}
+
 // Who receives a message sent to `target` by `from`.
 function recipientsOf(target, from) {
   if (target.startsWith('#')) {
@@ -381,7 +458,30 @@ function resolveTarget(chatId, from) {
 
 // --- rate limit --------------------------------------------------------------
 
-const sendLog = new Map() // name -> timestamps (ms) of recent sends
+const sendLog = new Map() // name -> timestamps (ms) of recent sends (messages, edits, reactions, groups)
+
+// A sliding-window counter: at most `max` hits per `windowMs` for a key.
+const windows = new Map() // bucket -> Map(key -> timestamps)
+function allow(bucket, key, max, windowMs = 60_000) {
+  const t = now()
+  if (!windows.has(bucket)) windows.set(bucket, new Map())
+  const m = windows.get(bucket)
+  const recent = (m.get(key) ?? []).filter(x => t - x < windowMs)
+  if (recent.length >= max) { m.set(key, recent); return false }
+  recent.push(t)
+  m.set(key, recent)
+  return true
+}
+setInterval(() => {
+  const t = now()
+  for (const m of windows.values()) for (const [k, v] of m) if (!v.some(x => t - x < 3600_000)) m.delete(k)
+}, 10 * 60_000).unref()
+
+// IPv6 clients are counted per /64 (one machine usually has a whole /64).
+function ipKey(ip) {
+  const a = String(ip ?? '?').replace(/^::ffff:/, '')
+  return a.includes(':') ? a.split(':').slice(0, 4).join(':') + '::/64' : a
+}
 function rateLimit(name) {
   const t = now()
   const recent = (sendLog.get(name) ?? []).filter(x => t - x < 60_000)
@@ -481,9 +581,10 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
   let reply = null
   if (replyTo != null && replyTo !== '') {
     reply = Number(replyTo)
-    if (!Number.isInteger(reply) || !db.prepare('SELECT 1 FROM messages WHERE id = ?').get(reply)) {
-      throw bad('message to be replied not found')
-    }
+    // Only a message the sender can see: otherwise the reply would hand its
+    // text back (reply_to_message) to someone who never received it.
+    const replied = Number.isInteger(reply) ? db.prepare('SELECT * FROM messages WHERE id = ?').get(reply) : null
+    if (!replied || !canSeeMessage(from, replied)) throw bad('message to be replied not found')
   }
   const recipients = recipientsOf(target, from)
   const offline = recipients.filter(r => !isOnline(r)).map(r => ({
@@ -524,8 +625,44 @@ const activity = new Map() // name -> derived state
 
 // An event as seen by the dashboard. The plugin's own "id" (tool use id or
 // subagent id) is exposed as "ref"; "id" is always the event's row id.
+// What each kind of event may carry, and of which type. Anything else is
+// dropped — the dashboard renders these fields, so nothing a session sends
+// reaches it untyped (and no event can pass itself off as a message).
+const STR = max => v => (typeof v === 'string' ? v.slice(0, max) : undefined)
+const INT = v => (Number.isSafeInteger(v) && v >= 0 ? v : undefined)
+const PCT = v => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : undefined)
+const BOOL = v => (typeof v === 'boolean' ? v : undefined)
+const EVENT_COMMON = { cwd: STR(1000), agent: STR(100) }
+const EVENT_SCHEMA = {
+  observe_start: { level: STR(20) },
+  session_start: { source: STR(40), model: STR(100) },
+  prompt: { text: STR(20_000), channel: BOOL },
+  tool_start: { id: STR(100), tool: STR(200), summary: STR(2000), detail: STR(20_000) },
+  tool_end: { id: STR(100), tool: STR(200), ok: BOOL, interrupted: BOOL, summary: STR(2000), duration_ms: INT, detail: STR(20_000) },
+  text: { text: STR(20_000) },
+  usage: { context_tokens: INT, model: STR(100), context_window: INT, compact_at: INT, context_pct: PCT },
+  notification: { type: STR(60), text: STR(1000) },
+  subagent_start: { id: STR(100) },
+  subagent_stop: { id: STR(100), text: STR(20_000) },
+  stop: { background_tasks: INT },
+  compact: { trigger: STR(20) },
+  compacted: { trigger: STR(20), summary: STR(20_000) },
+  session_end: { reason: STR(100) },
+}
+function cleanEvent(kind, data) {
+  const out = {}
+  const schema = { ...EVENT_COMMON, ...(EVENT_SCHEMA[kind] ?? {}) }
+  if (!data || typeof data !== 'object') return out
+  for (const [k, check] of Object.entries(schema)) {
+    if (!Object.hasOwn(data, k)) continue
+    const v = check(data[k])
+    if (v !== undefined) out[k] = v
+  }
+  return out
+}
+
 function eventView(rowId, session, ts, kind, data) {
-  const { id: ref, ...rest } = data
+  const { id: ref, ...rest } = cleanEvent(kind, data)
   return { ...rest, ...(ref != null ? { ref } : {}), id: rowId, session, ts, kind }
 }
 
@@ -574,15 +711,28 @@ function applyEvent(name, ev) {
   if (a.state !== 'waiting') a.waiting = null
 }
 
+// Per identity: at most 120 observe calls and 3000 events a minute.
+const observeLog = new Map() // name -> [{ t, n }]
+function observeBudget(name, n) {
+  const t = now()
+  const recent = (observeLog.get(name) ?? []).filter(x => t - x.t < 60_000)
+  const events = recent.reduce((sum, x) => sum + x.n, 0)
+  if (recent.length >= 120 || events + n > 3000) throw new ApiError(429, 'Too Many Requests: observation rate limit', { parameters: { retry_after: 10 } })
+  recent.push({ t, n })
+  observeLog.set(name, recent)
+}
+
 function observe(name, p) {
   const events = Array.isArray(p.events) ? p.events : null
   if (!events || events.length > 200) throw bad('events must be an array of at most 200 items')
+  observeBudget(name, events.length)
   const insert = db.prepare('INSERT INTO events (session, ts, kind, data) VALUES (?, ?, ?, ?)')
   let stored = 0
   for (const ev of events) {
     if (!ev || typeof ev !== 'object' || !EVENT_KINDS.has(ev.kind)) continue
     const ts = Number.isFinite(ev.ts) ? Math.min(ev.ts, now() + 5000) : now()
-    const { kind, ts: _ts, ...rest } = ev
+    const kind = ev.kind
+    const rest = cleanEvent(kind, ev)
     const data = JSON.stringify(rest)
     if (data.length > MAX_EVENT_JSON) continue
     const info = insert.run(name, ts, kind, data)
@@ -601,13 +751,21 @@ function observe(name, p) {
 // Tell a worker's coordinator when its context is nearly full (once per fill-up)
 // and when it compacts. Only live events, never the startup replay.
 const CONTEXT_WARN_PCT = 80
+const NOTICE_COOLDOWN_MS = Number(process.env.SQUADRA_NOTICE_COOLDOWN_MS ?? 5 * 60_000) // per worker, per kind
 function contextNotices(name, ev, wasWarned) {
   const a = activityOf(name)
   if (ev.kind === 'usage' && ev.context_pct != null && ev.context_pct >= CONTEXT_WARN_PCT && !wasWarned) {
     a.context_warned = true
+    // Its own cooldown too: compaction events reset the flag.
+    if (now() - (a.context_notice_at ?? 0) < NOTICE_COOLDOWN_MS) return
+    a.context_notice_at = now()
     announce(name, `📈 ${name} has used ${ev.context_pct}% of its context; it will auto-compact soon. Avoid giving it a large new task now, or prefer a worker with more room.`)
   }
   if (ev.kind === 'compacted') {
+    // At most one compaction notice every 5 minutes per worker: alternating
+    // usage/compacted events must not flood the coordinator.
+    if (now() - (a.compact_notice_at ?? 0) < NOTICE_COOLDOWN_MS) return
+    a.compact_notice_at = now()
     announce(name, `🗜️ ${name} compacted its context (${ev.trigger === 'manual' ? 'manual' : 'automatic'}). Its Squadra role and the latest messages it received were restored; if its task depends on details only you know, send them to it again.`)
   }
 }
@@ -629,11 +787,13 @@ const methods = {
   },
 
   editMessageText(name, p) {
+    rateLimit(name)
     const id = Number(p.message_id)
     if (typeof p.text !== 'string' || !p.text) throw bad('text is required')
     if (p.text.length > MAX_TEXT) throw bad(`message is too long (max ${MAX_TEXT} chars)`)
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id)
-    if (!row || row.from_name !== name || row.target !== String(p.chat_id)) throw bad('message to edit not found')
+    // Server notices carry the worker's name but are the server's words: not editable.
+    if (!row || row.system || row.from_name !== name || row.target !== String(p.chat_id)) throw bad('message to edit not found')
     if (row.file_id) throw bad('there is no text in the message to edit')
     if (row.text === p.text) throw bad('message is not modified')
     db.prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?').run(p.text, now(), id)
@@ -643,17 +803,15 @@ const methods = {
   },
 
   setMessageReaction(name, p) {
+    rateLimit(name)
     const id = Number(p.message_id)
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id)
-    if (!row) throw bad('message not found')
     // You can react to messages you received: DMs addressed to you, or groups you're in.
-    const visible = row.target === name ||
-      (row.target.startsWith('#') && db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(row.target, name))
-    if (!visible) throw bad('message not found')
+    if (!row || row.from_name === name || !canSeeMessage(name, row)) throw bad('message not found')
     const reaction = Array.isArray(p.reaction) ? p.reaction : []
-    const emoji = reaction[0]?.emoji
+    const emoji = typeof reaction[0]?.emoji === 'string' ? reaction[0].emoji.slice(0, 16) : null
     if (emoji) {
-      db.prepare('INSERT OR REPLACE INTO reactions (message_id, from_name, emoji, created_at) VALUES (?, ?, ?, ?)').run(id, name, String(emoji).slice(0, 16), now())
+      db.prepare('INSERT OR REPLACE INTO reactions (message_id, from_name, emoji, created_at) VALUES (?, ?, ?, ?)').run(id, name, emoji, now())
     } else {
       db.prepare('DELETE FROM reactions WHERE message_id = ? AND from_name = ?').run(id, name)
     }
@@ -665,7 +823,7 @@ const methods = {
           user: userObj(name),
           date: unix(now()),
           old_reaction: [],
-          new_reaction: emoji ? [{ type: 'emoji', emoji: String(emoji) }] : [],
+          new_reaction: emoji ? [{ type: 'emoji', emoji }] : [],
         },
       })
     }
@@ -674,7 +832,8 @@ const methods = {
 
   sendChatAction(name, p) {
     resolveTarget(p.chat_id, name)
-    chatActions.set(`${name}->${p.chat_id}`, { action: String(p.action ?? 'typing'), at: now() })
+    const action = ['typing', 'upload_document', 'upload_photo'].includes(p.action) ? p.action : 'typing'
+    chatActions.set(`${name}->${p.chat_id}`, { action, at: now() })
     return true
   },
 
@@ -687,6 +846,7 @@ const methods = {
   // A session claims its name before polling. First come, first served: while
   // the session holding the name is online, any other session is refused.
   claimSession(name, p) {
+    if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
     const instance = String(p.instance ?? '')
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(instance)) throw bad('instance is required')
     const lease = leases.get(name)
@@ -709,6 +869,7 @@ const methods = {
 
   // reason: 'logout' (the user left) or 'exit' (Claude Code is closing).
   releaseSession(name, p) {
+    if (!allow('release', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
     const lease = leases.get(name)
     if (lease && lease.instance === String(p.instance ?? '')) {
       if (!lease.downNotified) announceDown(name, p.reason === 'exit' ? 'exit' : 'logout')
@@ -720,17 +881,48 @@ const methods = {
     return true
   },
 
+  // Groups are private: whoever creates one owns it, and others join only
+  // after a member invites them (inviteToGroup).
   joinGroup(name, p) {
+    rateLimit(name)
     const id = String(p.chat_id ?? '')
     if (!GROUP_RE.test(id)) throw bad('group id must look like #name')
-    db.prepare('INSERT OR IGNORE INTO groups (id, created_at) VALUES (?, ?)').run(id, now())
+    const members = () => db.prepare('SELECT name FROM group_members WHERE group_id = ? ORDER BY name').all(id).map(r => r.name)
+    const ownerOf = () => db.prepare('SELECT owner FROM groups WHERE id = ?').get(id)?.owner ?? null
+    // Not just "true": whether this created the group, who owns it and who is in
+    // it, so a session can tell if someone set the group up before it.
+    if (db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(id, name)) return { created: false, owner: ownerOf(), members: members() }
+    const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(id)
+    let created = false
+    if (!group) {
+      db.prepare('INSERT INTO groups (id, created_at, owner) VALUES (?, ?, ?)').run(id, now(), name)
+      created = true
+    } else if (!db.prepare('SELECT 1 FROM group_invites WHERE group_id = ? AND name = ?').get(id, name)) {
+      throw new ApiError(403, `Forbidden: ${id} is private; a member has to invite "${name}" first`, { parameters: { reason: 'not_invited' } })
+    }
     db.prepare('INSERT OR IGNORE INTO group_members (group_id, name) VALUES (?, ?)').run(id, name)
+    db.prepare('DELETE FROM group_invites WHERE group_id = ? AND name = ?').run(id, name)
+    return { created, owner: created ? name : ownerOf(), members: members() }
+  },
+
+  inviteToGroup(name, p) {
+    rateLimit(name)
+    const id = String(p.chat_id ?? '')
+    const who = String(p.name ?? '')
+    if (!GROUP_RE.test(id)) throw bad('group id must look like #name')
+    if (!NAME_RE.test(who) || !identityExists(who)) throw bad('no session with that name')
+    if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(id, name)) {
+      throw new ApiError(403, `Forbidden: not a member of ${id}`)
+    }
+    db.prepare('INSERT OR IGNORE INTO group_invites (group_id, name, invited_by, created_at) VALUES (?, ?, ?, ?)').run(id, who, name, now())
     return true
   },
 
   leaveChat(name, p) {
     const id = String(p.chat_id ?? '')
     db.prepare('DELETE FROM group_members WHERE group_id = ? AND name = ?').run(id, name)
+    // The last one out closes the group (it can be created again from scratch).
+    if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ?').get(id)) db.prepare('DELETE FROM groups WHERE id = ?').run(id)
     return true
   },
 
@@ -741,10 +933,11 @@ const methods = {
       if (!members.includes(name)) throw bad('chat not found')
       return { id, type: 'group', title: id, members }
     }
-    if (!identityExists(id)) throw bad('chat not found')
+    const ident = db.prepare('SELECT created_at FROM identities WHERE name = ?').get(id)
+    if (!ident) throw bad('chat not found')
     const a = activity.get(id)
     return {
-      id, type: 'private', username: id, ...presenceOf(id),
+      id, type: 'private', username: id, created_at: unix(ident.created_at), ...presenceOf(id),
       context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
     }
   },
@@ -753,10 +946,8 @@ const methods = {
 const chatActions = new Map()
 
 function canSeeFile(name, fileId) {
-  const msgs = db.prepare('SELECT target, from_name FROM messages WHERE file_id = ?').all(fileId)
-  return msgs.some(m =>
-    m.from_name === name || m.target === name ||
-    (m.target.startsWith('#') && db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(m.target, name)))
+  const msgs = db.prepare('SELECT * FROM messages WHERE file_id = ?').all(fileId)
+  return msgs.some(m => canSeeMessage(name, m))
 }
 
 // Presence: a plugin is "online" while it long-polls. It dies with its Claude
@@ -810,6 +1001,8 @@ function checkLease(name, instance) {
 function announce(worker, text) {
   const row = db.prepare('SELECT role, coordinator FROM identities WHERE name = ?').get(worker)
   if (row?.role !== 'worker' || !row.coordinator || !identityExists(row.coordinator)) return
+  // At most 10 notices a minute per worker, so a session can't flood a coordinator.
+  if (!allow('notice', `${worker}->${row.coordinator}`, 10)) return
   try {
     storeMessage(worker, row.coordinator, { text, system: true })
   } catch (err) {
@@ -826,7 +1019,8 @@ function announceDown(worker, reason) {
   const lost = pending
     .map(u => JSON.parse(u.payload).message)
     .filter(m => m && !m.squadra_notice)
-    .map(m => `"${(m.text ?? m.caption ?? '(attachment)').replace(/\s+/g, ' ').slice(0, 120)}" (from ${m.from.id})`)
+    // Quoted as data: this text was written by the sender, not by the server.
+    .map(m => `${JSON.stringify((m.text ?? m.caption ?? '(attachment)').replace(/\s+/g, ' ').slice(0, 120))} (written by ${m.from.id})`)
   const what = {
     logout: `🔌 ${worker} left Squadra (logout).`,
     exit: `🔌 ${worker} disconnected: its Claude Code session was closed.`,
@@ -872,11 +1066,29 @@ function presenceOf(name) {
 }
 
 // Upload: raw body, params in the query string (sendDocument / sendPhoto).
+const uploadsInFlight = new Map() // name -> { n, bytes }
 async function upload(name, kind, query, req) {
   rateLimit(name)
   const target = resolveTarget(query.get('chat_id'), name)
   const fileName = (query.get('filename') ?? 'file').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'file'
-  const buf = await readBody(req, MAX_FILE_BYTES)
+  // Disk budget: at most 500 MB of uploads per identity per hour, counting
+  // the ones still arriving; and at most two at a time.
+  const declared = Number(req.headers['content-length'])
+  if (!Number.isSafeInteger(declared) || declared <= 0) throw new ApiError(411, 'Length Required')
+  if (declared > MAX_FILE_BYTES) throw new ApiError(413, `Request Entity Too Large (max ${MAX_FILE_BYTES} bytes)`)
+  const flight = uploadsInFlight.get(name) ?? { n: 0, bytes: 0 }
+  const lastHour = db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM files WHERE owner = ? AND created_at > ?').get(name, now() - 3600_000).n
+  if (flight.n >= 2) throw new ApiError(429, 'Too Many Requests: two uploads at a time')
+  if (lastHour + flight.bytes + declared > UPLOAD_BUDGET_BYTES) throw new ApiError(429, 'Too Many Requests: upload budget for this hour used up')
+  flight.n++; flight.bytes += declared
+  uploadsInFlight.set(name, flight)
+  let buf
+  try {
+    buf = await readBody(req, Math.min(declared, MAX_FILE_BYTES))
+  } finally {
+    flight.n--; flight.bytes -= declared
+    if (!flight.n) uploadsInFlight.delete(name)
+  }
   if (buf.length === 0) throw bad('file is empty')
   const ext = (extname(fileName).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.bin')
   const fileId = `f_${randomBytes(12).toString('base64url')}`
@@ -900,6 +1112,7 @@ const adminMethods = {
   register(p) {
     return register(p.name, p.reset === true)
   },
+  rotateJoinToken: () => rotateJoinToken(),
   listIdentities() {
     return db.prepare('SELECT name, created_at, last_seen_at FROM identities ORDER BY name').all()
       .map(r => ({ name: r.name, created_at: unix(r.created_at), ...presenceOf(r.name) }))
@@ -928,6 +1141,8 @@ function cleanup() {
   db.prepare('DELETE FROM messages WHERE created_at < ?').run(t - MESSAGE_TTL_MS)
   db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
   for (const [k, v] of chatActions) if (t - v.at > 10_000) chatActions.delete(k)
+  for (const [k, v] of sendLog) if (!v.some(x => t - x < 60_000)) sendLog.delete(k)
+  for (const [k, v] of observeLog) if (!v.some(x => t - x.t < 60_000)) observeLog.delete(k)
 }
 setInterval(cleanup, 10 * 60 * 1000).unref()
 cleanup()
@@ -972,6 +1187,8 @@ function broadcast(type, data) {
   const chunk = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`
   for (const res of sseClients) {
     if (res.writableEnded) { sseClients.delete(res); continue }
+    // A dashboard that stopped reading: drop it (it reconnects and reloads).
+    if (res.writableLength > 8 * 1024 * 1024) { sseClients.delete(res); res.destroy(); continue }
     res.write(chunk)
   }
 }
@@ -1017,7 +1234,7 @@ const dashboard = {
     const since = db.prepare('SELECT cleared_at FROM identities WHERE name = ?').get(session)?.cleared_at ?? 0
     const evs = db.prepare(`SELECT * FROM events WHERE session = ? AND kind != 'usage' AND ts > ? AND ${evCond} ORDER BY ts DESC, id DESC LIMIT ?`)
       .all(session, since, ...evArgs, limit)
-      .map(r => ({ t: 'event', ...eventView(r.id, r.session, r.ts, r.kind, JSON.parse(r.data)) }))
+      .map(r => ({ ...eventView(r.id, r.session, r.ts, r.kind, JSON.parse(r.data)), t: 'event' }))
     const msgs = db.prepare(`SELECT * FROM messages WHERE (from_name = ? OR target = ? OR target IN (SELECT group_id FROM group_members WHERE name = ?)) AND created_at > ? AND ${msgCond} ORDER BY created_at DESC, id DESC LIMIT ?`)
       .all(session, session, session, since, ...msgArgs, limit)
       .map(r => ({ t: 'message', ts: r.created_at, ...messageView(r) }))
@@ -1090,6 +1307,7 @@ function deleteSession(name, { requireOffline = true } = {}) {
   }
   db.prepare('DELETE FROM identities WHERE name = ?').run(name)
   db.prepare('DELETE FROM group_members WHERE name = ?').run(name)
+  db.prepare('DELETE FROM group_invites WHERE name = ?').run(name)
   db.prepare('DELETE FROM updates WHERE recipient = ?').run(name)
   db.prepare('DELETE FROM events WHERE session = ?').run(name)
   leases.delete(name)
@@ -1187,32 +1405,67 @@ function createEnrollment(p, req) {
   db.prepare('INSERT INTO host_enrollments (code_hash, name, created_at, expires_at, configure_plugin) VALUES (?, ?, ?, ?, ?)')
     .run(sha256(code), name, t, t + ENROLL_TTL_MS, p.configure_plugin === false ? 0 : 1)
   const base = serverBaseUrl(req)
-  const q = s => /^[A-Za-z0-9_./:@-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`
+  const q = s => `'${String(s).replace(/'/g, `'\\''`)}'` // always a single shell word
+  // The command checks the program it downloads against this server's copy
+  // (sha256sum on Linux, shasum on macOS) before running it.
+  const file = HOST_SCRIPT.find(f => { try { return statSync(f).isFile() } catch { return false } })
+  const sha = file ? createHash('sha256').update(readFileSync(file)).digest('hex') : null
+  const verify = sha ? ` && echo ${q(`${sha}  squadra-host.mjs`)} | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -)` : ''
   return {
     code,
     expires_at: t + ENROLL_TTL_MS,
     server_url: base,
-    command: `curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)} && node squadra-host.mjs enroll ${q(base)} ${code}`,
+    sha256: sha,
+    command: `curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code}`,
   }
 }
 
 // The address hosts and plugins use: PUBLIC_URL, or what the browser used.
 function serverBaseUrl(req) {
   if (PUBLIC_URL) return PUBLIC_URL
-  const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || (TLS ? 'https' : 'http')
-  const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? `127.0.0.1:${PORT}`).split(',')[0].trim()
+  const fwd = h => (TRUST_PROXY ? String(req.headers[h] ?? '').split(',')[0].trim() : '')
+  let proto = fwd('x-forwarded-proto') || (TLS ? 'https' : 'http')
+  if (proto !== 'http' && proto !== 'https') proto = TLS ? 'https' : 'http'
+  let host = fwd('x-forwarded-host') || String(req.headers.host ?? '')
+  if (!/^[A-Za-z0-9.-]+(:\d{1,5})?$|^\[[0-9A-Fa-f:.]+\](:\d{1,5})?$/.test(host)) host = `127.0.0.1:${PORT}`
   return `${proto}://${host}`
 }
 
 // Host side: trade the code for a permanent secret. Public, rate-limited.
+// The client's address. Behind a reverse proxy every request comes from the
+// proxy, so with --trust-proxy the last X-Forwarded-For entry (the one the
+// proxy itself added) is used.
+function clientIp(req) {
+  if (TRUST_PROXY) {
+    const xff = String(req.headers['x-forwarded-for'] ?? '').split(',').map(x => x.trim()).filter(Boolean)
+    if (xff.length) return xff[xff.length - 1].slice(0, 64)
+  }
+  return req.socket.remoteAddress ?? '?'
+}
+
+// Enrollment attempts: 10 a minute per address, 60 a minute overall (so a
+// flood from many addresses still can't brute-force codes).
 const enrollAttempts = new Map() // ip -> timestamps
-function enrollHost(p, req) {
-  const ip = req.socket.remoteAddress ?? '?'
+let enrollGlobal = []
+function checkEnrollRate(req) {
+  const ip = ipKey(clientIp(req))
   const t = now()
+  enrollGlobal = enrollGlobal.filter(x => t - x < 60_000)
   const recent = (enrollAttempts.get(ip) ?? []).filter(x => t - x < 60_000)
-  if (recent.length >= 10) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+  if (recent.length >= 10 || enrollGlobal.length >= 60) throw new ApiError(429, 'Too Many Requests: retry in a minute')
   recent.push(t)
+  enrollGlobal.push(t)
   enrollAttempts.set(ip, recent)
+}
+
+setInterval(() => {
+  const t = now()
+  for (const [k, v] of enrollAttempts) if (!v.some(x => t - x < 60_000)) enrollAttempts.delete(k)
+}, 60_000).unref()
+
+function enrollHost(p, req) {
+  const ip = clientIp(req)
+  const t = now()
   const code = String(p.code ?? '').trim().toUpperCase()
   const row = db.prepare('SELECT * FROM host_enrollments WHERE code_hash = ?').get(sha256(code))
   if (!row || row.expires_at < t) throw new ApiError(403, 'Forbidden: the code is wrong or has expired; generate a new one in the dashboard (Hosts → Add)')
@@ -1220,14 +1473,16 @@ function enrollHost(p, req) {
   const info = sanitizeHostInfo(p.info)
   const id = `h_${randomBytes(8).toString('hex')}`
   const secret = `sh_${randomBytes(32).toString('base64url')}`
-  const name = row.name || info?.hostname || id
+  // The hostname comes from the machine: keep only the characters a name may have.
+  const fromHost = String(info?.hostname ?? '').replace(/[^\p{L}\p{N} ._-]/gu, '').trim().slice(0, 40)
+  const name = row.name || fromHost || id
   db.prepare('INSERT INTO hosts (id, name, secret_hash, created_at, last_seen_at, info) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, uniqueHostName(name), sha256(secret), t, t, JSON.stringify(info))
   broadcastHost(id)
   process.stderr.write(`squadra-server: host "${hostRow(id).name}" (${id}) enrolled from ${ip}\n`)
   return {
     id, secret, name: hostRow(id).name,
-    ...(row.configure_plugin ? { plugin: { url: serverBaseUrl(req), token: SERVER_TOKEN } } : {}),
+    ...(row.configure_plugin ? { plugin: { url: serverBaseUrl(req), token: JOIN_TOKEN } } : {}),
   }
 }
 
@@ -1292,11 +1547,14 @@ function openHostLink(ws, req) {
   const hello = setTimeout(() => ws.close(4000, 'hello expected'), 10_000)
   ws.onmessage = text => {
     let m
-    try { m = JSON.parse(text) } catch { return }
+    try { m = JSON.parse(text) } catch {}
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return link ? undefined : ws.close(4000, 'hello expected')
     if (!link) {
-      clearTimeout(hello)
       const row = m.t === 'hello' && typeof m.secret === 'string' ? db.prepare('SELECT * FROM hosts WHERE secret_hash = ?').get(sha256(m.secret)) : null
       if (!row) return ws.close(4001, 'unknown or disconnected host')
+      clearTimeout(hello)
+      ws.onauthed?.()
+      ws.maxMessage = 4 * 1024 * 1024 // terminal screens can be large
       hostId = row.id
       // One live connection per host: the newest wins.
       hostLinks.get(hostId)?.ws.close(4002, 'replaced by a newer connection')
@@ -1369,14 +1627,17 @@ function openViewerLink(ws, req) {
     set.delete(viewer)
     if (!set.size) { link.viewers.delete(term); link.ws.send(JSON.stringify({ t: 'detach', term })) }
   }
-  const size = (c, r) => ({ cols: Math.max(20, Math.min(Number(c) || 120, 500)), rows: Math.max(5, Math.min(Number(r) || 36, 200)) })
+  const size = (c, r) => ({ cols: Math.floor(Math.max(20, Math.min(Number(c) || 120, 500))), rows: Math.floor(Math.max(5, Math.min(Number(r) || 36, 200))) })
   ws.onmessage = text => {
     let m
-    try { m = JSON.parse(text) } catch { return }
+    try { m = JSON.parse(text) } catch {}
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return viewer.authed ? undefined : ws.close(4000, 'auth expected')
     if (!viewer.authed) {
-      clearTimeout(hello)
       if (m.t !== 'auth' || typeof m.token !== 'string' || !isServerToken(m.token)) return ws.close(4001, 'unauthorized')
+      clearTimeout(hello)
+      ws.onauthed?.()
       viewer.authed = true
+      ws.maxMessage = 256 * 1024
       return ws.send(JSON.stringify({ t: 'ready' }))
     }
     const host = String(m.host ?? '')
@@ -1413,14 +1674,41 @@ function onUpgrade(req, socket, head) {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n')
     return
   }
-  const ws = acceptWebSocket(req, socket, head)
+  // The dashboard's terminal socket only from the dashboard's own page (a
+  // browser always sends Origin; squadra-host sends none).
+  if (path === '/api/terminal' && req.headers.origin) {
+    let ok = false
+    try { ok = new URL(req.headers.origin).host === req.headers.host } catch {}
+    if (!ok) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return }
+  }
+  // Not yet authenticated sockets: a few per address, and a cap overall.
+  // Separate pools for machines and dashboards: one can't starve the other.
+  const pool = path === '/host/connect' ? pendingSockets.host : pendingSockets.terminal
+  const ip = ipKey(clientIp(req))
+  if (pool.total >= 100 || (pool.byIp.get(ip) ?? 0) >= 20) {
+    socket.end('HTTP/1.1 429 Too Many Requests\r\n\r\n')
+    return
+  }
+  const ws = acceptWebSocket(req, socket, head, { maxMessage: 16 * 1024 })
   if (!ws) return
   wsClients.add(ws)
+  pool.total++
+  pool.byIp.set(ip, (pool.byIp.get(ip) ?? 0) + 1)
+  let counted = true
+  const uncount = () => {
+    if (!counted) return
+    counted = false
+    pool.total--
+    const n = (pool.byIp.get(ip) ?? 1) - 1
+    if (n > 0) pool.byIp.set(ip, n); else pool.byIp.delete(ip)
+  }
+  ws.onauthed = uncount // called by the link once it has authenticated
   if (path === '/host/connect') openHostLink(ws, req)
   else openViewerLink(ws, req)
   const handler = ws.onclose
-  ws.onclose = () => { wsClients.delete(ws); handler() }
+  ws.onclose = () => { wsClients.delete(ws); uncount(); handler() }
 }
+const pendingSockets = { host: { total: 0, byIp: new Map() }, terminal: { total: 0, byIp: new Map() } }
 const wsClients = new Set()
 
 function removeHost(id) {
@@ -1446,16 +1734,39 @@ function renameHost(id, name) {
 // Open a session on a host. The spec is passed through as-is: the host is the
 // one that validates it (its rules are local and the server can't widen them).
 // Here we only refuse names already taken by a connected session.
+// The name is reserved here, for this machine: the server registers it and
+// hands its secret to the machine with the spec, so nobody holding the join
+// token can grab the name first. A name registered by some other session is
+// refused (delete that session in the dashboard to free it).
 async function openTerminalOn(p) {
   const id = String(p.host ?? '')
-  const spec = p.spec && typeof p.spec === 'object' ? p.spec : null
+  const spec = p.spec && typeof p.spec === 'object' && !Array.isArray(p.spec) ? { ...p.spec } : null
   if (!spec) throw bad('spec is required')
-  if (typeof spec.name === 'string' && isOnline(spec.name)) {
-    throw new ApiError(409, `Conflict: a session named "${spec.name}" is already connected`, { parameters: { reason: 'name_in_use' } })
+  delete spec.identity
+  const name = String(spec.name ?? '')
+  if (!NAME_RE.test(name)) throw bad('name must match [A-Za-z0-9_-]{1,32}')
+  if (!hostLinks.has(id)) return askHost(id, { t: 'open', spec }) // reports host_offline / not found
+  if (isOnline(name)) {
+    throw new ApiError(409, `Conflict: a session named "${name}" is already connected`, { parameters: { reason: 'name_in_use' } })
   }
-  const result = await askHost(id, { t: 'open', spec })
-  process.stderr.write(`squadra-server: opened session "${spec.name}" on host ${id}\n`)
-  return result
+  const existing = db.prepare('SELECT host_id FROM identities WHERE name = ?').get(name)
+  if (existing && existing.host_id !== id) {
+    throw new ApiError(409, `Conflict: the name "${name}" is already registered by another session; pick another name, or delete that session in the dashboard`, { parameters: { reason: 'name_taken' } })
+  }
+  let created = false
+  if (!existing) {
+    spec.identity = register(name, false).secret
+    db.prepare('UPDATE identities SET host_id = ? WHERE name = ?').run(id, name)
+    created = true
+  }
+  try {
+    const result = await askHost(id, { t: 'open', spec })
+    process.stderr.write(`squadra-server: opened session "${name}" on host ${id}\n`)
+    return result
+  } catch (err) {
+    if (created) db.prepare('DELETE FROM identities WHERE name = ? AND host_id = ?').run(name, id)
+    throw err
+  }
 }
 
 async function killTerminalOn(p) {
@@ -1493,44 +1804,81 @@ function sendError(res, err) {
   }
 }
 
+// Request body, up to `max` bytes. A client that stops sending for 30 s is
+// cut off (requests have no overall timeout, for long polls and uploads).
+const BODY_IDLE_MS = 30_000
 function readBody(req, max) {
   return new Promise((resolve, reject) => {
+    if (Number(req.headers['content-length'] ?? 0) > max) {
+      reject(new ApiError(413, `Request Entity Too Large (max ${max} bytes)`))
+      req.destroy()
+      return
+    }
     const chunks = []
     let size = 0
+    let idle = null
+    const arm = () => {
+      clearTimeout(idle)
+      idle = setTimeout(() => { reject(new ApiError(408, 'Request Timeout')); req.destroy() }, BODY_IDLE_MS)
+    }
+    arm()
     req.on('data', c => {
+      arm()
       size += c.length
       if (size > max) {
+        clearTimeout(idle)
         reject(new ApiError(413, `Request Entity Too Large (max ${max} bytes)`))
         req.destroy()
         return
       }
       chunks.push(c)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks)))
-    req.on('error', reject)
+    req.on('end', () => { clearTimeout(idle); resolve(Buffer.concat(chunks)) })
+    req.on('error', err => { clearTimeout(idle); reject(err) })
+    req.on('close', () => clearTimeout(idle))
   })
 }
 
-async function readParams(req, url) {
-  const params = Object.fromEntries(url.searchParams)
+// Request parameters: query string plus a JSON object body. A plain object
+// with no prototype, and only the body's own keys: "__proto__" and friends
+// can't make a parameter appear that wasn't sent.
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+async function readParams(req, url, max = MAX_JSON_BODY) {
+  const params = Object.create(null)
+  for (const [k, v] of url.searchParams) if (!RESERVED_KEYS.has(k)) params[k] = v
   if (req.method === 'POST') {
-    const buf = await readBody(req, MAX_JSON_BODY)
+    const buf = await readBody(req, max)
     if (buf.length) {
-      try { Object.assign(params, JSON.parse(buf.toString('utf8'))) } catch { throw bad('body is not valid JSON') }
+      let body
+      try { body = JSON.parse(buf.toString('utf8')) } catch { throw bad('body is not valid JSON') }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw bad('body must be a JSON object')
+      for (const k of Object.keys(body)) if (!RESERVED_KEYS.has(k)) params[k] = body[k]
     }
   }
   return params
 }
+
+const own = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined)
 
 function bearer(req) {
   const h = req.headers.authorization ?? ''
   return h.startsWith('Bearer ') ? h.slice(7).trim() : ''
 }
 
-function isServerToken(token) {
-  const a = Buffer.from(sha256(token))
-  const b = Buffer.from(sha256(SERVER_TOKEN))
-  return timingSafeEqual(a, b)
+const sameSecret = (token, secret) => typeof token === 'string' && token !== '' &&
+  timingSafeEqual(Buffer.from(sha256(token)), Buffer.from(sha256(secret)))
+const isServerToken = token => sameSecret(token, SERVER_TOKEN)
+const isJoinToken = token => sameSecret(token, JOIN_TOKEN)
+
+// A new join token: machines configured with the old one can no longer
+// register new names (their existing identities keep working).
+function rotateJoinToken() {
+  if (process.env.SQUADRA_JOIN_TOKEN) throw new ApiError(409, 'Conflict: the join token comes from SQUADRA_JOIN_TOKEN; change it there')
+  JOIN_TOKEN = `sj_${randomBytes(24).toString('hex')}`
+  JOIN_TOKEN_SOURCE = JOIN_TOKEN_FILE
+  writeFileSync(JOIN_TOKEN_FILE, JOIN_TOKEN + '\n', { mode: 0o600 })
+  process.stderr.write('squadra-server: join token rotated\n')
+  return { join_token: JOIN_TOKEN }
 }
 
 async function handle(req, res) {
@@ -1544,8 +1892,15 @@ async function handle(req, res) {
     // with every /api call.
     if (req.method === 'GET' && (path === '/' || path === '/ui')) {
       const html = readFileSync(UI_FILE)
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': html.length, 'Cache-Control': 'no-store' })
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': html.length, 'Cache-Control': 'no-store', ...pageHeaders(html) })
       return res.end(html)
+    }
+    // The web terminal (xterm.js), served from here rather than a CDN.
+    if (req.method === 'GET' && Object.hasOwn(VENDOR_FILES, path)) {
+      const [file, type] = VENDOR_FILES[path]
+      const body = readFileSync(new URL(file, import.meta.url))
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' })
+      return res.end(body)
     }
 
     // squadra-host: the program itself (public, like the dashboard page) and enrollment.
@@ -1553,12 +1908,13 @@ async function handle(req, res) {
       const file = HOST_SCRIPT.find(f => { try { return statSync(f).isFile() } catch { return false } })
       if (!file) throw new ApiError(404, 'Not Found')
       const js = readFileSync(file)
-      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': js.length, 'Cache-Control': 'no-store' })
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': js.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       return res.end(js)
     }
     if (path === '/host/enroll') {
       if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
-      return sendJson(res, 200, { ok: true, result: enrollHost(await readParams(req, url), req) })
+      checkEnrollRate(req)
+      return sendJson(res, 200, { ok: true, result: enrollHost(await readParams(req, url, 64 * 1024), req) })
     }
 
     const token = bearer(req)
@@ -1567,22 +1923,40 @@ async function handle(req, res) {
       if (!token || !isServerToken(token)) throw new ApiError(401, 'Unauthorized')
       const what = path.slice('/api/'.length)
       if (req.method === 'POST') {
-        const act = dashboardActions[what]
+        const act = own(dashboardActions, what)
         if (!act) throw new ApiError(404, 'Not Found')
         return sendJson(res, 200, { ok: true, result: await act(await readParams(req, url), req) })
       }
       if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
       if (what === 'stream') return openStream(req, res)
-      const fn = dashboard[what]
+      const fn = own(dashboard, what)
       if (!fn) throw new ApiError(404, 'Not Found')
       return sendJson(res, 200, { ok: true, result: fn(url.searchParams) })
     }
 
-    // Admin and registration: server token.
-    if (path === '/register' || path.startsWith('/admin/')) {
-      if (!token || !isServerToken(token)) throw new ApiError(401, 'Unauthorized')
-      const method = path === '/register' ? 'register' : path.slice('/admin/'.length)
-      const fn = adminMethods[method]
+    // Registration: the join token registers new names; the server token can
+    // also rotate an existing name's secret (reset).
+    if (path === '/register') {
+      const admin = isServerToken(token)
+      if (!admin && !isJoinToken(token)) throw new ApiError(401, 'Unauthorized')
+      // New names: 10 a minute per address and 60 overall, and a cap in all,
+      // so per-session budgets can't be multiplied by registering more names.
+      if (!admin && (!allow('register-ip', ipKey(clientIp(req)), 10) || !allow('register', 'all', 60))) {
+        throw new ApiError(429, 'Too Many Requests: retry in a minute')
+      }
+      if (!admin && db.prepare('SELECT COUNT(*) AS n FROM identities').get().n >= MAX_IDENTITIES) {
+        throw new ApiError(403, `Forbidden: this server already has ${MAX_IDENTITIES} sessions; delete some in the dashboard (or raise SQUADRA_MAX_SESSIONS)`)
+      }
+      const params = await readParams(req, url)
+      if (params.reset === true && !admin) {
+        throw new ApiError(403, 'Forbidden: only the server (admin) token can rotate an existing identity; delete the session from the dashboard and register it again, or ask the admin')
+      }
+      return sendJson(res, 200, { ok: true, result: register(params.name, admin && params.reset === true) })
+    }
+    // Admin: server token only.
+    if (path.startsWith('/admin/')) {
+      if (!isServerToken(token)) throw new ApiError(401, 'Unauthorized')
+      const fn = own(adminMethods, path.slice('/admin/'.length))
       if (!fn) throw new ApiError(404, 'Not Found: method not found')
       const params = await readParams(req, url)
       return sendJson(res, 200, { ok: true, result: fn(params) })
@@ -1599,8 +1973,13 @@ async function handle(req, res) {
       if (!f || !canSeeFile(name, f.file_id)) throw new ApiError(404, 'Not Found')
       const full = join(DATA_DIR, f.path)
       const st = statSync(full)
-      res.writeHead(200, { 'Content-Type': f.mime ?? 'application/octet-stream', 'Content-Length': st.size })
-      createReadStream(full).pipe(res)
+      res.writeHead(200, {
+        'Content-Type': f.mime ?? 'application/octet-stream',
+        'Content-Length': st.size,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'attachment',
+      })
+      createReadStream(full).on('error', () => res.destroy()).pipe(res)
       return
     }
 
@@ -1614,7 +1993,7 @@ async function handle(req, res) {
       const params = await readParams(req, url)
       return getUpdates(name, params, res)
     }
-    const fn = methods[method]
+    const fn = own(methods, method)
     if (!fn) throw new ApiError(404, 'Not Found: method not found')
     const params = await readParams(req, url)
     return sendJson(res, 200, { ok: true, result: fn(name, params) })
@@ -1637,11 +2016,12 @@ function startupBanner(scheme) {
   const lines = [
     `squadra-server v${VERSION}: listening on ${scheme}://${HOST}:${PORT}${everywhere ? ' (all interfaces)' : ''} (data: ${DATA_DIR})`,
     '',
-    `  Server token (${TOKEN_SOURCE}):`,
+    `  Server token — admin: signs in to the dashboard. Keep it in the browser only (${TOKEN_SOURCE}):`,
     `    ${SERVER_TOKEN}`,
     '',
+    `  Join token — for machines: registers new sessions, nothing else (${JOIN_TOKEN_SOURCE}).`,
     '  Configure each machine from Claude Code with:',
-    `    /squadra:configure ${url} ${SERVER_TOKEN}`,
+    `    /squadra:configure ${url} ${JOIN_TOKEN}`,
     `  Dashboard: ${url}/`,
   ]
   if (!TLS && !PUBLIC_URL && !everywhere && LOOPBACK.has(HOST)) {

@@ -26,28 +26,41 @@ const RUN_DIR = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 
 const SOCK_DIR = socketDirFor(RUN_DIR)
 
-function parentOf(pid) {
+// A process's parent pid and command line.
+function procInfo(pid) {
   try {
     // Linux: /proc/<pid>/stat → "pid (comm) state ppid ...". comm may contain spaces/parens.
-    // macOS has no /proc: ps below.
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
-    return Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1])
+    const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1])
+    const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ')
+    return { ppid, args }
   } catch {}
   try {
-    return Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim())
+    // macOS (no /proc).
+    const out = execFileSync('ps', ['-o', 'ppid=,args=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const m = out.match(/^(\d+)\s+(.*)$/s)
+    if (m) return { ppid: Number(m[1]), args: m[2] }
   } catch {}
-  return 0
+  return { ppid: 0, args: '' }
 }
+
+// A Claude Code process (the CLI, however it was installed).
+const isClaude = args => /(^|[\s/])claude(\s|$)|@anthropic-ai\/claude-code|claude-code[\\/]cli|[\\/]claude[\\/]versions[\\/][^\s\\/]+(\s|$)/.test(args)
 
 function findSocket() {
   if (!existsSync(SOCK_DIR)) return null
   // Never send events to a socket in a /tmp folder someone else controls.
   if (SOCK_DIR !== RUN_DIR && !isPrivateDir(SOCK_DIR)) return null
+  // Walk up to the nearest Claude Code process: its socket, or none. Never
+  // past it — a claude started from inside a session (e.g. by its Bash tool)
+  // must not report its events to, or get the context of, the outer session.
   let pid = process.ppid
   for (let i = 0; i < 6 && pid > 1; i++) {
     const sock = join(SOCK_DIR, `${pid}.sock`)
     if (existsSync(sock)) return sock
-    pid = parentOf(pid)
+    const { ppid, args } = procInfo(pid)
+    if (isClaude(args)) return null
+    pid = ppid
   }
   return null
 }

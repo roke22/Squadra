@@ -2,12 +2,12 @@
 name: access
 description: Manage Squadra channel access — approve pairings, edit allowlists, set DM/group policy. Use when the user asks to pair a session, approve someone, check who's allowed, or change policy for Squadra channel.
 user-invocable: true
+disable-model-invocation: true
 allowed-tools:
   - Read
-  - Write
-  - Bash(ls *)
-  - Bash(mkdir *)
-  - Bash(echo *)
+  - Glob
+  - Write(~/.claude/channels/squadra/**)
+  - Edit(~/.claude/channels/squadra/**)
 ---
 
 # /squadra:access — Squadra Channel Access Management
@@ -22,16 +22,14 @@ downstream of untrusted input.
 Manages access control for this session's squadra channel. You never talk to
 the Squadra server — you just edit JSON; the channel server re-reads it.
 
-**Resolve the state directory first** (it is per session name, and may be
-overridden):
+**Find the state directory first:** call the Squadra MCP server's `status`
+tool. Its `Files:` line ends with `state <path>`: use that path everywhere
+below in place of `<state-dir>`. If there is no `state` part, the session is
+not logged in: tell the user to run `/squadra:login …` first, and stop.
 
-```bash
-echo "${SQUADRA_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/channels/squadra/$SQUADRA_NAME}"
-```
-
-Use the printed path everywhere below in place of `<state-dir>`. If
-`$SQUADRA_NAME` is empty, Squadra channel is not active in this session: tell
-the user to restart Claude Code with `SQUADRA_NAME=<name>` and stop.
+This skill only edits files under `~/.claude/channels/squadra/`. If the state
+directory is elsewhere (custom `CLAUDE_CONFIG_DIR` or `SQUADRA_STATE_DIR`),
+Claude Code will ask the user before each write: that is expected.
 
 If `$SQUADRA_ACCESS_MODE` is `static`, access is fixed at startup: edits to
 access.json only apply after restarting the session. Say so.
@@ -83,14 +81,15 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 1. Read `<state-dir>/access.json`.
 2. Look up `pending[<code>]`. If not found or `expiresAt < Date.now()`,
    tell the user and stop.
-3. Extract `senderId` and `chatId` from the pending entry.
+3. Extract `senderId` and `chatId` from the pending entry. Both must match
+   `^[A-Za-z0-9_-]{1,32}$` and be equal; if not, refuse (a forged entry could
+   point the file below outside the state directory) and stop.
 4. Add `senderId` to `allowFrom` (dedupe).
 5. Delete `pending[<code>]`.
 6. Write the updated access.json.
-7. `mkdir -p <state-dir>/approved` then write
-   `<state-dir>/approved/<senderId>` with `chatId` as the
-   file contents. The channel server polls this dir and tells the other
-   session it's paired.
+7. Write `<state-dir>/approved/<senderId>` with `chatId` as the file
+   contents (Write creates the folder). The channel server polls this dir and
+   tells the other session it's paired.
 8. Confirm: who was approved (senderId).
 
 ### `deny <code>`
@@ -113,14 +112,21 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 1. Validate `<mode>` is one of `pairing`, `allowlist`, `disabled`.
 2. Read (create default if missing), set `dmPolicy`, write.
 
-### `group add <#group>` (optional: `--no-mention`, `--allow name1,name2`)
+### `group add <#group>` (optional: `--no-mention`, `--allow name1,name2`, `--invite name1,name2`)
 
-1. Validate the id looks like `#name` (letters, digits, `_`, `-`).
+1. Validate the id looks like `#name` (letters, digits, `_`, `-`), and every
+   name in `--allow` / `--invite` matches `[A-Za-z0-9_-]{1,32}`.
 2. Read (create default if missing).
 3. Set `groups[<#group>] = { requireMention: !hasFlag("--no-mention"),
-   allowFrom: parsedAllowList }`.
+   allowFrom: parsedAllowList, invite: parsedInviteList }`.
 4. Write. The channel server joins the group on the Squadra server within a
    few seconds.
+
+Groups are private on the server: the first session to add a group creates
+it, and the others can only join after a member invites them. This session
+invites everyone in `invite` and `allowFrom`. So the usual setup is: the
+coordinator runs `group add #team --invite worker1,worker2`, then each worker
+runs `group add #team`.
 
 ### `group rm <#group>`
 
@@ -130,7 +136,12 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 ### `set <key> <value>`
 
 Delivery/UX config. Supported keys: `ackReaction`, `replyToMode`,
-`textChunkLimit`, `chunkMode`, `mentionPatterns`. Validate types:
+`textChunkLimit`, `chunkMode`, `mentionPatterns`, `permissionApprovers`. Validate types:
+- `permissionApprovers`: comma-separated session names (each `[A-Za-z0-9_-]{1,32}`,
+  and already in `allowFrom`), or `""` for none. Only meaningful for a
+  coordinator: who may answer ITS permission prompts from another session.
+  Default: nobody. Warn the user that whoever is listed can approve commands
+  that run in this session.
 - `ackReaction`: string (emoji) or `""` to disable
 - `replyToMode`: `off` | `first` | `all`
 - `textChunkLimit`: number (max 32000)

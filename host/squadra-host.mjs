@@ -25,7 +25,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, copyFileSync, rmSync, chmodSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
 import { homedir, hostname, platform, arch } from 'node:os'
 import { join, resolve, sep, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +45,25 @@ const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const COMPACT_MIN = 50_000
 const COMPACT_MAX = 1_000_000
 const DEFAULT_SETTINGS = { folders: [], max_sessions: 8, allow_input: true, claude_command: 'claude' }
+const HOME = homedir()
+// Never allowed as a place to open sessions, whatever settings.json says:
+// a whole home or system folder, or a folder where credentials and this
+// program's own configuration live.
+const FORBIDDEN_ROOTS = ['/', HOME]
+const FORBIDDEN_TREES = [
+  '.claude', '.ssh', '.config', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.local/share/keyrings', 'Library/Keychains',
+].map(d => join(HOME, d)).concat([CONFIG_DIR, '/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var/root', '/private/etc', '/System', '/Library'])
+const realOr = p => { try { return realpathSync(p) } catch { return resolve(p) } }
+const within = (path, dir) => path === dir || path.startsWith(dir.endsWith(sep) ? dir : dir + sep)
+function forbiddenFolder(real) {
+  if (FORBIDDEN_ROOTS.map(realOr).includes(real)) return 'a whole home or system folder'
+  if (FORBIDDEN_TREES.map(realOr).some(d => within(real, d))) return 'a folder with credentials or configuration'
+  return null
+}
+
+// Text that came from the server, printed on this terminal: no control
+// characters (no escape sequences).
+const plain = v => String(v ?? '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '?')
 
 const log = m => process.stderr.write(`squadra-host: ${m}\n`)
 const die = (m, code = 1) => { process.stderr.write(`squadra-host: ${m}\n`); process.exit(code) }
@@ -62,14 +81,43 @@ function writeJson(file, data, mode = 0o600) {
 
 // Settings are this machine's own rules. The server can read them (to offer
 // the right folders) but never change them.
+//   folders           where sessions may be opened (and anything inside)
+//   max_sessions      at most this many at once
+//   allow_input       whether the dashboard may type in the terminals
+//   permission_relay  whether a session's coordinator may answer its permission
+//                     prompts from another session (default: same as allow_input)
+//   coordinators      if set, the only coordinator names a worker may be given
+//   claude_command    the Claude Code executable
 function loadSettings() {
-  const s = { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_FILE, {}) }
-  s.folders = (Array.isArray(s.folders) ? s.folders : []).filter(f => typeof f === 'string' && isAbsolute(f))
+  const raw = readJson(SETTINGS_FILE, {})
+  const s = { ...DEFAULT_SETTINGS, ...(raw && typeof raw === 'object' ? raw : {}) }
+  s.folders = (Array.isArray(s.folders) ? s.folders : [])
+    .filter(f => typeof f === 'string' && isAbsolute(f) && !FORBIDDEN_ROOTS.map(realOr).includes(realOr(f)))
   s.max_sessions = Number.isInteger(s.max_sessions) && s.max_sessions > 0 ? Math.min(s.max_sessions, 64) : DEFAULT_SETTINGS.max_sessions
   s.allow_input = s.allow_input !== false
+  s.permission_relay = typeof s.permission_relay === 'boolean' ? s.permission_relay : s.allow_input
+  s.coordinators = Array.isArray(s.coordinators) ? s.coordinators.filter(c => typeof c === 'string' && NAME_RE.test(c)) : []
   s.claude_command = typeof s.claude_command === 'string' && s.claude_command ? s.claude_command : 'claude'
   return s
 }
+
+// The Claude Code executable as an absolute path. A bare name is looked up
+// only in absolute PATH entries, so a "." in PATH can never make a session
+// run a "claude" file from the project folder.
+function claudeBinary(cmd = loadSettings().claude_command) {
+  const ok = p => { try { accessSync(p, FS.X_OK); return statSync(p).isFile() } catch { return false } }
+  if (cmd.includes('/')) {
+    if (!isAbsolute(cmd) || !ok(cmd)) throw new Error(`claude_command must be an absolute path to an executable: ${cmd}`)
+    return cmd
+  }
+  for (const dir of String(process.env.PATH ?? '').split(':')) {
+    if (!isAbsolute(dir)) continue
+    const p = join(dir, cmd)
+    if (ok(p)) return p
+  }
+  throw new Error(`"${cmd}" (Claude Code) was not found on the PATH`)
+}
+const claudeOrNull = () => { try { return claudeBinary() } catch { return null } }
 
 // --- tmux ---------------------------------------------------------------------------
 
@@ -105,7 +153,7 @@ async function listTerminals() {
     const m = /^(\S+) (\d+) ?(.*)$/.exec(line)
     if (!m) continue
     const [, tname, created, meta] = m
-    if (!tname?.startsWith(PREFIX)) continue
+    if (!tname?.startsWith(PREFIX) || !NAME_RE.test(tname.slice(PREFIX.length))) continue
     let spec = {}
     try { spec = JSON.parse(meta || '{}') } catch {}
     list.push({
@@ -135,7 +183,7 @@ function insideAllowed(real, folders) {
 // The only thing a server can ask for. Anything unexpected is refused.
 export function validateSpec(spec, settings, current) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('invalid request')
-  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume'])
+  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume', 'identity'])
   for (const k of Object.keys(spec)) if (!allowed.has(k)) throw new Error(`unknown field "${k}"`)
   const name = String(spec.name ?? '')
   if (!NAME_RE.test(name)) throw new Error('name must match [A-Za-z0-9_-]{1,32}')
@@ -146,6 +194,10 @@ export function validateSpec(spec, settings, current) {
     coordinator = spec.coordinator == null || spec.coordinator === '' ? 'coord' : String(spec.coordinator)
     if (!NAME_RE.test(coordinator)) throw new Error('invalid coordinator name')
     if (coordinator === name) throw new Error('a worker cannot be its own coordinator')
+    // The coordinator gives the worker its instructions: this machine may pin who that can be.
+    if (settings.coordinators.length && !settings.coordinators.includes(coordinator)) {
+      throw new Error(`this machine only accepts these coordinators: ${settings.coordinators.join(', ')}`)
+    }
   } else if (spec.coordinator != null && spec.coordinator !== '') {
     throw new Error('a coordinator has no coordinator')
   }
@@ -157,6 +209,8 @@ export function validateSpec(spec, settings, current) {
     }
   }
   if (spec.resume != null && typeof spec.resume !== 'boolean') throw new Error('resume must be true or false')
+  // The session's identity secret, when the server reserved the name for this machine.
+  if (spec.identity != null && !(typeof spec.identity === 'string' && /^sq_[A-Za-z0-9_-]{20,64}$/.test(spec.identity))) throw new Error('invalid identity')
   if (typeof spec.folder !== 'string' || !isAbsolute(spec.folder)) throw new Error('folder must be an absolute path')
   // tmux expands #{…} and #(…) in some arguments and splits commands on ";":
   // such paths are refused outright.
@@ -165,10 +219,12 @@ export function validateSpec(spec, settings, current) {
   try { real = realpathSync(resolve(spec.folder)) } catch { throw new Error(`folder ${spec.folder} does not exist on this machine`) }
   if (!statSync(real).isDirectory()) throw new Error(`${spec.folder} is not a folder`)
   if (/[#;\x00-\x1f\x7f]/.test(real)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
+  const why = forbiddenFolder(real)
+  if (why) throw new Error(`sessions cannot be opened in ${real}: it is ${why}`)
   if (!insideAllowed(real, settings.folders)) throw new Error(`folder ${spec.folder} is not inside the folders this machine allows (${settings.folders.join(', ') || 'none configured'})`)
   if (current.some(t => t.name === name)) throw new Error(`a session named "${name}" is already open on this machine`)
   if (current.length >= settings.max_sessions) throw new Error(`this machine allows at most ${settings.max_sessions} sessions`)
-  return { name, role, coordinator, folder: real, compact_window: compact, resume: spec.resume === true }
+  return { name, role, coordinator, folder: real, compact_window: compact, resume: spec.resume === true, identity: spec.identity ?? null }
 }
 
 // --- the Squadra plugin on this machine ----------------------------------------------
@@ -178,11 +234,26 @@ export function validateSpec(spec, settings, current) {
 // installed on this machine.
 
 const PLUGIN_ID = 'squadra@squadra'
-const PLUGIN_MARKETPLACE = 'roke22/Squadra'
+const PLUGIN_REPO = 'roke22/Squadra'
+// The plugin version that goes with this program: a release tag, not whatever
+// the default branch holds today.
+const PLUGIN_MARKETPLACE = `${PLUGIN_REPO}#v${VERSION}`
 const PLUGIN_COMMANDS = `claude plugin marketplace add ${PLUGIN_MARKETPLACE} && claude plugin install ${PLUGIN_ID}`
+
+// A marketplace called "squadra" that isn't this project's would be trusted
+// blindly by "plugin install squadra@squadra": refuse it.
+async function checkMarketplace(cmd) {
+  let list = []
+  try { list = JSON.parse((await run(cmd, ['plugin', 'marketplace', 'list', '--json'], { timeout: 30_000 })).stdout) } catch { return }
+  const m = Array.isArray(list) ? list.find(x => x?.name === 'squadra') : null
+  if (m && String(m.repo ?? '').toLowerCase() !== PLUGIN_REPO.toLowerCase()) {
+    throw new Error(`a different marketplace named "squadra" is installed (${plain(m.repo ?? m.source ?? 'unknown source')}). Remove it with: claude plugin marketplace remove squadra`)
+  }
+}
 let PLUGIN = null // { installed, version, enabled }, or null when it can't be told
 
-async function pluginStatus(cmd = loadSettings().claude_command) {
+async function pluginStatus(cmd = claudeOrNull()) {
+  if (!cmd) return null
   try {
     const { stdout } = await run(cmd, ['plugin', 'list', '--json'], { timeout: 30_000 })
     const p = JSON.parse(stdout).find(x => x?.id === PLUGIN_ID)
@@ -194,10 +265,11 @@ async function pluginStatus(cmd = loadSettings().claude_command) {
 
 // Install the plugin if it's missing (or enable it), or update it if it's there.
 async function ensurePlugin({ update = false } = {}) {
-  const cmd = loadSettings().claude_command
+  const cmd = claudeBinary()
   const opts = { timeout: 180_000 }
   let st = await pluginStatus(cmd)
   if (st === null) throw new Error(`cannot run "${cmd} plugin list": install Claude Code (or set claude_command in ${SETTINGS_FILE})`)
+  await checkMarketplace(cmd)
   if (!st.installed) {
     // "add" fails if the marketplace is already there: the install decides.
     try { await run(cmd, ['plugin', 'marketplace', 'add', PLUGIN_MARKETPLACE], opts) } catch {}
@@ -213,22 +285,43 @@ async function ensurePlugin({ update = false } = {}) {
   return st
 }
 
-async function openTerminal(spec) {
+// One open at a time: the session limit is checked against what is running,
+// so concurrent requests must not all pass the same check.
+let openQueue = Promise.resolve()
+function openTerminal(spec) {
+  const run = openQueue.then(() => openTerminalNow(spec))
+  openQueue = run.catch(() => {})
+  return run
+}
+
+async function openTerminalNow(spec) {
   const settings = loadSettings()
   const s = validateSpec(spec, settings, await listTerminals())
+  const claude = claudeBinary(settings.claude_command)
   // Without the plugin the session would start, but never join Squadra.
   // Checked every time (opening a session is rare): it may have been removed.
-  const st = await pluginStatus(settings.claude_command)
+  const st = await pluginStatus(claude)
   if (st) PLUGIN = st
   if (st && (!st.installed || !st.enabled)) {
     throw new Error(`the Squadra plugin is ${PLUGIN.installed ? 'disabled' : 'not installed'} in Claude Code on this machine. Run "node ${INSTALLED_SCRIPT} plugin" there, or: ${PLUGIN_COMMANDS}`)
+  }
+  // The identity the server registered for this name: where the plugin looks for it.
+  if (s.identity) {
+    const dir = join(process.env.CLAUDE_CONFIG_DIR ?? join(HOME, '.claude'), 'channels', 'squadra', s.name)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    writeFileSync(join(dir, 'identity.json'), JSON.stringify({ name: s.name, secret: s.identity }, null, 2) + '\n', { mode: 0o600 })
+    chmodSync(join(dir, 'identity.json'), 0o600)
   }
   const tname = PREFIX + s.name
   const env = { SQUADRA_NAME: s.name, SQUADRA_ROLE: s.role }
   if (s.coordinator) env.SQUADRA_COORDINATOR = s.coordinator
   if (s.compact_window) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(s.compact_window)
+  if (!settings.permission_relay) env.SQUADRA_PERMISSION_RELAY = 'off'
   // Fixed command. Two or more arguments make tmux exec it directly, no shell.
-  const argv = [settings.claude_command, '--dangerously-load-development-channels', 'plugin:squadra@squadra']
+  // "env -u TMUX" hides the tmux server from the session: its tools can't
+  // simply run "tmux send-keys" into another session. (They run as the same
+  // user, so this is a speed bump, not a wall: see the README.)
+  const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', claude, '--dangerously-load-development-channels', 'plugin:squadra@squadra']
   if (s.resume) argv.push('--continue')
   const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window })
   await tmux([
@@ -241,7 +334,19 @@ async function openTerminal(spec) {
     'set-option', '-t', tname, 'status', 'off', ';',
     'set-option', '-t', tname, '@squadra', meta,
   ])
-  log(`opened "${s.name}" (${s.role}) in ${s.folder}`)
+  // The folder could have been swapped (e.g. for a symlink) between the check
+  // and the start: make sure the session really is where it was allowed.
+  try {
+    const { stdout } = await tmux(['display-message', '-p', '-t', tname, '#{pane_current_path}'])
+    const where = realOr(stdout.trim())
+    if (where !== s.folder) {
+      await tmux(['kill-session', '-t', tname]).catch(() => {})
+      throw new Error(`the session started in ${where} instead of ${s.folder}; closed it`)
+    }
+  } catch (err) {
+    if (/instead of/.test(err.message)) throw err
+  }
+  log(`opened "${plain(s.name)}" (${s.role}) in ${s.folder}`)
   return { id: s.name, name: s.name }
 }
 
@@ -316,8 +421,8 @@ class Viewer {
   }
 
   resize(cols, rows) {
-    cols = Math.max(20, Math.min(Number(cols) || 120, 500))
-    rows = Math.max(5, Math.min(Number(rows) || 36, 200))
+    cols = Math.floor(Math.max(20, Math.min(Number(cols) || 120, 500)))
+    rows = Math.floor(Math.max(5, Math.min(Number(rows) || 36, 200)))
     this.cols = cols; this.rows = rows
     this.command(`refresh-client -C ${cols}x${rows}`)
   }
@@ -412,13 +517,15 @@ async function connect(creds) {
   }
 
   async function onMessage(m) {
-    if (m.t === 'welcome') { log(`connected to ${creds.server} as "${m.host?.name}"`); backoff = 1000; return pushInfo(true) }
-    if (handlers[m.t]) {
+    if (!m || typeof m !== 'object' || Array.isArray(m) || typeof m.t !== 'string') return
+    if (m.t === 'welcome') { log(`connected to ${creds.server} as "${plain(m.host?.name)}"`); backoff = 1000; return pushInfo(true) }
+    if (Object.hasOwn(handlers, m.t)) {
       try { send({ t: 'reply', req: m.req, ok: true, result: await handlers[m.t](m) }) }
       catch (err) { send({ t: 'reply', req: m.req, ok: false, error: err.message }) }
       return
     }
     const id = String(m.term ?? '')
+    if (!NAME_RE.test(id)) return // session ids also end up in tmux commands
     if (m.t === 'attach') {
       if (!(await listTerminals()).some(t => t.id === id)) return send({ t: 'exit', term: id })
       let v = viewers.get(id)
@@ -458,7 +565,7 @@ async function connect(creds) {
       ws.onmessage = ev => {
         let m
         try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : '') } catch { return }
-        onMessage(m).catch(err => log(`${m.t}: ${err.message}`))
+        onMessage(m).catch(err => log(`${plain(m?.t)}: ${err.message}`))
       }
       ws.onerror = () => {}
       ws.onclose = ev => resolveClose({ code: ev.code, reason: ev.reason })
@@ -466,7 +573,7 @@ async function connect(creds) {
     for (const v of viewers.values()) v.close()
     viewers.clear()
     if (closed.code === 4001) die('the server no longer accepts this machine (it was disconnected from the dashboard). Enroll it again with a new command from the dashboard.')
-    log(`connection lost${closed.reason ? ` (${closed.reason})` : ''}; retrying in ${Math.round(backoff / 1000)} s`)
+    log(`connection lost${closed.reason ? ` (${plain(closed.reason)})` : ''}; retrying in ${Math.round(backoff / 1000)} s`)
     await new Promise(r => setTimeout(r, backoff))
     backoff = Math.min(backoff * 2, 30_000)
   }
@@ -478,7 +585,8 @@ const USAGE = `Usage:
   node squadra-host.mjs enroll <server-url> <code>   Join this machine to a Squadra server and start
                                                      (the dashboard shows this command in Hosts → Add).
                                                      Also installs the Squadra plugin in Claude Code if
-                                                     it's missing (--no-plugin to skip)
+                                                     it's missing (--no-plugin to skip). Needs https,
+                                                     unless --insecure (trusted private network only)
   node squadra-host.mjs [run]                        Connect with the saved credential
   node squadra-host.mjs folders [add|remove <path>]  Folders where sessions may be opened
   node squadra-host.mjs status                       Show this machine's settings and sessions
@@ -491,12 +599,27 @@ Settings: ${SETTINGS_FILE}
   max_sessions   at most this many sessions at once (default 8)
   allow_input    whether the dashboard may type in the terminals (default true)
   claude_command the Claude Code executable (default "claude")
+  permission_relay whether a worker's coordinator may answer its permission prompts
+                 from another session (default: same as allow_input)
+  coordinators   if set, the only coordinator names workers here may be given
 `
 
-async function enroll(server, code, { plugin = true } = {}) {
+// Plain http only to this machine, or when asked for explicitly: otherwise
+// anyone on the way could read the credentials or swap what the server says.
+function checkScheme(server, insecure) {
+  let u
+  try { u = new URL(server) } catch { die(`invalid server URL: ${plain(server)}`, 2) }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') die('the server URL must start with https:// (or http:// on this machine)', 2)
+  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(u.hostname)
+  if (u.protocol === 'http:' && !loopback && !insecure) {
+    die(`refusing plain http to ${u.host}: credentials and terminals would travel unencrypted. Use https, or add --insecure if this is a trusted private network.`, 2)
+  }
+}
+
+async function enroll(server, code, { plugin = true, insecure = false } = {}) {
   if (!server || !code) die(`enroll needs the server URL and a code.\n\n${USAGE}`, 2)
   server = server.replace(/\/+$/, '')
-  if (!/^https?:\/\//.test(server)) die('the server URL must start with http:// or https://', 2)
+  checkScheme(server, insecure)
   const info = await hostInfo()
   let res
   try {
@@ -507,19 +630,35 @@ async function enroll(server, code, { plugin = true } = {}) {
     })
   } catch (err) { die(`cannot reach ${server}: ${err.cause?.message ?? err.message}`) }
   const j = await res.json().catch(() => ({}))
-  if (!j.ok) die(`enrollment refused: ${j.description ?? `HTTP ${res.status}`}`)
-  writeJson(CREDENTIALS_FILE, { server, id: j.result.id, secret: j.result.secret })
-  // First enrollment: allow the current folder, so there is somewhere to start.
-  if (!existsSync(SETTINGS_FILE)) writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS, folders: [process.cwd()] }, 0o644)
+  if (!j.ok) die(`enrollment refused: ${plain(j.description ?? `HTTP ${res.status}`)}`)
+  const r = j.result ?? {}
+  if (typeof r.id !== 'string' || !/^h_[0-9a-f]{8,64}$/.test(r.id) || typeof r.secret !== 'string' || !/^sh_[A-Za-z0-9_-]{20,200}$/.test(r.secret)) {
+    die('the server answered the enrollment with something unexpected')
+  }
+  writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure })
+  // First enrollment: allow the current folder, so there is somewhere to start
+  // (not a whole home or system folder, nor a credentials one).
+  if (!existsSync(SETTINGS_FILE)) {
+    const here = realOr(process.cwd())
+    const why = forbiddenFolder(here)
+    writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS, folders: why ? [] : [here] })
+    if (why) log(`no folder allowed yet: ${here} is ${why}. Add one with: node ${INSTALLED_SCRIPT} folders add <path>`)
+  }
   // Keep a copy of this program next to its settings, for the service.
   const self = fileURLToPath(import.meta.url)
   if (resolve(self) !== resolve(INSTALLED_SCRIPT)) { try { copyFileSync(self, INSTALLED_SCRIPT) } catch {} }
   // Configure the Squadra plugin on this machine if it isn't yet.
   const pluginEnv = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'squadra', '.env')
-  if (j.result.plugin && !existsSync(pluginEnv)) {
+  // Only a well-formed URL and token: anything else (a line break, say) could
+  // add settings of its own to the plugin's .env.
+  const pu = r.plugin?.url, pt = r.plugin?.token
+  const urlOk = typeof pu === 'string' && /^https?:\/\/[^\s]+$/.test(pu) && (() => { try { return !!new URL(pu) } catch { return false } })()
+  const tokenOk = typeof pt === 'string' && /^[\x21-\x7e]{16,256}$/.test(pt)
+  if (r.plugin && (!urlOk || !tokenOk)) log('⚠️  the server sent an invalid plugin configuration: ignored')
+  else if (r.plugin && !existsSync(pluginEnv)) {
     mkdirSync(join(pluginEnv, '..'), { recursive: true, mode: 0o700 })
-    writeFileSync(pluginEnv, `SQUADRA_URL=${j.result.plugin.url}\nSQUADRA_SERVER_TOKEN=${j.result.plugin.token}\n`, { mode: 0o600 })
-    log(`Squadra plugin configured for ${j.result.plugin.url} (${pluginEnv})`)
+    writeFileSync(pluginEnv, `SQUADRA_URL=${pu}\nSQUADRA_SERVER_TOKEN=${pt}\n`, { mode: 0o600 })
+    log(`Squadra plugin configured for ${pu} (${pluginEnv})`)
   }
   // Install the plugin itself, so sessions opened from the dashboard work unattended.
   if (plugin && info.claude) {
@@ -532,7 +671,7 @@ async function enroll(server, code, { plugin = true } = {}) {
     }
   }
   const s = loadSettings()
-  process.stderr.write(`\nsquadra-host: this machine is now "${j.result.name}" on ${server}.
+  process.stderr.write(`\nsquadra-host: this machine is now "${plain(r.name)}" on ${server}.
   Sessions may be opened in: ${s.folders.join(', ') || '(none)'}
   Change it with: node ${INSTALLED_SCRIPT} folders add <path>
   Keep it running in the background: node ${INSTALLED_SCRIPT} service
@@ -550,14 +689,21 @@ function folders(action, path) {
     const abs = resolve(path)
     if (action === 'add') {
       if (!existsSync(abs) || !statSync(abs).isDirectory()) die(`${abs} is not a folder`, 2)
+      const why = forbiddenFolder(realOr(abs))
+      if (why) die(`${abs} can't be allowed: it is ${why}. Allow a project folder (or a folder of projects) instead.`, 2)
       if (!s.folders.includes(abs)) s.folders.push(abs)
     } else s.folders = s.folders.filter(f => f !== abs)
-    writeJson(SETTINGS_FILE, s, 0o644)
+    writeJson(SETTINGS_FILE, s)
   }
   process.stdout.write((s.folders.length ? s.folders.join('\n') : '(no folders: no session can be opened)') + '\n')
 }
 
 const TMUX_INSTALL = platform() === 'darwin' ? 'brew install tmux' : 'sudo apt install tmux (or your distribution\'s package)'
+
+// systemd: a quoted word, with % (specifiers) escaped.
+const sd = v => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/%/g, '%%')}"`
+// PATH for the service, without relative entries.
+const absolutePath = () => String(process.env.PATH ?? '').split(':').filter(d => isAbsolute(d)).join(':')
 
 function service() {
   const node = process.execPath
@@ -578,7 +724,7 @@ function service() {
   <key>ProgramArguments</key>
   <array><string>${x(node)}</string><string>${x(INSTALLED_SCRIPT)}</string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>${x(process.env.PATH)}</string></dict>
+  <dict><key>PATH</key><string>${x(absolutePath())}</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardErrorPath</key><string>${x(logFile)}</string>
@@ -595,10 +741,10 @@ Description=Squadra host
 After=network-online.target
 
 [Service]
-ExecStart=${node} ${INSTALLED_SCRIPT}
+ExecStart=${sd(node)} ${sd(INSTALLED_SCRIPT)}
 Restart=always
 RestartSec=5
-Environment=PATH=${process.env.PATH}
+Environment=${sd(`PATH=${absolutePath()}`)}
 
 [Install]
 WantedBy=default.target
@@ -621,17 +767,18 @@ async function main() {
   if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`)
   const tv = await tmuxVersion()
   if (tv && tv.major < 3) die(`${tv.text} is too old: squadra-host needs tmux 3.0 or newer`)
-  CLAUDE_VERSION = await claudeVersion(loadSettings().claude_command)
+  CLAUDE_VERSION = claudeOrNull() ? await claudeVersion(claudeOrNull()) : null
   if (cmd === 'plugin') {
     try { const st = await ensurePlugin({ update: true }); return log(`Squadra plugin ${st.version ?? ''} is installed and up to date. Restart open sessions to use a new version.`) }
     catch (err) { die(`${err.message.split('\n')[0]}\nInstall it by hand with: ${PLUGIN_COMMANDS}`) }
   }
   if (cmd === 'enroll') {
     const args = rest.filter(a => !a.startsWith('--'))
-    await enroll(args[0], args[1], { plugin: !rest.includes('--no-plugin') })
+    await enroll(args[0], args[1], { plugin: !rest.includes('--no-plugin'), insecure: rest.includes('--insecure') })
   }
   else if (cmd !== 'run') die(`unknown command "${cmd}"\n\n${USAGE}`, 2)
   const creds = readJson(CREDENTIALS_FILE, null)
+  if (creds?.server) checkScheme(creds.server, creds.insecure === true)
   if (!creds?.server || !creds?.secret) die(`this machine is not enrolled yet. In the dashboard, open Hosts → Add and run the command it shows.\n\n${USAGE}`, 2)
   if (!tv) log(`⚠️  tmux is not installed: sessions cannot be opened until it is (${TMUX_INSTALL}).`)
   PLUGIN = await pluginStatus()
@@ -642,5 +789,7 @@ async function main() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  // A bad message must never take the host down.
+  process.on('unhandledRejection', err => log(`error: ${err?.message ?? err}`))
   main().catch(err => die(err.stack ?? err.message))
 }

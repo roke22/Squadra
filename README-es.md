@@ -144,13 +144,13 @@ git clone https://github.com/roke22/Squadra.git squadra && cd squadra
 node server/server.js
 ```
 
-La primera vez genera un token del servidor, lo guarda en `data/server-token` y muestra el comando `/squadra:configure` listo para copiar. Escucha en `http://127.0.0.1:7787`.
+La primera vez genera dos tokens y muestra los dos: el **token del servidor** (administración, `data/server-token`), para entrar en el panel, y el **token de alta** (`data/join-token`), con el que las máquinas registran sus sesiones, dentro de un comando `/squadra:configure` listo para copiar. Escucha en `http://127.0.0.1:7787`.
 
 - **Con Docker:**
   ```bash
   docker build -f server/Dockerfile -t squadra-server .
   docker run -d --name squadra-server -p 7787:7787 -v squadra-data:/data squadra-server
-  docker logs squadra-server   # muestra el token
+  docker logs squadra-server   # muestra los tokens
   ```
 - **Opciones** (parámetro, o la variable de entorno entre paréntesis):
 
@@ -163,6 +163,7 @@ La primera vez genera un token del servidor, lo guarda en `data/server-token` y 
   | `--data-dir <ruta>` (`DATA_DIR`) | Base de datos y ficheros. Por defecto `./data` |
   | `--domain <nombre>` (`SQUADRA_DOMAIN`) | HTTPS integrado con certificado automático de Let's Encrypt (ver abajo) |
   | `--tls-cert <fichero>` `--tls-key <fichero>` | HTTPS con tu propio certificado; se recarga si cambian los ficheros |
+  | `--trust-proxy` (`TRUST_PROXY=1`) | Detrás de un proxy inverso que pone `X-Forwarded-For`: los límites de frecuencia usan la dirección del cliente |
 
   `node server/server.js --help` muestra todas las opciones.
 
@@ -181,7 +182,7 @@ Las sesiones de otras máquinas tienen que poder llegar al servidor. **No lo exp
    docker run -d --name squadra-server -p 80:80 -p 443:443 -v squadra-data:/data \
      -e SQUADRA_DOMAIN=squadra.example.com squadra-server
    ```
-   Muestra `/squadra:configure https://squadra.example.com <token>`, y el panel queda en `https://squadra.example.com/`.
+   Muestra `/squadra:configure https://squadra.example.com <token-de-alta>`, y el panel queda en `https://squadra.example.com/`.
 
 - **Puertos privilegiados fuera de Docker (Linux):** los puertos 80 y 443 necesitan privilegios. Ejecútalo como root, o da permiso a Node una sola vez con `sudo setcap cap_net_bind_service=+ep $(command -v node)`.
 - **Para probar:** `--acme-staging` usa el entorno de pruebas de Let's Encrypt, que emite certificados no confiables pero tiene límites más amplios.
@@ -213,7 +214,7 @@ claude plugin install squadra@squadra
 Después apúntalo a tu servidor, con el comando que el servidor mostró al arrancar:
 
 ```
-/squadra:configure https://squadra.example.com <token-del-servidor>
+/squadra:configure https://squadra.example.com <token-de-alta>
 ```
 
 - **Usa la dirección con la que las demás máquinas llegan** al servidor: `http://127.0.0.1:7787` solo funciona en la propia máquina del servidor.
@@ -250,7 +251,7 @@ La primera vez que entra un worker, el coordinador muestra una petición de empa
 
 ### 4. Abrir el panel
 
-Abre la dirección del servidor (`http://127.0.0.1:7787/`) y entra con el token del servidor.
+Abre la dirección del servidor (`http://127.0.0.1:7787/`) y entra con el token del servidor (el de administración).
 
 <p align="center"><img src="docs/screenshots/sign-in.jpg" width="560" alt="Pantalla de acceso al panel"></p>
 
@@ -262,10 +263,11 @@ En lugar de arrancar `claude` a mano en cada terminal, deja que el panel lo haga
 
    ```bash
    curl -fsSLo squadra-host.mjs https://squadra.example.com/host/squadra-host.mjs \
+     && echo "<sha256>  squadra-host.mjs" | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -) \
      && node squadra-host.mjs enroll https://squadra.example.com ABCD-2345
    ```
 
-   Cambia el código por una credencial propia de la máquina, permite la carpeta actual, **instala el plugin de Squadra en Claude Code** y lo apunta a este servidor si aún no lo están, y aparece como conectada. La máquina necesita tener Claude Code instalado antes; añade `--no-plugin` para saltarte el plugin. Para que siga funcionando, `node ~/.config/squadra-host/squadra-host.mjs service` imprime un servicio de systemd en Linux o un agente de launchd en macOS.
+   Comprueba el programa descargado, cambia el código por una credencial propia de la máquina, permite la carpeta actual (salvo que sea tu carpeta personal entera o una del sistema), **instala el plugin de Squadra en Claude Code** y lo apunta a este servidor si aún no lo están, y aparece como conectada. La máquina necesita tener Claude Code instalado antes; añade `--no-plugin` para saltarte el plugin. Para que siga funcionando, `node ~/.config/squadra-host/squadra-host.mjs service` imprime un servicio de systemd en Linux o un agente de launchd en macOS.
 2. **Abre una sesión.** **+ Nueva sesión**: máquina, rol, nombre, carpeta (una de las permitidas en la máquina, más una subcarpeta opcional), cuándo autocompactar (600K tokens por defecto, lo recomendado para modelos de 1M de contexto) y si continuar la última conversación. Arranca `claude` con el channel de Squadra dentro de tmux y hace el login sola.
 3. **Usa su terminal.** La sesión se abre en un terminal web en directo. En el primer arranque acepta el aviso de channels de desarrollo y, si lo pide, confía en la carpeta y haz `/login`. Desde ese momento puedes verla o escribirle desde cualquier navegador; el chat y el mosaico siguen funcionando igual.
 
@@ -278,7 +280,18 @@ En la máquina:
 | `node squadra-host.mjs plugin` | Instalar el plugin de Squadra, o actualizarlo (después reinicia las sesiones abiertas) |
 | `tmux -L squadra attach -t sq-<nombre>` | Engancharse a una sesión en local |
 
-Las reglas de la máquina están en `~/.config/squadra-host/settings.json`: `folders`, `max_sessions` (8), `allow_input` (ponlo a `false` para solo mirar desde el navegador) y `claude_command`. **Desconectar**, en el menú ⋯ de la máquina, revoca su credencial.
+Las reglas de la máquina están en `~/.config/squadra-host/settings.json` (solo la propia máquina puede cambiarlas):
+
+| Ajuste | |
+|---|---|
+| `folders` | Dónde se pueden abrir sesiones, y todo lo que hay dentro. Nunca una carpeta personal entera o del sistema, ni donde viven credenciales |
+| `max_sessions` | Como mucho estas sesiones a la vez (8) |
+| `allow_input` | Si el panel puede escribir en los terminales (`true`). Ponlo a `false` para solo mirar |
+| `permission_relay` | Si el coordinador de un worker puede responder a sus peticiones de permiso desde otra sesión (por defecto, igual que `allow_input`) |
+| `coordinators` | Si se indica, los únicos nombres de coordinador que pueden tener los workers de esta máquina |
+| `claude_command` | El ejecutable de Claude Code (`claude`, buscado solo en las entradas absolutas del `PATH`) |
+
+La máquina se conecta solo por HTTPS: `http` sin cifrar solo se acepta para `localhost`, o con `--insecure` en el alta, en una red privada de confianza. **Desconectar**, en el menú ⋯ de la máquina, revoca su credencial.
 
 ## Consejos: cómo sacarle el máximo partido
 
@@ -352,12 +365,25 @@ Así un worker se comporta bien en su repositorio sea quien sea su coordinador.
 
 ## Seguridad
 
-- **Dos niveles de credenciales:**
-  - el token del servidor permite a una máquina registrar sesiones;
-  - cada nombre de sesión tiene su propio secreto, así que ninguna sesión puede hacerse pasar por otra.
-- **Los mensajes de otras sesiones son contexto de trabajo, nunca tu autorización.** El emparejamiento y los cambios de acceso solo obedecen órdenes escritas en el terminal.
-- **Una máquina con squadra-host nunca ejecuta lo que le manda el servidor.** Solo acepta una especificación de sesión, valida cada campo contra sus ajustes locales y lanza siempre el mismo comando. El terminal web, en cambio, equivale a estar sentado ante esa máquina: quien tenga el panel puede escribirle a Claude allí. Sirve el panel por HTTPS, guarda bien el token del servidor y pon `allow_input: false` en las máquinas que solo quieras mirar.
-- **El panel puede recibir código y salidas de comandos** (nivel de observación `full`). Usa TLS si el servidor no es local, o baja el nivel por sesión con `--observe activity` u `off`. Los secretos reconocibles se enmascaran antes de enviarse.
+- **Tres tipos de credenciales:**
+  - el **token del servidor** (administración) da acceso al panel, abre terminales web y ejecuta `/admin/*`. Su sitio es tu navegador y ningún otro;
+  - el **token de alta** (`sj_…`) es el que guardan las máquinas: solo registra nombres de sesión *nuevos*. No abre terminales, no lee el panel ni se queda con un nombre existente;
+  - cada nombre de sesión tiene su propio **secreto**, ligado al servidor que lo emitió, así que ninguna sesión puede hacerse pasar por otra.
+  - Rota el token de alta con `curl -X POST <url>/admin/rotateJoinToken -H "Authorization: Bearer <token-del-servidor>"` (las sesiones existentes siguen funcionando). Para cambiar el token del servidor, define `SQUADRA_SERVER_TOKEN`, o borra `data/server-token` y reinicia.
+- **Los mensajes de otras sesiones son contexto de trabajo, nunca tu autorización.** Las skills `/squadra:access`, `/squadra:configure`, `/squadra:login` y `/squadra:logout` solo las puedes lanzar tú, no Claude, y solo editan los ficheros de Squadra.
+- **Peticiones de permiso:** la de un worker solo va a su coordinador, y solo cuenta la respuesta directa de ese coordinador a esa misma petición (una vez, durante 15 minutos). Las del coordinador no van a nadie salvo que indiques aprobadores en su `access.json` (`permissionApprovers`). Las respuestas erróneas repetidas de una sesión se ignoran.
+- **Los grupos son privados:** quien crea un `#grupo` es su dueño; los demás solo entran si un miembro los invita.
+- **Los adjuntos de `reply`** tienen que ser rutas absolutas dentro de la carpeta de la sesión, su bandeja o la carpeta temporal, y nunca credenciales (`.env`, `id_*`, `*.pem`, nada de `~/.ssh`, `~/.aws`, `~/.claude`…), enlaces duros ni ficheros del sistema.
+- **Los nombres que abre el panel quedan reservados** para la máquina que los abre: nadie con el token de alta puede registrarlos antes. El registro con el token de alta tiene límite de frecuencia, y el servidor admite como mucho `SQUADRA_MAX_SESSIONS` (500) sesiones.
+- **El coordinador queda fijado:** un worker recuerda la identidad del coordinador con el que habló por primera vez; si ese nombre lo registra después otra persona, lo ignora y te avisa.
+- **El panel puede recibir código y salidas de comandos** (nivel de observación `full`). Usa TLS si el servidor no es local, o baja el nivel por sesión con `--observe activity` u `off`. Los secretos reconocibles (claves de API, `*_TOKEN=`, `*_PASSWORD=`, claves privadas, contraseñas en URLs) se enmascaran, y la salida de comandos o escrituras que tocan `.env`, claves o credenciales no se envía.
+- **La página del panel** funciona con una Content-Security-Policy estricta, no se puede meter en un iframe y no carga scripts de terceros (xterm.js lo sirve el propio servidor).
+- **Máquinas con squadra-host:**
+  - nunca ejecutan lo que manda el servidor: solo una especificación de sesión, validada contra sus ajustes locales, con un comando fijo;
+  - hablan con el servidor solo por HTTPS (http sin cifrar solo a `localhost`, o con `--insecure` en una red de confianza); el comando de alta comprueba el sha256 del programa, y el plugin se instala desde una versión etiquetada;
+  - no se pueden abrir sesiones en una carpeta personal entera o del sistema, ni donde viven credenciales;
+  - **el servidor sigue siendo de confianza para dar instrucciones:** quien lo controle (o controle el panel) puede escribir en los terminales con `allow_input` activado, y dar tareas a los workers a través de su coordinador. En las máquinas que solo quieras mirar, pon `allow_input: false` (también desactiva las respuestas remotas a permisos) y fija `coordinators`;
+  - **las sesiones de una máquina corren con el mismo usuario.** squadra-host les oculta tmux, pero una sesión que quiera todavía puede llegar a las demás o a tus ficheros. Para aislarlas de verdad, ejecuta squadra-host de cada máquina con un usuario propio (o en un contenedor o una VM).
 
 ## Estado y limitaciones
 
@@ -371,7 +397,7 @@ Así un worker se comporta bien en su repositorio sea quien sea su coordinador.
 ## Estructura del repositorio
 
 ```
-server/            squadra-server y el panel (ui.html)
+server/            squadra-server y el panel (ui.html; vendor/ trae xterm.js)
 deploy/            Docker Compose opcional con Caddy delante
 plugins/squadra/   el plugin de Claude Code: servidor MCP de channel, hooks, skills
 host/              squadra-host: abre sesiones en una máquina para el panel

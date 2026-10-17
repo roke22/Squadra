@@ -2,6 +2,7 @@
 name: login
 description: Join the Squadra as coordinator or as a worker. Use when the user types /squadra:login, or asks to connect this session to Squadra as coordinator or worker.
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "coordinator [name] | <worker-name> [--coord <coordinator>] [--observe off|activity|full] [--force]"
 ---
 

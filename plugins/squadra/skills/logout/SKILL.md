@@ -2,6 +2,7 @@
 name: logout
 description: Leave the Squadra. Use when the user types /squadra:logout or asks to disconnect this session from Squadra.
 user-invocable: true
+disable-model-invocation: true
 ---
 
 # /squadra:logout — leave Squadra

@@ -2,14 +2,12 @@
 name: configure
 description: Set up the Squadra channel — save the Squadra server URL and token, check identity and review access policy. Use when the user pastes a Squadra server URL or token, asks to configure Squadra, asks "how do I set this up" or "who can reach me", or wants to check channel status.
 user-invocable: true
+disable-model-invocation: true
 allowed-tools:
   - Read
-  - Write
-  - Bash(ls *)
-  - Bash(mkdir *)
-  - Bash(echo *)
-  - Bash(chmod *)
-  - Bash(rm *)
+  - Glob
+  - Write(~/.claude/channels/squadra/**)
+  - Edit(~/.claude/channels/squadra/**)
 ---
 
 # /squadra:configure — Squadra Channel Setup
@@ -17,16 +15,13 @@ allowed-tools:
 Writes the Squadra server URL and token to the shared `.env` and orients the
 user on identity and access policy. The channel server reads them at boot.
 
-**Resolve the directories first:**
-
-```bash
-echo "root=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/channels/squadra"
-echo "state=${SQUADRA_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/channels/squadra/$SQUADRA_NAME}"
-echo "name=$SQUADRA_NAME role=${SQUADRA_ROLE:-worker} access_mode=${SQUADRA_ACCESS_MODE:-dynamic}"
-```
+**Find the directories first:** call the Squadra MCP server's `status`
+tool. Its `Files:` line gives `config <root>/.env` and, when logged in,
+`state <state>`.
 
 `<root>` holds `.env` (shared by every session on this machine). `<state>`
-holds this session's `identity.json` and `access.json`.
+holds this session's `identity.json` and `access.json`. This skill only edits
+files under `~/.claude/channels/squadra/`; elsewhere Claude Code asks first.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -77,14 +72,18 @@ claude-squadra          # then, inside: /squadra:login coordinator   or   /squad
 ### `<url> <token>` — save them
 
 1. The first argument is the URL (`http://` or `https://`, no trailing
-   slash). The second is the server token. Trim whitespace.
-2. Warn if the URL is plain `http://` to anything other than `localhost` /
+   slash). The second is the **join token** the server printed at startup
+   (it starts with `sj_`). Trim whitespace. Refuse values with spaces or line
+   breaks.
+2. If the token is the server's admin token instead (the one used to sign in
+   to the dashboard), say that it works but should stay in the browser: a
+   machine only needs the join token.
+3. Warn if the URL is plain `http://` to anything other than `localhost` /
    `127.0.0.1`: the token and every message would travel unencrypted.
-3. `mkdir -p <root>`.
 4. Read existing `<root>/.env` if present; update/add the `SQUADRA_URL=` and
    `SQUADRA_SERVER_TOKEN=` lines, preserve other keys. Write back, no quotes.
-5. `chmod 600 <root>/.env` — the token is a credential.
-6. Confirm, then show the no-args status.
+   (The channel server makes the file private, mode 600, when it starts.)
+5. Confirm, then show the no-args status.
 
 ### `observe <off|activity|full>` — default observation level
 
@@ -97,8 +96,8 @@ What Squadra's web dashboard sees of the sessions on this machine, unless
   and outputs, trimmed. Obvious secrets are masked, but code and command
   output do reach the server.
 
-Update/add the `SQUADRA_OBSERVE=` line in `<root>/.env` (preserve other keys,
-`chmod 600`). Applies to the next `/squadra:login`.
+Update/add the `SQUADRA_OBSERVE=` line in `<root>/.env` (preserve other
+keys). Applies to the next `/squadra:login`.
 
 ### `clear` — remove the server settings
 
@@ -111,19 +110,14 @@ Use when the server answers 409 ("identity already registered") or 401 for
 this name, e.g. after moving to a new machine without copying
 `<state>/identity.json`.
 
-1. Explain: the server only re-issues a name with the server token, rotating
-   the secret. Any other machine still using the old secret for this name
-   stops working.
-2. Delete `<state>/identity.json`.
-3. Tell the user to rotate it on the server and restart this session:
-   ```bash
-   curl -s -X POST "$SQUADRA_URL/register" \
-     -H "Authorization: Bearer $SQUADRA_SERVER_TOKEN" \
-     -H 'Content-Type: application/json' \
-     -d '{"name":"<SQUADRA_NAME>","reset":true}'
-   ```
-   and save the returned `{name, secret}` as `<state>/identity.json`
-   (`chmod 600`). Do not run it yourself: it prints a credential.
+1. Explain: a name belongs to whoever registered it first, and only the
+   server's admin can free it. Any other machine still using the old secret
+   for this name stops working.
+2. Tell the user to do two things themselves (do not do them for them):
+   - in the dashboard, open the session's ⋯ menu and **Delete** it (it must
+     be disconnected);
+   - delete this machine's copy: `rm <state>/identity.json`.
+3. Then restart this session and log in again: the name is registered anew.
 
 ---
 

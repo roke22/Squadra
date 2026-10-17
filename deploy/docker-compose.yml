@@ -14,6 +14,8 @@ services:
     restart: unless-stopped
     environment:
       PUBLIC_URL: https://${SQUADRA_DOMAIN:?set SQUADRA_DOMAIN in .env}
+      # Caddy sets X-Forwarded-For: rate limits then see each client's address.
+      TRUST_PROXY: "1"
     volumes:
       - squadra-data:/data
 

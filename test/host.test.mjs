@@ -70,6 +70,7 @@ fi
 echo "ARGS: $*"
 echo "ENV: $SQUADRA_NAME/$SQUADRA_ROLE/$SQUADRA_COORDINATOR/$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
 echo "PWD: $(pwd)"
+echo "TMUX=\${TMUX:-none}"
 while IFS= read -r line; do echo "GOT:$line"; done
 `)
   chmodSync(fakeClaude, 0o755)
@@ -113,13 +114,21 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   const en = await dash('hosts/enroll', { name: 'test box' })
   assert.ok(en.ok, en.description)
   assert.match(en.result.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
-  assert.ok(en.result.command.includes(`${URL_}/host/squadra-host.mjs`))
-  assert.ok(en.result.command.includes(`enroll ${URL_} ${en.result.code}`))
+  assert.ok(en.result.command.includes(`'${URL_}/host/squadra-host.mjs'`))
+  assert.ok(en.result.command.includes(`enroll '${URL_}' ${en.result.code}`))
 
-  // The program is served by the server, as the command expects.
+  // The program is served by the server, as the command expects, and the
+  // command checks its sha256 before running it (a tampered copy fails).
   const js = await fetch(`${URL_}/host/squadra-host.mjs`)
   assert.equal(js.status, 200)
-  assert.match(await js.text(), /squadra-host/)
+  const jsText = await js.text()
+  assert.match(jsText, /squadra-host/)
+  const verify = en.result.command.match(/ && (echo .*?\)) && node /)[1]
+  const dl = mkdtempSync(join(tmpdir(), 'squadra-dl-'))
+  writeFileSync(join(dl, 'squadra-host.mjs'), jsText)
+  execFileSync('sh', ['-c', verify], { cwd: dl, stdio: 'ignore' })
+  writeFileSync(join(dl, 'squadra-host.mjs'), jsText + '\n// tampered')
+  assert.throws(() => execFileSync('sh', ['-c', verify], { cwd: dl, stdio: 'ignore' }))
 
   hostProc = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', URL_, en.result.code.toLowerCase()], {
     env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
@@ -148,7 +157,10 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.match(creds.secret, /^sh_/)
   const env = readFileSync(join(claudeDir, 'channels', 'squadra', '.env'), 'utf8')
   assert.match(env, new RegExp(`SQUADRA_URL=${URL_}`))
-  assert.match(env, new RegExp(`SQUADRA_SERVER_TOKEN=${SERVER_TOKEN}`))
+  // The machine gets the join token (register new sessions only), never the admin token.
+  const joinToken = readFileSync(join(dataDir, 'join-token'), 'utf8').trim()
+  assert.match(env, new RegExp(`SQUADRA_SERVER_TOKEN=${joinToken}`))
+  assert.ok(!env.includes(SERVER_TOKEN), 'admin token not handed to machines')
 
   // The code works only once.
   const again = await (await fetch(`${URL_}/host/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: en.result.code }) })).json()
@@ -187,6 +199,16 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   assert.equal(h.info.terminals[0].role, 'worker')
   assert.equal(h.info.terminals[0].folder, realpathSync(join(allowed, 'api')))
 
+  // The server reserved the name for this machine and handed it its identity.
+  const ident = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'w1', 'identity.json'), 'utf8'))
+  assert.match(ident.secret, /^sq_/)
+  // A name someone else registered first (with the join token) is refused.
+  const joinTok = readFileSync(join(dataDir, 'join-token'), 'utf8').trim()
+  await fetch(`${URL_}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${joinTok}` }, body: JSON.stringify({ name: 'squat1' }) })
+  const squat = await dash('terminals/open', { host: hostId, spec: { name: 'squat1', role: 'worker', folder: allowed } })
+  assert.equal(squat.ok, false)
+  assert.match(squat.description, /already registered by another session/)
+
   // Same name twice on the machine: refused.
   const dup = await dash('terminals/open', { host: hostId, spec: { name: 'w1', role: 'worker', folder: allowed } })
   assert.equal(dup.ok, false)
@@ -208,6 +230,8 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   await waitFor(() => v.text.includes('ARGS: --dangerously-load-development-channels plugin:squadra@squadra'), { what: 'fixed command in the screen' })
   assert.ok(v.text.includes('ENV: w1/worker/boss/600000'), v.text)
   assert.ok(v.text.includes(`PWD: ${realpathSync(join(allowed, 'api'))}`), v.text)
+  // The session doesn't see the tmux server it runs in (no "tmux send-keys" into others).
+  assert.ok(v.text.includes('TMUX=none'), v.text)
 
   v.send({ t: 'in', host: hostId, term: 'w1', data: 'hello squadra\r' })
   await waitFor(() => v.text.includes('GOT:hello squadra'), { what: 'typed text echoed' })

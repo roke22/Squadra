@@ -29,7 +29,10 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
   socket.setNoDelay(true)
   socket.setTimeout(0)
 
-  let buf = head?.length ? Buffer.from(head) : Buffer.alloc(0)
+  // Incoming bytes as a list of chunks: joined only once a whole frame is
+  // there, so a frame trickled in tiny pieces costs no repeated copying.
+  const chunks = head?.length ? [Buffer.from(head)] : []
+  let buffered = chunks.reduce((n, c) => n + c.length, 0)
   let fragments = []
   let fragmentsSize = 0
   let fragmentOpcode = 0
@@ -38,6 +41,8 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
   const ws = {
     onmessage: () => {},
     onclose: () => {},
+    // Largest message accepted; the server raises it once a client has authenticated.
+    maxMessage,
     get open() { return !closed },
     send(text) {
       if (closed) return false
@@ -62,50 +67,77 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
   function finish() {
     if (closed) return
     closed = true
+    chunks.length = 0; buffered = 0; fragments = []
     try { ws.onclose() } catch {}
   }
 
   function fail(code, reason) { ws.close(code, reason) }
 
   socket.on('data', chunk => {
-    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk
+    if (closed) return
+    chunks.push(chunk)
+    buffered += chunk.length
     parse()
   })
   socket.on('close', finish)
   socket.on('error', finish)
-  if (buf.length) setImmediate(parse)
+  if (buffered) setImmediate(parse)
+
+  // The first n buffered bytes (joining chunks only as far as needed).
+  function peek(n) {
+    if (chunks[0].length < n) {
+      const joined = Buffer.concat(chunks)
+      chunks.length = 0
+      chunks.push(joined)
+    }
+    return chunks[0]
+  }
+  function take(n) {
+    const first = peek(n)
+    const out = first.subarray(0, n)
+    if (first.length === n) chunks.shift(); else chunks[0] = first.subarray(n)
+    buffered -= n
+    return out
+  }
 
   function parse() {
-    while (!closed && buf.length >= 2) {
-      const b0 = buf[0], b1 = buf[1]
+    while (!closed && buffered >= 2) {
+      const h = peek(Math.min(buffered, 14))
+      const b0 = h[0], b1 = h[1]
       const fin = (b0 & 0x80) !== 0
       const opcode = b0 & 0x0f
       const masked = (b1 & 0x80) !== 0
       let len = b1 & 0x7f
       let off = 2
       if (len === 126) {
-        if (buf.length < 4) return
-        len = buf.readUInt16BE(2); off = 4
+        if (buffered < 4) return
+        len = h.readUInt16BE(2); off = 4
       } else if (len === 127) {
-        if (buf.length < 10) return
-        const big = buf.readBigUInt64BE(2)
-        if (big > BigInt(maxMessage)) return fail(1009, 'message too big')
+        if (buffered < 10) return
+        const big = h.readBigUInt64BE(2)
+        if (big > BigInt(ws.maxMessage)) return fail(1009, 'message too big')
         len = Number(big); off = 10
       }
       if (!masked) return fail(1002, 'client frames must be masked')
-      if (len > maxMessage) return fail(1009, 'message too big')
-      if (buf.length < off + 4 + len) return
-      const mask = buf.subarray(off, off + 4)
-      const payload = Buffer.from(buf.subarray(off + 4, off + 4 + len))
+      // Control frames: at most 125 bytes and never fragmented (RFC 6455 5.5).
+      if (opcode >= 0x8 && (len > 125 || !fin)) return fail(1002, 'invalid control frame')
+      if (len > ws.maxMessage) return fail(1009, 'message too big')
+      if (buffered < off + 4 + len) return
+      const raw = take(off + 4 + len)
+      const mask = raw.subarray(off, off + 4)
+      const payload = Buffer.from(raw.subarray(off + 4))
       for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3]
-      buf = buf.subarray(off + 4 + len)
 
       if (opcode === 0x8) { // close
         const code = payload.length >= 2 ? payload.readUInt16BE(0) : 1000
         ws.close(code === 1005 || code === 1006 ? 1000 : code)
         return
       }
-      if (opcode === 0x9) { socket.write(frame(0xA, payload)); continue } // ping → pong
+      if (opcode === 0x9) { // ping → pong, unless the client isn't reading what we send
+        if (socket.writableLength > 64 * 1024) return fail(1008, 'not reading')
+        socket.write(frame(0xA, payload))
+        continue
+      }
       if (opcode === 0xA) continue                                       // pong
       if (opcode === 0x1 || opcode === 0x2) {
         if (fragments.length) return fail(1002, 'expected a continuation frame')
@@ -117,7 +149,7 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
       }
       fragments.push(payload)
       fragmentsSize += payload.length
-      if (fragmentsSize > maxMessage) return fail(1009, 'message too big')
+      if (fragmentsSize > ws.maxMessage) return fail(1009, 'message too big')
       if (!fin) continue
       const data = Buffer.concat(fragments)
       fragments = []; fragmentsSize = 0
