@@ -7,8 +7,8 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync } from 'node:fs'
+import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,6 +16,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SERVER_TOKEN = 'test-server-token-host-0123456789'
 const PORT = 19000 + Math.floor(Math.random() * 2000)
 const URL_ = `http://127.0.0.1:${PORT}`
+const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 const SOCKET = `squadra-test-${process.pid}`
 
 const hasTmux = (() => { try { execFileSync('tmux', ['-V']); return true } catch { return false } })()
@@ -45,7 +46,9 @@ let hostExit = null
 const work = mkdtempSync(join(tmpdir(), 'squadra-host-test-'))
 const dataDir = join(work, 'data')
 const hostDir = join(work, 'host')
-const claudeDir = join(work, 'claude')
+// Claude Code's config outside /tmp: the plugin (and so the host) ignores a
+// CLAUDE_CONFIG_DIR in the same top-level folder as the sessions' folders.
+const claudeDir = mkdtempSync(join(homedir(), '.squadra-host-test-claude-'))
 const allowed = join(work, 'projects')
 const outside = join(work, 'elsewhere')
 const fakeClaude = join(work, 'fake-claude.sh')
@@ -63,7 +66,7 @@ if [ "$1" = "--version" ]; then echo "9.9.9 (Claude Code)"; exit 0; fi
 if [ "$1" = "plugin" ]; then
   echo "$*" >> "${pluginCalls}"
   case "$2" in
-    list) if [ -f "${pluginState}" ]; then echo '[{"id":"squadra@squadra","version":"0.0.1","enabled":true}]'; else echo '[]'; fi ;;
+    list) if [ -f "${pluginState}" ]; then echo '[{"id":"squadra@squadra","version":"${VERSION}","enabled":true}]'; else echo '[]'; fi ;;
     install) touch "${pluginState}" ;;
     marketplace)
       case "$3" in
@@ -100,11 +103,13 @@ after(() => {
   hostProc?.kill('SIGTERM')
   serverProc?.kill('SIGTERM')
   try { execFileSync('tmux', ['-L', SOCKET, 'kill-server'], { stdio: 'ignore' }) } catch {}
+  rmSync(claudeDir, { recursive: true, force: true })
 })
 
-// A dashboard tab's terminal connection.
-function viewer() {
-  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/api/terminal`)
+// A dashboard tab's terminal connection (with a one-time ticket, as the dashboard does).
+async function viewer(ticket) {
+  ticket ??= (await dash('terminal/ticket', {})).result.ticket
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/api/terminal`, ['squadra', `auth.${ticket}`])
   const v = { ws, msgs: [], closed: null, text: '' }
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data)
@@ -123,7 +128,8 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   const unauth = await (await fetch(`${URL_}/api/hosts/enroll`, { method: 'POST', body: '{}' })).json()
   assert.equal(unauth.error_code, 401)
 
-  const en = await dash('hosts/enroll', { name: 'test box' })
+  // configure_plugin: also hand the machine the join token (off by default).
+  const en = await dash('hosts/enroll', { name: 'test box', configure_plugin: true })
   assert.ok(en.ok, en.description)
   assert.match(en.result.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
   assert.ok(en.result.command.includes(`'${URL_}/host/squadra-host.mjs'`))
@@ -143,14 +149,14 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.throws(() => execFileSync('sh', ['-c', verify], { cwd: dl, stdio: 'ignore' }))
 
   hostProc = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', URL_, en.result.code.toLowerCase()], {
-    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
+    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', SQUADRA_HOST_TEST_SKIP_TAG_CHECK: '1' },
     stdio: ['ignore', 'ignore', 'pipe'],
     cwd: work,
   })
   hostProc.stderr.on('data', d => { hostStderr += d; if (process.env.DEBUG) process.stderr.write(`[host] ${d}`) })
   hostProc.on('exit', code => { hostExit = code })
 
-  const h = await waitFor(async () => (await dash('hosts')).result.find(x => x.online), { what: 'host online' })
+  const h = await waitFor(async () => (await dash('hosts')).result.find(x => x.online && x.info?.plugin), { what: 'host online with its info' })
   hostId = h.id
   assert.equal(h.name, 'test box')
   assert.equal(h.info.claude, '9.9.9 (Claude Code)')
@@ -161,9 +167,9 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   const calls = readFileSync(pluginCalls, 'utf8')
   assert.match(calls, /plugin marketplace add roke22\/Squadra/)
   assert.match(calls, /plugin install squadra@squadra/)
-  assert.deepEqual(h.info.plugin, { installed: true, enabled: true, version: '0.0.1' })
+  assert.deepEqual(h.info.plugin, { installed: true, enabled: true, version: VERSION })
   // Pinned to this program's release tag.
-  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), 'roke22/Squadra#v0.0.1')
+  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), `roke22/Squadra#v${VERSION}`)
 
   // Credential saved with private permissions; the plugin configured.
   const creds = JSON.parse(readFileSync(join(hostDir, 'credentials.json'), 'utf8'))
@@ -187,7 +193,7 @@ test('the host refuses anything but a valid session spec', { skip: !hasTmux && '
     [{ name: 'w1', role: 'worker', folder: outside }, /not inside the folders/],
     [{ name: 'w1', role: 'worker', folder: join(allowed, '..', 'elsewhere') }, /not inside the folders/],
     [{ name: 'w1', role: 'worker', folder: join(allowed, 'odd#dir') }, /not allowed/],
-    [{ name: 'w1', role: 'worker', folder: join(allowed, 'missing') }, /does not exist/],
+    [{ name: 'w1', role: 'worker', folder: join(allowed, 'missing') }, /is not a folder inside the folders/],
     [{ name: 'w1', role: 'worker', folder: allowed, command: 'rm -rf /' }, /unknown field "command"/],
     [{ name: 'w1', role: 'worker', folder: allowed, args: ['--dangerously-skip-permissions'] }, /unknown field "args"/],
     [{ name: 'w 1', role: 'worker', folder: allowed }, /name must match/],
@@ -228,21 +234,20 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   assert.equal(dup.ok, false)
   assert.match(dup.description, /already open/)
 
-  // Without the token, the terminal socket closes.
-  const bad = viewer()
-  await bad.open()
-  bad.send({ t: 'auth', token: 'nope' })
-  await waitFor(() => bad.closed, { what: 'unauthorized close' })
-  assert.equal(bad.closed, 4001)
+  // Without a valid ticket, the terminal socket is never accepted.
+  const bad = await viewer('nope')
+  await assert.rejects(bad.open())
 
-  const v = viewer()
+  const v = await viewer()
   await v.open()
-  v.send({ t: 'auth', token: SERVER_TOKEN })
   await waitFor(() => v.msgs.some(m => m.t === 'ready'), { what: 'ready' })
   v.send({ t: 'attach', host: hostId, term: 'w1', cols: 100, rows: 30 })
   await waitFor(() => v.msgs.some(m => m.t === 'screen'), { what: 'screen' })
   await waitFor(() => v.text.includes('ARGS: --dangerously-load-development-channels plugin:squadra@squadra'), { what: 'fixed command in the screen' })
-  assert.ok(v.text.includes('ENV: w1/worker/boss/600000'), v.text)
+  // Only the name in the environment; role and coordinator in launch.json.
+  assert.ok(v.text.includes('ENV: w1///600000'), v.text)
+  const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'w1', 'launch.json'), 'utf8'))
+  assert.deepEqual(launch, { name: 'w1', role: 'worker', coordinator: 'boss' })
   assert.ok(v.text.includes(`PWD: ${realpathSync(join(allowed, 'api'))}`), v.text)
   // The session doesn't see the tmux server it runs in (no "tmux send-keys" into others).
   assert.ok(v.text.includes('TMUX=none'), v.text)
@@ -251,9 +256,8 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   await waitFor(() => v.text.includes('GOT:hello squadra'), { what: 'typed text echoed' })
 
   // A second viewer gets the current screen too.
-  const v2 = viewer()
+  const v2 = await viewer()
   await v2.open()
-  v2.send({ t: 'auth', token: SERVER_TOKEN })
   await waitFor(() => v2.msgs.some(m => m.t === 'ready'), { what: 'ready 2' })
   v2.send({ t: 'attach', host: hostId, term: 'w1', cols: 100, rows: 30 })
   await waitFor(() => v2.text.includes('GOT:hello squadra'), { what: 'second viewer screen' })
@@ -279,9 +283,8 @@ test('the machine limit and typing switch are the machine\'s own', { skip: !hasT
   // Typing turned off on the machine: input is dropped there, whatever the server sends.
   const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
   writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, allow_input: false }))
-  const v = viewer()
+  const v = await viewer()
   await v.open()
-  v.send({ t: 'auth', token: SERVER_TOKEN })
   await waitFor(() => v.msgs.some(m => m.t === 'ready'), { what: 'ready' })
   v.send({ t: 'attach', host: hostId, term: 'a1', cols: 80, rows: 24 })
   await waitFor(() => v.msgs.some(m => m.t === 'screen'), { what: 'screen' })
@@ -313,32 +316,73 @@ test('squadra-host plugin re-pins a marketplace that follows the default branch'
   writeFileSync(pluginState, '')
   writeFileSync(pluginCalls, '')
   execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'plugin'], {
-    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
+    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', SQUADRA_HOST_TEST_SKIP_TAG_CHECK: '1' },
     stdio: 'ignore',
   })
   const calls = readFileSync(pluginCalls, 'utf8')
   assert.match(calls, /plugin marketplace remove squadra/)
-  assert.match(calls, /plugin marketplace add roke22\/Squadra#v0\.0\.1/)
+  assert.ok(calls.includes(`plugin marketplace add roke22/Squadra#v${VERSION}`), calls)
   assert.match(calls, /plugin install squadra@squadra/)
-  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), 'roke22/Squadra#v0.0.1')
+  assert.equal(readFileSync(marketplaceFile, 'utf8').trim(), `roke22/Squadra#v${VERSION}`)
   assert.ok(existsSync(pluginState), 'plugin installed again')
   // Already pinned: nothing is removed the next time.
   writeFileSync(pluginCalls, '')
   execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'plugin'], {
-    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir },
+    env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', SQUADRA_HOST_TEST_SKIP_TAG_CHECK: '1' },
     stdio: 'ignore',
   })
   assert.doesNotMatch(readFileSync(pluginCalls, 'utf8'), /marketplace remove/)
+})
+
+test('third audit: shared or containing folders, symlinked identity files and resume are refused', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  // Without the test switch, a temporary folder can't be allowed.
+  let code = 0
+  try {
+    execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'folders', 'add', tmpdir()], { env: { ...process.env, SQUADRA_HOST_DIR: join(work, 'other-host') }, stdio: 'ignore' })
+  } catch (err) { code = err.status }
+  assert.equal(code, 2)
+  // "/" contains everything: refused even if listed.
+  const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, folders: [...settings.folders, '/'] }))
+  const root = await dash('terminals/open', { host: hostId, spec: { name: 'r1', role: 'worker', folder: '/' } })
+  assert.equal(root.ok, false)
+  // Continuing an earlier conversation needs allow_resume.
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+  const resume = await dash('terminals/open', { host: hostId, spec: { name: 'r2', role: 'worker', folder: allowed, resume: true } })
+  assert.equal(resume.ok, false)
+  assert.match(resume.description, /allow_resume/)
+  // identity.json behind a symlink: the symlink is replaced, its target untouched.
+  const dir = join(claudeDir, 'channels', 'squadra', 'sym1')
+  mkdirSync(dir, { recursive: true })
+  const target = join(work, 'precious.txt')
+  writeFileSync(target, 'keep me')
+  symlinkSync(target, join(dir, 'identity.json'))
+  const r = await dash('terminals/open', { host: hostId, spec: { name: 'sym1', role: 'worker', folder: allowed } })
+  assert.ok(r.ok, r.description)
+  assert.equal(readFileSync(target, 'utf8'), 'keep me')
+  assert.ok(!lstatSync(join(dir, 'identity.json')).isSymbolicLink())
+  await dash('terminals/kill', { host: hostId, term: 'sym1' })
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const r = await dash('hosts/remove', { host: hostId })
   assert.ok(r.ok, r.description)
   await waitFor(() => hostExit !== null, { what: 'host exit' })
-  assert.equal(hostExit, 1)
+  assert.equal(hostExit, 0, "exit 0: the service manager must not start it again")
   assert.match(hostStderr, /no longer accepts this machine/)
   assert.equal((await dash('hosts')).result.length, 0)
   const open = await dash('terminals/open', { host: hostId, spec: { name: 'x', role: 'worker', folder: allowed } })
   assert.equal(open.ok, false)
   assert.ok(existsSync(join(hostDir, 'credentials.json')))
+})
+
+test('fourth audit: a settings.json that cannot be read means the strictest settings', () => {
+  const dir = join(work, 'broken-host')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'settings.json'), '{ "allow_input": false, oops')
+  const out = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'status'], { env: { ...process.env, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const st = JSON.parse(out).settings
+  assert.equal(st.allow_input, false)
+  assert.equal(st.permission_relay, false)
+  assert.deepEqual(st.folders, [])
 })

@@ -13,7 +13,7 @@
  */
 
 import { createHash, generateKeyPairSync, createPrivateKey, sign, X509Certificate } from 'node:crypto'
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const LETS_ENCRYPT = 'https://acme-v02.api.letsencrypt.org/directory'
@@ -168,8 +168,11 @@ export function createAcme({ domain, email, directory = LETS_ENCRYPT, dir, log =
     const done = await poll(orderUrl, o => o.status === 'valid' && o.certificate)
     const { body: chain } = await post(done.certificate, undefined, { accept: 'application/pem-certificate-chain' })
     const key = privateKey.export({ type: 'pkcs8', format: 'pem' })
-    writeFileSync(keyFile, key, { mode: 0o600 })
-    writeFileSync(certFile, chain)
+    // (Each written whole and then renamed: a crash never leaves half a file.)
+    writeFileSync(`${keyFile}.new`, key, { mode: 0o600 })
+    writeFileSync(`${certFile}.new`, chain)
+    renameSync(`${keyFile}.new`, keyFile)
+    renameSync(`${certFile}.new`, certFile)
     log(`certificate for ${domain} issued, valid until ${new X509Certificate(chain).validTo}`)
     return { key, cert: chain }
   }
@@ -180,6 +183,9 @@ export function createAcme({ domain, email, directory = LETS_ENCRYPT, dir, log =
       const key = readFileSync(keyFile, 'utf8')
       const x = new X509Certificate(cert)
       if (!x.checkHost(domain)) return null
+      // (The key must be this certificate's: a crash between the two writes
+      // of an older version could leave a mismatched pair.)
+      if (!x.checkPrivateKey(createPrivateKey(key))) return null
       const from = Date.parse(x.validFrom)
       const to = Date.parse(x.validTo)
       return { key, cert, expires: to, renewAt: to - (to - from) * RENEW_FRACTION }

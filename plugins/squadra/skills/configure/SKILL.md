@@ -6,8 +6,8 @@ disable-model-invocation: true
 allowed-tools:
   - Read
   - Glob
-  - Write(~/.claude/channels/squadra/**)
-  - Edit(~/.claude/channels/squadra/**)
+  - Write(~/.claude/channels/squadra/.env)
+  - Edit(~/.claude/channels/squadra/.env)
 ---
 
 # /squadra:configure — Squadra Channel Setup
@@ -21,7 +21,7 @@ tool. Its `Files:` line gives `config <root>/.env` and, when logged in,
 
 `<root>` holds `.env` (shared by every session on this machine). `<state>`
 holds this session's `identity.json` and `access.json`. This skill only edits
-files under `~/.claude/channels/squadra/`; elsewhere Claude Code asks first.
+`<root>/.env`; for anything else Claude Code asks first.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -47,7 +47,7 @@ Read the files and give the user a complete picture:
    - Allowed sessions: count and names
    - Pending pairings: count, with codes and session names if any
 5. **What next** — end with a concrete next step based on state:
-   - No URL or token → *"Run `/squadra:configure <url> <server-token>`."*
+   - No URL or token → *"Run `/squadra:configure <url> <join-token>`."*
    - URL and token set, not logged in → *"Join with `/squadra:login
      coordinator` or `/squadra:login <worker-name>`."*
    - Coordinator with nobody allowed → *"Start the workers and log them in;
@@ -73,7 +73,7 @@ claude-squadra          # then, inside: /squadra:login coordinator   or   /squad
 
 1. The first argument is the URL (`http://` or `https://`, no trailing
    slash). The second is the **join token** the server printed at startup
-   (it starts with `sj_`). Trim whitespace. Refuse values with spaces or line
+   (usually starting with `sj_`, unless the server set its own with `SQUADRA_JOIN_TOKEN`). Trim whitespace. Refuse values with spaces or line
    breaks.
 2. If the token is the server's admin token instead (the one used to sign in
    to the dashboard), say that it works but should stay in the browser: a
@@ -91,13 +91,16 @@ What Squadra's web dashboard sees of the sessions on this machine, unless
 `/squadra:login … --observe` says otherwise:
 - `off`: nothing.
 - `activity`: what each session is doing (tool names with short arguments,
-  state, context size). No Claude text, no tool output.
-- `full` (default): also Claude's text, prompts in full, and tool inputs
+  state, context size), the first 200 characters of your prompts, the first
+  line of tool errors and command lines (secrets masked). No Claude text, no
+  tool output.
+- `full` (default): also Claude's text, prompts (up to 4000 characters), and tool inputs
   and outputs, trimmed. Obvious secrets are masked, but code and command
   output do reach the server.
 
 Update/add the `SQUADRA_OBSERVE=` line in `<root>/.env` (preserve other
-keys). Applies to the next `/squadra:login`.
+keys). Applies to the next `/squadra:login`. (A `SQUADRA_OBSERVE` in the
+environment, e.g. from a project's settings, can only lower it.)
 
 ### `clear` — remove the server settings
 
@@ -124,8 +127,10 @@ this name, e.g. after moving to a new machine without copying
 ## Implementation notes
 
 - Missing files = not configured, not an error.
-- The channel server reads `.env` and `identity.json` once at boot. Changes
-  need a session restart or `/reload-plugins`. Say so after saving.
+- The channel server reads the server URL and token from `.env` once at
+  boot: changing them needs a session restart or `/reload-plugins` (say so
+  after saving). `SQUADRA_OBSERVE` and `identity.json` are read again at each
+  `/squadra:login`.
 - `access.json` is re-read on every inbound message — policy changes via
   `/squadra:access` take effect immediately, no restart (unless static mode).
 - Never print the server token or the identity secret in full.

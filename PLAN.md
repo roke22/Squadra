@@ -17,9 +17,9 @@ Varias sesiones de Claude Code que se escriben entre sí, con una de ellas como 
 ```
 
 - **`server/`**: `squadra-server`. Imita la parte de la Bot API de Telegram que usa el plugin. Solo usa módulos de Node, incluido `node:sqlite`.
-- **`plugins/squadra/`**: el plugin. Contiene un servidor MCP con Channels, sin dependencias, y las skills `/squadra:configure` y `/squadra:access`.
+- **`plugins/squadra/`**: el plugin. Contiene un servidor MCP con Channels, sin dependencias, y las skills `/squadra:login`, `/squadra:logout`, `/squadra:status`, `/squadra:configure` y `/squadra:access`.
 - **`host/`**: `squadra-host`, el cliente que se instala en cada máquina para abrir sesiones desde el panel y ver o escribir en sus terminales (ver «Máquinas»).
-- **`.claude-plugin/marketplace.json`**: este repositorio es también un marketplace de plugins (`claude-squadra`).
+- **`.claude-plugin/marketplace.json`**: este repositorio es también un marketplace de plugins (`squadra`).
 
 ## Requisitos
 
@@ -52,7 +52,7 @@ Después:
 - **Comandos:** `/swarm:login` pasa a ser `/squadra:login`, y lo mismo con el resto.
 - **Lo que se conserva solo:**
   - la carpeta `~/.claude/channels/swarm/` se mueve sola a `~/.claude/channels/squadra/` la primera vez, con identidades, emparejamientos y configuración;
-  - las variables `SWARM_*` siguen funcionando;
+  - las variables `SWARM_*` siguen funcionando solo en el `.env` (en el entorno, solo `SWARM_SERVER_TOKEN` en el servidor);
   - el servidor conserva sus datos y su token (`data/server-token`).
 - **Servidor:** basta con reiniciarlo con el código nuevo.
 
@@ -65,13 +65,13 @@ node server/server.js
 
 # O con Docker
 docker build -f server/Dockerfile -t squadra-server .
-docker run -d --name squadra-server -p 7787:7787 -v squadra-data:/data squadra-server
+docker run -d --name squadra-server -p 127.0.0.1:7787:7787 -e PUBLIC_URL=http://127.0.0.1:7787 -v squadra-data:/data squadra-server   # solo esta máquina; para otras, HTTPS
 docker logs squadra-server      # para ver el token
 ```
 
 **Los dos tokens:**
 - **Token del servidor** (administración): entra en el panel, abre terminales web, ejecuta `/admin/*` y puede rotar identidades (`register` con `reset`). Solo vive en el navegador. Se guarda en `data/server-token` (600).
-- **Token de alta** (`sj_…`): el que guardan las máquinas. Solo registra nombres de sesión nuevos (`register` sin `reset`). Se guarda en `data/join-token` (600) y es el que aparece en el comando `/squadra:configure` que se muestra al arrancar, y el que reciben las máquinas que se dan de alta desde el panel.
+- **Token de alta** (`sj_…`): el que guardan las máquinas. Solo registra nombres de sesión nuevos (`register` sin `reset`). Se guarda en `data/join-token` (600) y es el que aparece en el comando `/squadra:configure` que se muestra al arrancar, y el que reciben las máquinas que se dan de alta desde el panel, solo si se marca «Dar también a esa máquina el token de alta».
 - Los dos se generan la primera vez, se reutilizan después y se muestran al arrancar.
 - Rotar el de alta: `POST /admin/rotateJoinToken` con el de administración (las identidades existentes siguen valiendo; las máquinas necesitarán el nuevo para registrar nombres nuevos). Cambiar el de administración: `SQUADRA_SERVER_TOKEN`, o borrar `data/server-token` y reiniciar.
 
@@ -81,16 +81,16 @@ docker logs squadra-server      # para ver el token
 | `SQUADRA_JOIN_TOKEN` | el de `data/join-token`, o uno generado | Token de alta para las máquinas (mín. 16 caracteres, distinto del anterior) |
 | `SQUADRA_MAX_SESSIONS` | `500` | Como mucho estas identidades registradas con el token de alta |
 | `TRUST_PROXY` | — | `1` detrás de un proxy que pone `X-Forwarded-For` (Caddy): los límites de frecuencia usan la IP del cliente |
-| `HOST` | `127.0.0.1` (`0.0.0.0` en Docker) | Interfaz de escucha |
+| `HOST` | `127.0.0.1` (`0.0.0.0` en Docker y con HTTPS integrado) | Interfaz de escucha |
 | `PUBLIC_URL` | — | Dirección pública (`https://tu-dominio`), para mostrar el comando `/squadra:configure` correcto |
 | `SQUADRA_DOMAIN` / `--domain` | — | HTTPS integrado: el servidor obtiene y renueva un certificado de Let's Encrypt (ACME HTTP-01, sin dependencias) y redirige el HTTP a HTTPS. Necesita los puertos 80 y 443 |
 | `TLS_CERT` / `TLS_KEY` | — | HTTPS con certificado propio; se recarga al cambiar los ficheros |
-| `PORT` | `7787` | |
+| `PORT` | `7787` (`443` con HTTPS integrado) | |
 | `DATA_DIR` | `./data` | Base de datos SQLite y ficheros |
 | `OBSERVE_TTL_HOURS` | `24` | Horas que se guardan los eventos del panel web |
 
 **Sesiones en varias máquinas:** el servidor tiene que ser alcanzable desde todas. Los parámetros `--host`, `--all-interfaces`, `--port`, `--public-url` y `--data-dir` equivalen a las variables; `node server/server.js --help` los lista. En `deploy/` hay un Docker Compose con Caddy listo para servir HTTPS en tu dominio.
-- Si va a una IP pública, ponlo **detrás de TLS** (por ejemplo, Caddy: `squadra.ejemplo.com { reverse_proxy 127.0.0.1:7787 }`).
+- Si va a una IP pública, ponlo **detrás de TLS** (por ejemplo, Caddy: `squadra.ejemplo.com { reverse_proxy 127.0.0.1:7787 }`) y arráncalo con `--public-url https://squadra.ejemplo.com --trust-proxy`: sin ellos, los comandos que da a las máquinas usan http, que estas rechazan.
 - Si no quieres exponerlo, usa una red privada tipo Tailscale.
 - Las sesiones siempre se conectan hacia el servidor: sus máquinas no abren puertos.
 
@@ -104,7 +104,7 @@ Dentro de `claude`:
 /squadra:configure https://squadra.ejemplo.com <token-de-alta>
 ```
 
-`/squadra:configure` guarda la URL y el token en `~/.claude/channels/squadra/.env`, con permisos 600.
+`/squadra:configure` guarda la URL y el token en `~/.claude/channels/squadra/.env`; el plugin lo deja en 600 al arrancar.
 
 ## 3. Arrancar las sesiones y hacer login
 
@@ -122,7 +122,6 @@ Después, dentro de cada sesión:
 |---|---|
 | `/squadra:login coordinador` | Entra como coordinador, con el nombre `coord`. `/squadra:login coordinador jefe` usa el nombre `jefe` |
 | `/squadra:login worker1` | Entra como worker con el nombre `worker1` y saluda a su coordinador (`coord`). `--coord jefe` elige otro coordinador |
-| `/squadra:login worker1 --force` | Entra aunque otra sesión activa tenga ese nombre, y la expulsa. Solo para sesiones colgadas |
 | `/squadra:logout` | Sale de Squadra. Un worker avisa a su coordinador |
 | `/squadra:status` | Quién eres, si estás conectado, emparejamientos pendientes y qué sesiones están vivas |
 | `/squadra:access …` | Emparejar, lista de permitidos, políticas y grupos |
@@ -134,25 +133,25 @@ Después, dentro de cada sesión:
 - **Nombres únicos: gana la primera sesión.**
   - Si una sesión intenta entrar con un nombre que ya usa otra sesión **activa**, su login se rechaza y la que estaba no se entera.
   - El nombre queda libre en cuanto su dueña hace logout o se cierra. Si se cae su máquina o su red, en unos 45 s.
-  - Si una sesión se ha quedado colgada y sigue apareciendo como activa, `--force` la expulsa: esa sesión recibe un aviso y queda fuera de Squadra.
+  - Nadie puede quitarle el nombre a una sesión conectada (no hay `--force`). Si una sesión se queda colgada, el administrador la desconecta desde el panel (⋯ → Desconectar sesión): queda fuera y no puede volver sola.
+- **Confirmación del usuario:** cada login que se escribe en la sesión lo confirma el usuario en Claude Code (elicitación MCP), con el rol, el coordinador, el servidor y lo que verá el panel; sin elicitación, solo lo aprobado antes. Un Claude engañado por un mensaje no puede cambiar quién coordina la sesión.
 - **Flag olvidado:** si arrancas con `claude` a secas y haces `/squadra:login`, te avisa de que falta el flag en vez de dejarte conectado sin recibir nada.
 
-**Arranque por script**, sin login a mano: las variables de entorno siguen funcionando y hacen el login automáticamente.
+**Arranque por script**, sin login a mano: `SQUADRA_NAME` hace el login automáticamente, con el rol y el coordinador de `<estado>/launch.json` (el que escribe squadra-host; se borra al usarlo; vale para un arranque en los 15 minutos siguientes) o, si no hay, los que el usuario aprobó la última vez. El rol, el coordinador y la lista de permitidos ya no se leen de variables de entorno, porque la configuración de un proyecto podría ponerlas.
 
 ```bash
-SQUADRA_NAME=coord SQUADRA_ROLE=coordinator claude-squadra
+# ~/.claude/channels/squadra/w1/launch.json → {"name":"w1","role":"worker","coordinator":"coord"}
 SQUADRA_NAME=w1 claude-squadra
 ```
 
 | Variable | |
 |---|---|
 | `SQUADRA_NAME` | Nombre de la sesión (`[A-Za-z0-9_-]`, máx. 32). Hace login al arrancar |
-| `SQUADRA_ROLE` | `coordinator` o `worker` (por defecto) |
-| `SQUADRA_COORDINATOR` | Para workers: nombre del coordinador (por defecto `coord`) |
-| `SQUADRA_ACCESS_MODE` | `static`: acceso fijo al arrancar, sin emparejamiento |
-| `SQUADRA_ALLOW_FROM` | Sesiones permitidas desde el inicio, separadas por comas |
-| `SQUADRA_URL`, `SQUADRA_SERVER_TOKEN` | Sustituyen a lo guardado con `/squadra:configure` |
-| `SQUADRA_STATE_DIR` | Carpeta de estado de la sesión (por defecto `~/.claude/channels/squadra/<nombre>/`) |
+| `SQUADRA_URL`, `SQUADRA_SERVER_TOKEN`, `SQUADRA_STATE_DIR` | Solo desde el `.env` de la máquina (`/squadra:configure`); en el entorno se ignoran. `SQUADRA_STATE_DIR` tiene que ser absoluta y guarda una subcarpeta por nombre |
+| `SQUADRA_OBSERVE`, `SQUADRA_PERMISSION_RELAY` | Del `.env` y del entorno vale el más estricto: un proyecto puede bajar la observación o apagar el relay, nunca subirlos |
+| `CLAUDE_CONFIG_DIR` | Se ignora si está dentro de la carpeta de primer nivel que contiene la sesión (todo `/opt` para `/opt/proyectos/app`; `~/code` para `~/code/app`) o si no es del usuario y privada (se usa `~/.claude` del usuario) |
+
+En `launch.json` también caben `allow_from` (lista de sesiones permitidas desde el inicio) y `access_mode: "static"` (acceso fijo al arrancar, sin emparejamiento).
 
 ## 4. Emparejar
 
@@ -172,18 +171,18 @@ El emparejamiento se hace una sola vez por nombre: tras un `/squadra:logout` o u
 
 **Entrega y desconexiones:**
 - **A un worker solo se le entrega si está conectado.** Si no lo está, `reply` falla con *NO ENVIADO: el worker "w1" está desconectado…* y no se guarda nada. Así una tarea nunca se queda esperando a una sesión que quizá no vuelva, y el coordinador puede dársela a otro.
-- **Al coordinador se le entrega siempre.** Si está desconectado, el mensaje queda en cola (24 h), le llega al volver y `reply` lo avisa.
+- **Al coordinador se le entrega siempre.** Si está desconectado, el mensaje queda en cola (24 h; como mucho 500 por remitente y 10 000 en total, se descartan primero los más antiguos), le llega al volver y `reply` lo avisa.
 - **En un grupo**, se entrega a quien esté conectado (más los coordinadores, que lo reciben en cola). `reply` dice a qué workers no se les ha entregado.
 - **El servidor avisa al coordinador** cuando uno de sus workers:
   - sale (`/squadra:logout`);
   - se cierra (su Claude Code termina);
   - **se cae** (deja de responder; se detecta en unos segundos si se corta la conexión, y en unos 45 s si se cae la red);
   - vuelve tras un corte breve.
-- **Lo que no llegó a recoger se descarta,** y el aviso lo lista para que el coordinador lo reasigne. Así no aparecen tareas viejas al volver.
+- **Lo que no llegó a recoger se descarta,** y el aviso cita los del coordinador (hasta 10) y cuenta los demás, para que lo reasigne. Así no aparecen tareas viejas al volver.
 
 **Permisos:** cuando un worker necesita aprobar una herramienta, el diálogo sale en su terminal **y** le llega al coordinador como `🔐 Permiso: Bash … Responde "yes abcde" o "no abcde"`. El coordinador aprueba lo que no tiene efectos y te pregunta lo destructivo. Vale la primera respuesta: la del coordinador o la tuya en el terminal del worker.
 
-**Grupos:** son privados. Quien crea el grupo invita a los demás (`/squadra:access group add #backend --invite w1,w2`), y cada sesión invitada entra con `/squadra:access group add #backend`. Un mensaje a `#backend` solo le llega a quien se menciona (`@w1 …`), salvo que el grupo se cree con `--no-mention`.
+**Grupos:** son privados. Quien crea el grupo invita a los demás (`/squadra:access group add #backend --invite w1,w2`), y cada sesión invitada entra con `/squadra:access group add #backend`. Un mensaje a `#backend` solo le llega a quien se menciona (`@w1 …`), salvo que esa sesión misma lo añadiera con `--no-mention` (es un ajuste de cada miembro, en su propio `access.json`). Si el dueño sale del grupo, pasa a serlo el miembro más antiguo.
 
 **Adjuntos:** `reply` acepta `files` (rutas absolutas, máx. 50 MB). Las imágenes se descargan solas en la sesión destino; el resto, con `download_attachment`.
 
@@ -195,7 +194,7 @@ El emparejamiento se hace una sola vez por nombre: tras un `/squadra:logout` o u
 | `edit_message(chat_id, message_id, text)` | Edita un mensaje propio: progreso. El destinatario lo recibe como `edited="true"`, información que no se contesta |
 | `react(chat_id, message_id, emoji)` | Reacción. Nunca despierta a la otra sesión |
 | `download_attachment(file_id)` | Descarga un adjunto a `~/.claude/channels/squadra/<nombre>/inbox/` |
-| `login(role, name?, coordinator?)` · `logout()` · `status()` | Las usan `/squadra:login`, `/squadra:logout` y `/squadra:status`. Las instrucciones de Claude le prohíben usarlas si lo pide un mensaje del canal |
+| `login(role, name?, coordinator?, observe?)` · `logout()` · `status()` | Las usan `/squadra:login`, `/squadra:logout` y `/squadra:status`. Las instrucciones de Claude le prohíben usarlas si lo pide un mensaje del canal |
 | `ping(chat_id?)` | ¿Está viva la sesión? Contesta el **servidor**, sin despertar al worker ni gastar sus tokens. Sin `chat_id` comprueba todas las sesiones permitidas. Indica si está ACTIVA o CAÍDA, cuándo envió su último mensaje y cuántos mensajes tiene sin recoger |
 
 Los mensajes entrantes llegan como:
@@ -229,7 +228,7 @@ El servidor sirve un panel en su misma dirección: `http://127.0.0.1:7787/`, o `
 - **Acciones de cada sesión:** se abren con el menú ⋯ de su ventana o con los botones de su vista. Todas piden confirmación.
   - **Limpiar chat**, esté conectada o no: borra del servidor su actividad. Los mensajes entre sesiones se ocultan en ese chat, pero siguen en el de las otras sesiones. La conversación del propio Claude no se toca.
   - **Archivar**, solo desconectada: deja de aparecer en el mosaico y pasa a la vista **Archivadas** con todo su historial. Desde allí se puede ver, desarchivar o eliminar. Si vuelve a conectarse, se desarchiva sola.
-  - **Eliminar**, solo desconectada: borra del servidor su identidad y su actividad; sus mensajes siguen en los chats de los demás. Si vuelve a hacer `/squadra:login` con ese nombre, se registra de nuevo automáticamente.
+  - **Eliminar**, solo desconectada: borra del servidor su identidad y su actividad; sus mensajes siguen en los chats de los demás. Si vuelve a hacer `/squadra:login` con ese nombre, se registra de nuevo automáticamente si la máquina tiene el token de alta; si no (máquinas dadas de alta desde el panel), se abre de nuevo desde el panel.
 
 **Cómo llega cada cosa:**
 - **Al instante:** las herramientas y los cambios de estado. Los envían los hooks del plugin, que se ejecutan en segundo plano y no frenan a Claude.
@@ -241,7 +240,7 @@ El servidor sirve un panel en su misma dirección: `http://127.0.0.1:7787/`, o `
 | Nivel | |
 |---|---|
 | `full` (por defecto) | Todo lo anterior, con entradas y salidas recortadas |
-| `activity` | Solo qué hace: herramientas con argumentos cortos, estado y contexto. Sin texto de Claude ni salidas |
+| `activity` | Qué hace: herramientas con argumentos cortos, estado, contexto, los primeros 200 caracteres de los prompts y la primera línea de los errores (secretos enmascarados). Sin texto de Claude ni salidas |
 | `off` | Nada |
 
 - Las claves y tokens reconocibles (`sk-…`, `ghp_…`, `AKIA…`, JWT, `password=…`, `Bearer …`) se enmascaran antes de enviarse. El código y la salida de los comandos sí llegan al servidor con `full`: por eso el TLS es obligatorio si el servidor no es local.
@@ -249,7 +248,7 @@ El servidor sirve un panel en su misma dirección: `http://127.0.0.1:7787/`, o `
 
 ## Máquinas: abrir sesiones desde el panel (squadra-host)
 
-`host/squadra-host.mjs` es un programa de un solo fichero, sin dependencias (Node ≥ 22 y tmux ≥ 3.0), que se instala en cada máquina donde se quieran abrir sesiones desde el panel. El propio servidor lo sirve en `/host/squadra-host.mjs`.
+`host/squadra-host.mjs` es un programa de un solo fichero, sin dependencias (Node ≥ 22.13 y tmux ≥ 3.2), que se instala en cada máquina donde se quieran abrir sesiones desde el panel. El propio servidor lo sirve en `/host/squadra-host.mjs`.
 
 **Principios:**
 - **Solo el usuario abre sesiones.** El coordinador no tiene ninguna herramienta para hacerlo: si necesita más workers, se los pide al usuario.
@@ -258,20 +257,21 @@ El servidor sirve un panel en su misma dirección: `http://127.0.0.1:7787/`, o `
   - `role`: `coordinator` o `worker`; `coordinator`: el nombre del coordinador, solo para workers;
   - `folder`: ruta absoluta que, resuelta con `realpath`, esté dentro de una de las carpetas permitidas. Se rechazan `#`, `;` y caracteres de control, porque tmux interpreta `#{…}`, `#(…)` y `;`;
   - `compact_window`: entero entre 50 000 y 1 000 000 (por defecto 600 000 desde el panel), que se pasa como `CLAUDE_CODE_AUTO_COMPACT_WINDOW`;
-  - `resume`: añade `--continue`.
-- **El comando es fijo:** `claude --dangerously-load-development-channels plugin:squadra@squadra [--continue]`, lanzado por tmux sin shell. Con `SQUADRA_NAME`, `SQUADRA_ROLE` y `SQUADRA_COORDINATOR` el plugin hace el login solo, y sus instrucciones MCP le dicen a Claude su rol desde el principio.
-- **Las reglas viven en la máquina** (`~/.config/squadra-host/settings.json`): `folders`, `max_sessions` (8), `allow_input` (true) y `claude_command`. El servidor las ve, pero no puede cambiarlas.
+  - `resume`: añade `--continue` (solo si la máquina tiene `allow_resume`);
+  - `identity`: el secreto que el servidor reservó para ese nombre (solo desde el panel; la máquina lo entrega al plugin si este apunta al mismo servidor).
+- **El comando es fijo:** `claude --dangerously-load-development-channels plugin:squadra@squadra [--continue]`, lanzado por tmux sin shell. squadra-host escribe `<estado>/launch.json` con el rol y el coordinador (y, si el servidor reservó el nombre, `identity.json`), siempre con un fichero temporal y `rename`, nunca a través de un enlace simbólico; a la sesión le pasa `SQUADRA_NAME`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` si se eligió y `SQUADRA_PERMISSION_RELAY=off` si la máquina no permite el relay. El plugin hace el login solo, y sus instrucciones MCP le dicen a Claude su rol desde el principio.
+- **Las reglas viven en la máquina** (`~/.config/squadra-host/settings.json`): `folders`, `max_sessions` (8), `allow_input` (true), `allow_resume` (false), `permission_relay` (igual que `allow_input`), `coordinators` (los únicos coordinadores aceptados) y `claude_command`. Un valor de tipo equivocado cuenta como la opción estricta, y un fichero ilegible como los ajustes más estrictos. El servidor las ve, pero no puede cambiarlas.
 - **El terminal web equivale a estar delante de la máquina.** Escribir en Claude permite pedirle cualquier cosa, o usar `!` para ejecutar comandos. Por eso: HTTPS fuera de local, el token del servidor bien guardado, `allow_input: false` en las máquinas que solo se quieran mirar, y un registro en el servidor de quién mira o escribe en cada terminal. Pendiente para otra versión: firmar las teclas en el navegador con una clave emparejada con cada máquina, para que ni un servidor comprometido pueda escribir.
 
 **Alta de una máquina:**
 1. El panel pide `POST /api/hosts/enroll {name, configure_plugin}`. El servidor genera un código `XXXX-XXXX` de un solo uso, válido 15 minutos y guardado como hash, y devuelve el comando `curl … && node squadra-host.mjs enroll <url> <código>`.
 2. En la máquina, `enroll` llama a `POST /host/enroll {code, info}` (público, limitado a 10 intentos por minuto e IP). Recibe `{id, secret}` (`sh_…`) y, si se marcó, la URL y el **token de alta** (nunca el de administración) para escribir `~/.claude/channels/squadra/.env` cuando aún no existe. El comando de alta comprueba antes el sha256 del programa descargado.
-3. Guarda la credencial en `credentials.json` (600), crea `settings.json` con la carpeta actual como permitida, se copia a `~/.config/squadra-host/` y se conecta.
-4. Instala el plugin en Claude Code si falta, con `claude plugin marketplace add roke22/Squadra` y `claude plugin install squadra@squadra`; lo activa si está desactivado. El origen está fijado en el código del host: el servidor nunca decide qué se instala. Se salta con `--no-plugin`, y `squadra-host plugin` lo instala o actualiza después.
+3. Guarda la credencial en `credentials.json` (600), crea `settings.json` sin ninguna carpeta permitida (se añaden con `folders add`), se copia a `~/.config/squadra-host/` y se conecta.
+4. Instala el plugin en Claude Code si falta, con `claude plugin marketplace add roke22/Squadra#v<versión>` y `claude plugin install squadra@squadra`; lo activa si está desactivado. El origen está fijado en el código del host: el servidor nunca decide qué se instala. Se salta con `--no-plugin`, y `squadra-host plugin` lo instala o actualiza después.
 
 **Plugin:** el host consulta `claude plugin list --json` al arrancar, cada 5 minutos y antes de abrir cada sesión. Lo informa al panel en `info.plugin` (`installed`, `enabled`, `version`), y el panel avisa en la tarjeta de la máquina si falta. Sin el plugin instalado y activo, la máquina rechaza abrir sesiones: arrancarían, pero nunca entrarían en Squadra.
 
-**Conexión:** WebSocket propio (`server/ws.js`, RFC 6455 mínimo) en `/host/connect`. El host se presenta con `{t:'hello', secret, info}`, y una conexión nueva sustituye a la anterior. Si se revoca, el servidor cierra con el código 4001 y el host termina.
+**Conexión:** WebSocket propio (`server/ws.js`, RFC 6455 mínimo) en `/host/connect`. El host manda su secreto en la propia petición (subprotocolos `squadra` y `auth.<secreto>`): el servidor no acepta ningún socket sin credencial. Después se presenta con `{t:'hello', id}` (su información llega después del `welcome`), y una conexión nueva sustituye a la anterior. El terminal web del panel hace lo mismo con un ticket de un solo uso (`POST /api/terminal/ticket`, 30 s). Si se revoca, el servidor cierra con el código 4001 y el host termina.
 
 | Servidor → host | Host → servidor |
 |---|---|
@@ -286,9 +286,9 @@ El servidor sirve un panel en su misma dirección: `http://127.0.0.1:7787/`, o `
 
 Al engancharse, el host manda una captura de pantalla (`capture-pane -e` con hasta 1000 líneas de historial y la posición del cursor). La salida que llega mientras se toma la captura se guarda y se envía justo después.
 
-**Navegador:** un único WebSocket por pestaña en `/api/terminal`, autenticado con el token del servidor en el primer mensaje. Multiplexa todos los terminales que muestra. xterm.js 5.5 y su addon fit los sirve el propio servidor (`server/vendor/`, copiados sin cambios de npm) la primera vez que se abre un terminal. Si un navegador no da abasto (más de 4 MB pendientes), se le salta la salida hasta que pide redibujar.
+**Navegador:** un único WebSocket por pestaña en `/api/terminal`, autenticado antes de aceptar la conexión con un ticket de un solo uso (`POST /api/terminal/ticket`, 30 s) como subprotocolo `auth.<ticket>`. Multiplexa todos los terminales que muestra. xterm.js 5.5 y su addon fit los sirve el propio servidor (`server/vendor/`, copiados sin cambios de npm) la primera vez que se abre un terminal. Si un navegador no da abasto (más de 4 MB pendientes), se le salta la salida hasta que se pone al día (el servidor pide entonces una pantalla nueva).
 
-**API del panel:** `GET /api/hosts`; `POST /api/hosts/enroll`, `/api/hosts/rename {host, name}`, `/api/hosts/remove {host}` (desconectar: revoca y olvida), `/api/terminals/open {host, spec}` y `/api/terminals/kill {host, term}`. El flujo SSE emite `host` en cada cambio, y `hello` incluye `hosts`.
+**API del panel:** `GET /api/hosts`; `POST /api/hosts/enroll`, `/api/hosts/rename {host, name}`, `/api/hosts/remove {host}` (eliminar: revoca y olvida), `/api/terminals/open {host, spec}` y `/api/terminals/kill {host, term}`. El flujo SSE emite `host` en cada cambio, y `hello` incluye `hosts`.
 
 ## Comandos de administración del servidor
 
@@ -309,23 +309,25 @@ Tras la auditoría de seguridad de la versión 0.0.1:
 
 - **Credenciales:** token de administración (solo navegador), token de alta (máquinas; solo registra nombres nuevos), secreto por sesión (ligado a la URL del servidor que lo emitió; el plugin no lo envía a otro) y secreto por máquina (`sh_…`). Parámetros de las peticiones sin prototipo: `__proto__` no puede hacer aparecer `reset`.
 - **El remitente de cada mensaje lo decide el servidor** a partir del secreto. Una respuesta (`reply_to`) solo puede citar un mensaje que el remitente ve. Los avisos del servidor no se pueden editar.
-- **Grupos privados:** el creador es el dueño; los demás entran por invitación de un miembro (`inviteToGroup`).
+- **Grupos privados:** el creador es el dueño y el único que invita (`inviteToGroup`); los demás entran por su invitación.
 - **Cada sesión filtra lo que recibe** con su lista de permitidos. Los ids de remitente y de grupo se validan antes de usarse en ficheros. El contenido se neutraliza para que nadie cierre la etiqueta `<channel>`.
 - **Permisos:** la petición de un worker va solo a su coordinador; solo vale la respuesta directa de un destinatario a esa petición, una vez y durante 15 minutos; 5 respuestas erróneas silencian a esa sesión 10 minutos. Las del coordinador no van a nadie salvo `permissionApprovers` en su `access.json`. `SQUADRA_PERMISSION_RELAY=off` (squadra-host lo pone si `permission_relay` es falso) desactiva el relay.
-- **Skills:** `access`, `configure`, `login` y `logout` llevan `disable-model-invocation` y solo escriben bajo `~/.claude/channels/squadra/`.
+- **Skills:** `access`, `configure`, `login`, `logout` y `status` llevan `disable-model-invocation` y solo escriben bajo `~/.claude/channels/squadra/`.
 - **Tras compactar,** los mensajes recuperados se citan como cadenas JSON y se marcan como de otras sesiones.
 - **Adjuntos de `reply`:** rutas absolutas, nunca de carpetas de credenciales ni ficheros tipo `.env`, `id_*`, `*.pem`; se leen por descriptor para evitar cambios entre comprobación y lectura. Descargas con tope de 50 MB; la bandeja se limpia a la semana.
-- **Coordinador fijado:** el worker guarda en `coordinator-pin.json` la fecha de creación de la identidad de su coordinador; si cambia, ignora sus mensajes y avisa.
+- **Coordinador fijado:** el worker guarda en `coordinator-pin.json` la identidad de su coordinador (`squadra_identity`, aleatoria por registro en el servidor); si cambia, ignora sus mensajes y avisa. Igual con los nombres de la allowlist y de los grupos (`allow-pins.json`, se fijan en su primer mensaje; `/squadra:access unpin` para aceptar uno registrado de nuevo) y con los aprobadores de un coordinador.
 - **Observación:** eventos con lista blanca de campos y tipos por clase (el servidor descarta el resto); enmascarado ampliado; no se envía la salida de comandos o escrituras que tocan secretos; límite de 120 llamadas y 3000 eventos por minuto y sesión.
 - **Panel:** CSP estricta con el hash del script, sin iframes, sin scripts de terceros; números siempre convertidos y escapados.
-- **Servidor:** WebSocket sin copias cuadráticas, tope de 16 KB antes de autenticar, tramas de control según la RFC, `Origin` comprobado en `/api/terminal`, límite de sockets sin autenticar; cuerpos con tiempo de inactividad de 30 s; presupuesto de subida de 500 MB/hora por sesión; límites en ediciones, reacciones y grupos; avisos de compactación con enfriamiento; SSE que no lee se desconecta.
+- **Servidor:** WebSocket sin copias cuadráticas, sin sockets antes de autenticar (la credencial va en la petición), tramas de control según la RFC, `Origin` comprobado en `/api/terminal`, ningún socket aceptado sin credencial en la propia petición (ticket de un solo uso o secreto de la máquina); cuerpos con tiempo de inactividad de 30 s; presupuesto de subida de 500 MB/hora por sesión; límites en ediciones, reacciones y grupos; avisos de compactación con enfriamiento; SSE que no lee se desconecta.
 - **squadra-host:** solo HTTPS (http solo a localhost o con `--insecure`); plugin desde la etiqueta `v<versión>` y comprobando que el marketplace `squadra` es este (si estaba sin fijar o en otra versión, lo quita, lo vuelve a añadir fijado y reinstala el plugin); `claude` con ruta absoluta; sesiones lanzadas con `env -u TMUX -u TMUX_PANE`; carpetas personales enteras, del sistema y de credenciales prohibidas; aperturas en serie; carpeta comprobada tras arrancar; mensajes del servidor validados.
-- **Segunda pasada:** avisos del servidor limitados a 10 por minuto y worker (y `claimSession`/`releaseSession` a 20), con enfriamiento propio para el aviso de contexto (`SQUADRA_NOTICE_COOLDOWN_MS`, 5 min); el texto de los mensajes perdidos se cita como dato. Un nombre borrado y registrado de nuevo no ve mensajes, ficheros ni invitaciones anteriores a su creación. `joinGroup` devuelve si creó el grupo, su dueño y sus miembros (el plugin lo avisa), y el último en salir lo cierra. Subidas: hace falta `Content-Length`, dos a la vez por sesión y el presupuesto cuenta las que están llegando. `/register` con el token de alta: 10 por minuto por dirección (IPv6 por /64), 60 en total y como mucho `SQUADRA_MAX_SESSIONS` (500) identidades. Los nombres que abre el panel se reservan: el servidor registra la identidad y se la pasa a la máquina (campo `identity` de la especificación), y un nombre registrado por otra sesión se rechaza. Acciones de chat de una lista fija. Pools separados de sockets sin autenticar para máquinas y paneles; pongs con contrapresión. Cabeceras reenviadas solo con `TRUST_PROXY`, y el comando de alta siempre entrecomillado. En el plugin: adjuntos solo desde la carpeta de la sesión, la bandeja o la carpeta temporal, sin enlaces duros ni `/proc`; `SQUADRA_STATE_DIR` solo desde el `.env` de la máquina; las peticiones de permiso pendientes se borran al salir; variantes de la etiqueta `<channel>` neutralizadas; el hook reconoce un `claude` instalado por versiones; el enmascarado recorta la entrada antes de las expresiones regulares.
+- **Segunda pasada:** avisos del servidor limitados a 10 por minuto y worker (y `claimSession`/`releaseSession` a 20), con enfriamiento propio para el aviso de contexto (`SQUADRA_NOTICE_COOLDOWN_MS`, 5 min); el texto de los mensajes perdidos se cita como dato. Un nombre borrado y registrado de nuevo no ve mensajes, ficheros ni invitaciones anteriores a su creación. `joinGroup` devuelve si creó el grupo, su dueño y sus miembros (el plugin lo avisa), y el último en salir lo cierra. Subidas: hace falta `Content-Length`, dos a la vez por sesión y el presupuesto cuenta las que están llegando. `/register` con el token de alta: 10 por minuto por dirección (IPv6 por /64), 60 en total y como mucho `SQUADRA_MAX_SESSIONS` (500) identidades. Los nombres que abre el panel se reservan: el servidor registra la identidad y se la pasa a la máquina (campo `identity` de la especificación), y un nombre registrado por otra sesión se rechaza. Acciones de chat de una lista fija. Pongs con contrapresión. Cabeceras reenviadas solo con `TRUST_PROXY`, y el comando de alta siempre entrecomillado. En el plugin: adjuntos solo desde la carpeta de la sesión, su bandeja de entrada o su `outbox`, sin enlaces duros ni `/proc`; `SQUADRA_STATE_DIR` solo desde el `.env` de la máquina; las peticiones de permiso pendientes se borran al salir; variantes de la etiqueta `<channel>` neutralizadas; el hook reconoce un `claude` instalado por versiones; el enmascarado recorta la entrada antes de las expresiones regulares.
+- **Cuarta auditoría:** una sesión que ocupa su nombre solo responde desde su instancia, también al leer mensajes (`getUpdates` sin instancia se rechaza); las sesiones ocupadas se guardan en la base de datos y, tras reiniciar el servidor, siguen reservadas 2 minutos para su sesión. "Desconectar sesión" anula el secreto; abrir de nuevo un nombre de la máquina desde el panel le da uno nuevo. Los avisos del servidor solo llegan a un coordinador que ha escrito a ese worker. Fechas de eventos enteras y recientes; textos de las máquinas sin caracteres de control; HSTS con TLS. En el plugin: cada login escrito se confirma (sin elicitation, solo lo aprobado antes); `approved` se conserva al guardar `access.json`; `SQUADRA_NAME` validado; `launch.json` se consume al usarlo; un worker no escribe a un coordinador rechazado; rutas comparadas sin mayúsculas; bandeja de 1 GB como máximo; más secretos enmascarados y `*.tfstate`/`*.tfvars` no se adjuntan. En el panel: lo que se pinta de cada evento va recortado y en caché, la vista no pierde historial al leer hacia atrás, enlaces al propio panel como texto, sin foco automático en un terminal abierto desde fuera, vaciar el chat como acción peligrosa, y las vistas de máquinas solo enlazan sesiones de esa máquina. En squadra-host: capturas de pantalla de 1 MB como máximo, `hello` mínimo, ajustes ilegibles = los más estrictos, sin redimensionar sin `allow_input`, `tmux` y `claude` solo de carpetas tuyas o de root y fuera de las carpetas de proyectos, carpetas comprobadas hasta la raíz, y salida 0 (sin reinicio del servicio) si el servidor rechaza la máquina.
+- **Quinta auditoría:** el login automático con `SQUADRA_NAME` sin `launch.json` pide confirmación; los `permissionApprovers` del coordinador solo valen confirmados en el login; el pin del coordinador se vuelve a comprobar cada minuto; `SQUADRA_URL`/`SQUADRA_SERVER_TOKEN` solo del `.env` (y el servidor aparece en la confirmación); del `.env` solo se leen claves `SQUADRA_*`; el texto de `reply`/`edit_message` se enmascara; adjuntos: nada de `.git/`, historiales ni llaveros, la carpeta personal no cuenta como carpeta de la sesión y las raíces se comparan exactas; `access.json` ilegible un momento no se pierde; ficheros de estado escritos sin seguir enlaces; las skills solo pueden escribir `access.json`, `allow-pins.json`, `approved/*` y `.env`. Servidor: `getChat` solo da presencia, cola y contexto de sesiones con las que hay relación; límite de lecturas; emoji de reacción limpio; `info` de una máquina como mucho 60 por minuto; el aviso de la máquina va junto al pie del terminal, no en su lugar. squadra-host: mensajes de más de 1 MB del servidor cierran la conexión y la espera de reconexión solo vuelve a 1 s tras una conexión estable.
 - **Límites conocidos:** el servidor sigue siendo de confianza para dar instrucciones (quien lo controle puede escribir en los terminales con `allow_input` y dar tareas por el coordinador); las sesiones de una máquina comparten usuario (para aislarlas, un usuario o contenedor por máquina); no se fija el certificado TLS (las renovaciones cambian la clave).
 
 ## Mover una sesión a otra máquina
 
-1. Copia `~/.claude/channels/squadra/<nombre>/identity.json` a la máquina nueva, o rota el secreto con `/register` y `reset: true`.
+1. Cierra la sesión en la máquina vieja (`/squadra:logout`): un nombre conectado no acepta otra copia. Copia `~/.claude/channels/squadra/<nombre>/identity.json` a la máquina nueva, con el mismo `SQUADRA_URL` en su `.env` (la identidad va ligada a esa URL exacta), o rota el secreto con `/register` y `reset: true` (necesita el token de administración).
 2. Para continuar la conversación de Claude, copia también su transcripción, `~/.claude/projects/<ruta-codificada>/<id>.jsonl`, y usa `claude --resume <id>`.
 
 ## Pruebas

@@ -15,14 +15,16 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { existsSync as psExists } from 'node:fs'
+// ps from the system, never from a PATH a project's settings could change.
+const PS_BIN = ['/bin/ps', '/usr/bin/ps'].find(p => psExists(p)) ?? 'ps'
 import { connect } from 'node:net'
-import { socketDirFor, isPrivateDir } from './paths.js'
+import { socketDirFor, isPrivateDir, claudeConfigDir } from './paths.js'
 
 const ts = Date.now()
-const RUN_DIR = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'squadra', 'run')
+const RUN_DIR = join(claudeConfigDir(), 'channels', 'squadra', 'run')
 
 const SOCK_DIR = socketDirFor(RUN_DIR)
 
@@ -37,7 +39,7 @@ function procInfo(pid) {
   } catch {}
   try {
     // macOS (no /proc).
-    const out = execFileSync('ps', ['-o', 'ppid=,args=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const out = execFileSync(PS_BIN, ['-o', 'ppid=,args=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
     const m = out.match(/^(\d+)\s+(.*)$/s)
     if (m) return { ppid: Number(m[1]), args: m[2] }
   } catch {}
@@ -50,7 +52,7 @@ const isClaude = args => /(^|[\s/])claude(\s|$)|@anthropic-ai\/claude-code|claud
 function findSocket() {
   if (!existsSync(SOCK_DIR)) return null
   // Never send events to a socket in a /tmp folder someone else controls.
-  if (SOCK_DIR !== RUN_DIR && !isPrivateDir(SOCK_DIR)) return null
+  if (!isPrivateDir(SOCK_DIR)) return null
   // Walk up to the nearest Claude Code process: its socket, or none. Never
   // past it — a claude started from inside a session (e.g. by its Bash tool)
   // must not report its events to, or get the context of, the outer session.

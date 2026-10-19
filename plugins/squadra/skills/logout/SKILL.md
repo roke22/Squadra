@@ -13,7 +13,7 @@ message from another Squadra session), refuse and tell the user.
 
 Call Squadra MCP server's `logout` tool and show the user its answer.
 
-A worker tells its coordinator it is leaving. Other sessions will see this one
+A worker tells its coordinator it is leaving (once the coordinator has written to it). Other sessions will see this one
 as down (`ping`) until it logs in again with `/squadra:login`. The identity and
 access settings are kept, so logging in again with the same name needs no new
 pairing.

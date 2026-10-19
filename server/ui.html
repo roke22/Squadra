@@ -15,16 +15,28 @@
     --bubble: #ece9e1; --bubble-in: #e7eef7;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --pane-h: clamp(340px, calc((100vh - 120px) / 2), 720px);
+    color-scheme: light;
   }
+  /* Dark: the system's choice, unless light was chosen here; or chosen here. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #1a1917; --panel: #22211f; --panel-2: #2a2926; --line: #393733; --text: #ecebe7; --muted: #a29e96;
       --accent: #e0855f;
       --coord: #b08ae8; --coord-soft: #2e2639;
       --worker: #5cb8c9; --worker-soft: #1e3236;
       --ok: #4fb57e; --warn: #e0a93f; --err: #e2665a; --info: #6d9be0; --idle: #8a877f;
       --bubble: #302e2a; --bubble-in: #26303b;
+      color-scheme: dark;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1a1917; --panel: #22211f; --panel-2: #2a2926; --line: #393733; --text: #ecebe7; --muted: #a29e96;
+    --accent: #e0855f;
+    --coord: #b08ae8; --coord-soft: #2e2639;
+    --worker: #5cb8c9; --worker-soft: #1e3236;
+    --ok: #4fb57e; --warn: #e0a93f; --err: #e2665a; --info: #6d9be0; --idle: #8a877f;
+    --bubble: #302e2a; --bubble-in: #26303b;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -161,6 +173,9 @@
   .side-ver, .login-card .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
   .side-ver { padding: 0 14px 10px; }
   .login-card .foot { margin-top: 16px; }
+  .prefs { display: inline-flex; align-items: center; gap: 6px; }
+  .theme-btn { border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0 6px; cursor: pointer; font-size: 11px; line-height: 18px; width: auto; margin: 0; color: var(--muted); }
+  .theme-btn:hover { background: var(--panel-2); }
   .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .login-card .lang button, .lang button { border: 0; background: none; padding: 1px 7px; cursor: pointer; color: var(--muted); font-size: 11px; width: auto; margin: 0; border-radius: 0; font-weight: 500; }
   .login-card .lang button.on, .lang button.on { background: var(--panel-2); color: var(--text); font-weight: 650; }
@@ -265,7 +280,15 @@
   .term-row .m { color: var(--muted); font-size: 12.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
   .term-row .acts { display: flex; gap: 6px; }
   .host-empty { padding: 12px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
-  .modal.wide { width: min(620px, 100%); }
+  .modal.wide { width: min(680px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+  .steps { margin: 0 0 12px; padding-left: 22px; }
+  .steps > li { margin: 0 0 14px; }
+  .steps > li > p { margin: 0 0 6px; color: var(--text); }
+  .steps .lbl { font-size: 12px; color: var(--muted); margin: 6px 0 4px; }
+  .steps .cmdrow { display: flex; gap: 6px; align-items: flex-start; }
+  .steps .cmdrow .cmd { flex: 1; margin: 0 0 6px; }
+  .steps .cmdrow .btn { flex: none; padding: 4px 8px; font-size: 12px; }
+  .steps .note { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
   .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
   .field > span { font-size: 12.5px; color: var(--muted); }
   .field input[type=text], .field select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); width: 100%; }
@@ -315,10 +338,10 @@
   <form class="login-card" id="loginForm">
     <div class="brand"><svg class="logo" aria-hidden="true"><use href="#squadra-logo"/></svg>Squadra</div>
     <p id="loginIntro"></p>
-    <input id="tokenInput" type="password" autocomplete="current-password" required>
+    <input id="tokenInput" type="password" autocomplete="off" required>
     <button type="submit" id="loginBtn"></button>
     <div class="login-err" id="loginErr"></div>
-    <div class="foot"><span class="ver"></span><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></div>
+    <div class="foot"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
   </form>
 </div>
 
@@ -329,7 +352,7 @@
     </div>
     <nav class="nav" id="nav"></nav>
     <div class="side-foot"><span class="dot" id="connDot"></span><span id="connText"></span><button id="logoutBtn"></button></div>
-    <div class="side-ver"><span class="ver"></span><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></div>
+    <div class="side-ver"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -358,6 +381,12 @@
     del: k => { try { localStorage.removeItem(k) } catch {} },
   }
 
+  // Light or dark: the system's, unless chosen with the 🌙/☀️ button
+  // (remembered per browser). Set first thing, so the page doesn't flash.
+  const darkQuery = window.matchMedia?.('(prefers-color-scheme: dark)') ?? { matches: false, addEventListener() {} }
+  const themeNow = () => document.documentElement.dataset.theme || (darkQuery.matches ? 'dark' : 'light')
+  { const t = store.get('squadraTheme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t }
+
   // ---------------------------------------------------------------------------
   // language: browser language (Spanish → es, anything else → en), switchable
   const LANG = (() => {
@@ -366,6 +395,9 @@
     return (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en'
   })()
   const LOCALE = LANG === 'es' ? 'es-ES' : 'en-GB'
+  // One collator for every sort: localeCompare builds one per call, which
+  // with hundreds of sessions re-sorted every second adds up.
+  const COLLATOR = new Intl.Collator(LOCALE, { numeric: true })
   const I18N = {
     en: {
       offline: ago => `Disconnected · seen ${ago} ago`,
@@ -387,7 +419,7 @@
       noActivity: 'No activity yet. It shows up once the session runs <code>/squadra:login</code> with observation «activity» or «full».',
       historyStart: 'Start of saved history',
       serverNotice: 'server notice',
-      you: 'You',
+      you: '👤 You',
       inGroup: g => ` in ${g}`,
       turnEnded: 'turn ended',
       background: n => `${n} in background`,
@@ -423,7 +455,7 @@
       squadEmpty: n => `${n} is not here.`,
       needsYou: 'Needs you:',
       alertPerm: (n, what) => `🔐 <b>${n}</b> is waiting${what ? ` · ${what}` : ''}`,
-      alertCtx: (n, p) => `📈 <b>${n}</b> at ${p}% of its context`,
+      alertCtx: (n, p) => `📈 <b>${n}</b> at ${p}% of its context before auto-compaction`,
       alertMore: n => `+${n} more`,
       workers: 'Workers',
       archived: 'Archived',
@@ -457,11 +489,21 @@
       unauthorized: 'unauthorized',
       sessionOnline: 'The session is connected: disconnect it first (/squadra:logout or close Claude).',
       clearTitle: n => `Clear ${n}'s chat`,
+      moreChars: n => `… (${n} more characters)`,
+      machineSays: 'the machine says',
+      olderHidden: n => `${n} older item${n === 1 ? '' : 's'} not shown here (too large to draw at once)`,
+      machineNotFound: 'That machine isn\'t here (it was disconnected, or the link is wrong).',
+      notListed: 'not listed by this machine',
+      editedMark: 'edited',
+      coordOwn: 'opened from this dashboard',
+      coordSelf: 'says it is a coordinator (not opened from here)',
+      coordNotCoord: 'this session is not a coordinator',
+      coordNone: 'no session has this name (yet)',
       clearText: (who, online) => `Deletes ${who}'s activity from the server (prompts, tools, Claude's text). Messages between sessions are hidden in this chat but stay in the other sessions' chats.${online ? ' The session stays connected and new activity keeps showing up.' : ''} The conversation inside Claude itself is not touched.`,
       archiveTitle: n => `Archive ${n}`,
       archiveText: who => `${who} disappears from the mosaic and the list and moves to «Archived» with all its history. If it reconnects, it is unarchived automatically.`,
       deleteTitle: n => `Delete ${n}`,
-      deleteText: (who, n) => `Deletes ${who}'s identity and all its activity from the server. Its messages stay in the other sessions' chats. If it runs <code>/squadra:login ${n}</code> again, it registers again. This cannot be undone.`,
+      deleteText: (who, n) => `Deletes ${who}'s identity and all its activity from the server, with its attachments and the messages it had queued for others. Its delivered messages stay in the other sessions' chats (without their attachments). If it registers again (<code>/squadra:login ${n}</code> on a machine with the join token, or opened again from the dashboard), it is a new identity: sessions that talked to it won't take its messages until they run <code>/squadra:access unpin ${n}</code> (if it was a coordinator, its workers also need <code>coordinator-pin.json</code> deleted from their state folder and a new login). This cannot be undone.`,
       couldNotComplete: 'Could not complete',
       ok: 'OK',
       archivedAt: d => `Archived ${d}`,
@@ -473,6 +515,8 @@
       cannotConnect: m => `Can't reach the server: ${m}`,
       storedTokenInvalid: 'The saved token is no longer valid.',
       logout: 'Log out',
+      darkMode: 'Dark mode',
+      lightMode: 'Light mode',
       logoutTitle: 'Forget the token in this browser',
       sessionsMenu: 'Sessions',
       loginIntro: 'Enter the server token: <code>squadra-server</code> prints it at startup and it is stored in <code>data/server-token</code>.',
@@ -489,15 +533,16 @@
       newSession: '+ New session',
       noMachines: 'No machines yet. Install squadra-host on a computer with Claude Code to open sessions from here: click <b>+ Add machine</b> and run the command it gives you there.',
       hostOffline: ago => `Disconnected · seen ${ago} ago`,
+      hostPending: ago => `Waiting to connect · added ${ago} ago`,
       hostOnline: 'Connected',
       folders: 'Folders',
-      noFolders: 'none: add one on the machine with <code>squadra-host folders add &lt;path&gt;</code>',
+      noFolders: 'none: add one on the machine with <code>node ~/.config/squadra-host/squadra-host.mjs folders add &lt;path&gt;</code>',
       maxSessions: n => `up to ${n} sessions`,
       typingOn: 'typing from here: allowed',
       typingOff: 'watch only (typing turned off on the machine)',
       noTerminals: 'No sessions open on this machine.',
       pluginOk: v => `Squadra plugin ${v ? `v${v}` : 'installed'}`,
-      pluginMissing: missing => `⚠ Squadra plugin ${missing ? 'not installed' : 'disabled'}: run <code>squadra-host plugin</code> on the machine`,
+      pluginMissing: missing => `⚠ Squadra plugin ${missing ? 'not installed' : 'disabled'}: run <code>node ~/.config/squadra-host/squadra-host.mjs plugin</code> on the machine`,
       terminal: '⌨ Terminal',
       chat: 'Chat',
       closeSession: 'Close session',
@@ -505,18 +550,30 @@
       closeSessionText: (n, h) => `Ends the Claude Code session <b>${n}</b> on <b>${h}</b> (like closing its terminal). Its conversation stays in Claude's history and can be resumed with «Continue the last conversation».`,
       rename: 'Rename',
       renameTitle: 'Rename machine',
-      disconnect: 'Disconnect',
-      disconnectTitle: n => `Disconnect ${n}`,
-      disconnectText: n => `<b>${n}</b> stops being able to connect: its credential is revoked and squadra-host stops on that machine. Sessions already open there keep running (<code>tmux -L squadra ls</code>). To add it again you need a new command from «+ Add machine».`,
+      disconnect: 'Remove',
+      disconnectTitle: n => `Remove ${n}`,
+      disconnectText: n => `<b>${n}</b> leaves this list and can no longer connect: its credential is revoked and squadra-host (0.0.2 or later) stops on that machine if it is running. Sessions already open there keep running (<code>tmux -L squadra ls</code>). To add it again you need a new command from «+ Add machine».`,
       save: 'Save',
       name: 'Name',
       addTitle: 'Add a machine',
-      addIntro: 'The machine needs <b>Node 22+</b>, <b>tmux</b> and <b>Claude Code</b>. You will get a one-time command to run there; it also installs the Squadra plugin in Claude Code.',
+      addIntro: 'You will get the steps to run on the machine: what to install, the Squadra plugin, a one-time command that joins it to this server, and how to keep it running.',
       machineName: 'Name for the machine (optional)',
       machineNameHint: 'Defaults to its hostname.',
-      configurePlugin: 'Also give the Squadra plugin on that machine this server\'s address and token, if it is not configured yet',
+      configurePlugin: 'Also give that machine the join token, so sessions started there by hand can join (sessions opened from this dashboard don\'t need it). Anyone who sees the command could take it.',
       generate: 'Generate command',
-      runThis: 'Run this on the machine, in the folder where sessions should be allowed to open:',
+      stepsIntro: 'On the machine, in this order:',
+      stepNeeds: 'Install what it needs: <b>Node.js 22.13+</b>, <b>tmux</b> and <b>Claude Code</b>. Then run <code>claude</code> once and sign in.',
+      lblClaude: 'Claude Code:',
+      lblTmuxLinux: 'tmux on Linux (Debian/Ubuntu; or your distribution\'s package):',
+      lblTmuxMac: 'tmux on macOS:',
+      stepPlugin: 'Install the Squadra plugin in Claude Code:',
+      stepEnroll: 'Join the machine to this server. It carries a single-use code: keep it private until it is used. It stays connected, showing what it does.',
+      stepFolders: 'Allow the folder (or folders) where sessions may be opened; use your own path:',
+      exampleFolder: '~/projects',
+      stepService: 'To keep it running in the background, stop the command from step 3 (Ctrl+C) and install the service:',
+      lblLinux: 'Linux (systemd):',
+      lblMac: 'macOS (launchd):',
+      lingerNote: 'On Linux, to keep it running after you log out: <code>loginctl enable-linger $USER</code>',
       copy: 'Copy',
       copied: 'Copied ✓',
       codeValid: t => `Single-use code, valid until ${t}.`,
@@ -541,6 +598,7 @@
       open: 'Open',
       opening: 'Opening…',
       nameTaken: n => `A session named "${n}" already exists and is connected.`,
+      openOnHost: n => `A session named "${n}" is already open on that machine (its terminal is still there): close it first, or choose another name.`,
       termHint: h => `Typing goes straight to Claude on ${h}. On first start accept the development-channels prompt and, if asked, trust the folder and sign in with /login.`,
       readOnly: 'Watch only',
       redraw: 'Redraw',
@@ -552,6 +610,9 @@
       onHost: h => `on ${h}`,
       back: 'Back',
       openLink: 'Open this link from the terminal in a new tab?',
+      kick: 'Disconnect session',
+      kickTitle: n => `Disconnect ${n}`,
+      kickText: who => `Cuts ${who} off Squadra now and cancels its secret: whoever has a copy of it can't come back. Use it for a session that misbehaves or holds a name it shouldn't. Then you can archive or delete it; to use the name again, close its terminal and open it again from its machine (if it was opened from the dashboard), or delete it.`,
       httpWarn: 'This address is plain http: machines refuse it unless you add --insecure, and only do that on a trusted private network. Serve the dashboard over https.',
     },
     es: {
@@ -574,7 +635,7 @@
       noActivity: 'Sin actividad todavía. Aparece cuando la sesión hace <code>/squadra:login</code> con observación «activity» o «full».',
       historyStart: 'Inicio del historial guardado',
       serverNotice: 'aviso del servidor',
-      you: 'Tú',
+      you: '👤 Tú',
       inGroup: g => ` en ${g}`,
       turnEnded: 'turno terminado',
       background: n => `${n} en segundo plano`,
@@ -610,11 +671,11 @@
       squadEmpty: n => `${n} no está.`,
       needsYou: 'Te necesitan:',
       alertPerm: (n, what) => `🔐 <b>${n}</b> espera${what ? ` · ${what}` : ''}`,
-      alertCtx: (n, p) => `📈 <b>${n}</b> al ${p}% de su contexto`,
+      alertCtx: (n, p) => `📈 <b>${n}</b> al ${p}% de su contexto antes de autocompactar`,
       alertMore: n => `y ${n} más`,
       workers: 'Workers',
       archived: 'Archivadas',
-      archivedCount: n => n ? `${n} sesión${n === 1 ? '' : 'es'}` : 'Ninguna',
+      archivedCount: n => n ? `${n} ${n === 1 ? 'sesión' : 'sesiones'}` : 'Ninguna',
       roleCoordinator: 'coordinador',
       roleWorker: 'worker',
       columns: 'Columnas',
@@ -644,11 +705,21 @@
       unauthorized: 'sin autorización',
       sessionOnline: 'La sesión está conectada: desconéctala primero (/squadra:logout o cerrando Claude).',
       clearTitle: n => `Limpiar el chat de ${n}`,
+      moreChars: n => `… (${n} caracteres más)`,
+      machineSays: 'la máquina dice',
+      olderHidden: n => `${n} ${n === 1 ? 'elemento anterior no se muestra' : 'elementos anteriores no se muestran'} aquí (demasiado grandes para dibujarlos a la vez)`,
+      machineNotFound: 'Esa máquina no está aquí (se desconectó o el enlace no es correcto).',
+      notListed: 'esta máquina no la lista',
+      editedMark: 'editado',
+      coordOwn: 'abierta desde este panel',
+      coordSelf: 'dice ser coordinador (no abierta desde aquí)',
+      coordNotCoord: 'esta sesión no es coordinadora',
+      coordNone: 'ninguna sesión se llama así (todavía)',
       clearText: (who, online) => `Se borra del servidor la actividad de ${who} (prompts, herramientas, textos de Claude). Los mensajes entre sesiones se ocultan en este chat, pero siguen en el de las otras sesiones.${online ? ' La sesión sigue conectada y lo nuevo seguirá apareciendo.' : ''} La conversación en el propio Claude no se toca.`,
       archiveTitle: n => `Archivar ${n}`,
       archiveText: who => `${who} deja de aparecer en el mosaico y en la lista, y pasa a «Archivadas» con todo su historial. Si vuelve a conectarse, se desarchiva sola.`,
       deleteTitle: n => `Eliminar ${n}`,
-      deleteText: (who, n) => `Se borran del servidor la identidad y toda la actividad de ${who}. Sus mensajes siguen en los chats de las otras sesiones. Si vuelve a hacer <code>/squadra:login ${n}</code>, se registrará de nuevo. No se puede deshacer.`,
+      deleteText: (who, n) => `Se borran del servidor la identidad y toda la actividad de ${who}, con sus adjuntos y los mensajes que tenía en cola para otras sesiones. Sus mensajes ya entregados siguen en los chats de las otras sesiones (sin sus adjuntos). Si se registra de nuevo (<code>/squadra:login ${n}</code> en una máquina con el token de alta, o abriéndola otra vez desde el panel), será una identidad nueva: las sesiones que hablaban con ella no aceptarán sus mensajes hasta que ejecuten <code>/squadra:access unpin ${n}</code> (si era un coordinador, sus workers necesitan además borrar <code>coordinator-pin.json</code> de su carpeta de estado y volver a hacer login). No se puede deshacer.`,
       couldNotComplete: 'No se ha podido completar',
       ok: 'Vale',
       archivedAt: d => `Archivada ${d}`,
@@ -660,6 +731,8 @@
       cannotConnect: m => `No se puede conectar con el servidor: ${m}`,
       storedTokenInvalid: 'El token guardado ya no es válido.',
       logout: 'Salir',
+      darkMode: 'Modo oscuro',
+      lightMode: 'Modo claro',
       logoutTitle: 'Olvidar el token en este navegador',
       sessionsMenu: 'Sesiones',
       loginIntro: 'Introduce el token del servidor: lo muestra <code>squadra-server</code> al arrancar y está en <code>data/server-token</code>.',
@@ -676,15 +749,16 @@
       newSession: '+ Nueva sesión',
       noMachines: 'Todavía no hay máquinas. Instala squadra-host en un ordenador con Claude Code para abrir sesiones desde aquí: pulsa <b>+ Añadir máquina</b> y ejecuta allí el comando que te da.',
       hostOffline: ago => `Desconectada · vista hace ${ago}`,
+      hostPending: ago => `Pendiente de conectar · añadida hace ${ago}`,
       hostOnline: 'Conectada',
       folders: 'Carpetas',
-      noFolders: 'ninguna: añade una en la máquina con <code>squadra-host folders add &lt;ruta&gt;</code>',
+      noFolders: 'ninguna: añade una en la máquina con <code>node ~/.config/squadra-host/squadra-host.mjs folders add &lt;ruta&gt;</code>',
       maxSessions: n => `hasta ${n} sesiones`,
       typingOn: 'escribir desde aquí: permitido',
       typingOff: 'solo ver (escribir está desactivado en la máquina)',
       noTerminals: 'No hay sesiones abiertas en esta máquina.',
       pluginOk: v => `Plugin de Squadra ${v ? `v${v}` : 'instalado'}`,
-      pluginMissing: missing => `⚠ Plugin de Squadra ${missing ? 'sin instalar' : 'desactivado'}: ejecuta <code>squadra-host plugin</code> en la máquina`,
+      pluginMissing: missing => `⚠ Plugin de Squadra ${missing ? 'sin instalar' : 'desactivado'}: ejecuta <code>node ~/.config/squadra-host/squadra-host.mjs plugin</code> en la máquina`,
       terminal: '⌨ Terminal',
       chat: 'Chat',
       closeSession: 'Cerrar sesión',
@@ -692,18 +766,30 @@
       closeSessionText: (n, h) => `Termina la sesión de Claude Code <b>${n}</b> en <b>${h}</b> (como cerrar su terminal). Su conversación queda en el historial de Claude y se puede retomar con «Continuar la última conversación».`,
       rename: 'Renombrar',
       renameTitle: 'Renombrar máquina',
-      disconnect: 'Desconectar',
-      disconnectTitle: n => `Desconectar ${n}`,
-      disconnectText: n => `<b>${n}</b> deja de poder conectarse: se revoca su credencial y squadra-host se detiene en esa máquina. Las sesiones ya abiertas allí siguen funcionando (<code>tmux -L squadra ls</code>). Para volver a añadirla necesitas un comando nuevo de «+ Añadir máquina».`,
+      disconnect: 'Eliminar',
+      disconnectTitle: n => `Eliminar ${n}`,
+      disconnectText: n => `<b>${n}</b> desaparece de esta lista y ya no puede conectarse: se revoca su credencial y squadra-host (0.0.2 o posterior) se detiene en esa máquina si está en marcha. Las sesiones ya abiertas allí siguen funcionando (<code>tmux -L squadra ls</code>). Para volver a añadirla necesitas un comando nuevo de «+ Añadir máquina».`,
       save: 'Guardar',
       name: 'Nombre',
       addTitle: 'Añadir una máquina',
-      addIntro: 'La máquina necesita <b>Node 22+</b>, <b>tmux</b> y <b>Claude Code</b>. Obtendrás un comando de un solo uso para ejecutar allí; también instala el plugin de Squadra en Claude Code.',
+      addIntro: 'Obtendrás los pasos para hacer en la máquina: qué instalar, el plugin de Squadra, un comando de un solo uso que la da de alta en este servidor y cómo dejarla en marcha.',
       machineName: 'Nombre de la máquina (opcional)',
       machineNameHint: 'Por defecto, su hostname.',
-      configurePlugin: 'Dar también al plugin de Squadra de esa máquina la dirección y el token de este servidor, si aún no está configurado',
+      configurePlugin: 'Dar también a esa máquina el token de alta, para que puedan unirse sesiones abiertas allí a mano (las que se abren desde este panel no lo necesitan). Quien vea el comando podría quedárselo.',
       generate: 'Generar comando',
-      runThis: 'Ejecuta esto en la máquina, en la carpeta donde se podrán abrir sesiones:',
+      stepsIntro: 'En la máquina, en este orden:',
+      stepNeeds: 'Instala lo necesario: <b>Node.js 22.13+</b>, <b>tmux</b> y <b>Claude Code</b>. Después ejecuta <code>claude</code> una vez e inicia sesión.',
+      lblClaude: 'Claude Code:',
+      lblTmuxLinux: 'tmux en Linux (Debian/Ubuntu; o el paquete de tu distribución):',
+      lblTmuxMac: 'tmux en macOS:',
+      stepPlugin: 'Instala el plugin de Squadra en Claude Code:',
+      stepEnroll: 'Da de alta la máquina en este servidor. Lleva un código de un solo uso: guárdalo en privado hasta usarlo. Se queda conectada, mostrando lo que hace.',
+      stepFolders: 'Permite la carpeta (o carpetas) donde se podrán abrir sesiones; pon tu propia ruta:',
+      exampleFolder: '~/proyectos',
+      stepService: 'Para dejarla en marcha en segundo plano, detén el comando del paso 3 (Ctrl+C) e instala el servicio:',
+      lblLinux: 'Linux (systemd):',
+      lblMac: 'macOS (launchd):',
+      lingerNote: 'En Linux, para que siga en marcha cuando cierres sesión: <code>loginctl enable-linger $USER</code>',
       copy: 'Copiar',
       copied: 'Copiado ✓',
       codeValid: t => `Código de un solo uso, válido hasta las ${t}.`,
@@ -728,6 +814,7 @@
       open: 'Abrir',
       opening: 'Abriendo…',
       nameTaken: n => `Ya hay una sesión conectada con el nombre "${n}".`,
+      openOnHost: n => `Ya hay una sesión abierta con el nombre "${n}" en esa máquina (su terminal sigue ahí): ciérrala primero o elige otro nombre.`,
       termHint: h => `Lo que escribas va directo a Claude en ${h}. En el primer arranque acepta el aviso de channels de desarrollo y, si lo pide, confía en la carpeta e inicia sesión con /login.`,
       readOnly: 'Solo ver',
       redraw: 'Redibujar',
@@ -739,6 +826,9 @@
       onHost: h => `en ${h}`,
       back: 'Volver',
       openLink: '¿Abrir este enlace del terminal en una pestaña nueva?',
+      kick: 'Desconectar sesión',
+      kickTitle: n => `Desconectar ${n}`,
+      kickText: who => `Saca ya a ${who} de Squadra y anula su secreto: quien tenga una copia no podrá volver. Úsalo con una sesión que se porte mal o tenga un nombre que no le corresponde. Después podrás archivarla o eliminarla; para volver a usar el nombre, cierra su terminal y ábrela de nuevo desde su máquina (si se abrió desde el panel), o elimínala.`,
       httpWarn: 'Esta dirección es http sin cifrar: las máquinas la rechazan salvo que añadas --insecure, y hazlo solo en una red privada de confianza. Sirve el panel por https.',
     },
   }
@@ -762,7 +852,9 @@
   // helpers
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   const now = () => Date.now() + serverSkew
-  const hhmm = ms => new Date(ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit', hour12: false })
+  // (One formatter for all: building one per call costs more than the rest of a redraw.)
+  const TIME_FMT = new Intl.DateTimeFormat(LOCALE, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const hhmm = ms => TIME_FMT.format(new Date(ms))
   const dur = ms => {
     if (ms > 0 && ms < 1000) return `${(ms / 1000).toFixed(1).replace('.', LANG === 'es' ? ',' : '.')} s`
     const s = Math.max(0, Math.round(ms / 1000))
@@ -773,12 +865,50 @@
   const base = p => String(p ?? '').split('/').filter(Boolean).pop() ?? ''
   const roleOf = name => sessions.get(name)?.role ?? ''
 
+  let streamHelloSeen = false
   async function api(path) {
     const r = await fetch(path, { headers: { Authorization: `Bearer ${token}` } })
     if (r.status === 401) throw Object.assign(new Error('unauthorized'), { status: 401 })
-    const j = await r.json()
-    if (!j.ok) throw new Error(j.description)
+    const j = await r.json().catch(() => ({ ok: false, description: `HTTP ${r.status}` }))
+    if (!j.ok) throw Object.assign(new Error(j.description), { status: j.error_code ?? r.status })
     return j.result
+  }
+
+  const MAX_VIEW_ITEMS = 600   // per chat view
+  const MAX_RENDER_TEXT = 8000 // characters of one text shown
+  const MAX_RENDER_TAGS = 600  // HTML tags one formatted text may become
+  const MAX_VIEW_HTML = 1_500_000 // characters of markup one chat view draws
+  const MAX_VIEW_TAGS = 60_000     // and HTML tags
+  const tagsIn = h => { let n = 0; for (let i = h.indexOf('<'); i >= 0; i = h.indexOf('<', i + 1)) n++; return n }
+  const MAX_RENDER_DETAIL = 3000 // characters of a tool's input/output, a summary…
+  // Escaped and clipped text of an item's field, computed once: a session
+  // sending huge events can't make every re-render slow.
+  const clipCache = new WeakMap()
+  function clipEsc(it, field, max = MAX_RENDER_DETAIL) {
+    if (!it || typeof it !== 'object') return ''
+    let m = clipCache.get(it)
+    if (!m) clipCache.set(it, m = new Map())
+    if (!m.has(field)) {
+      const t = String(it[field] ?? '')
+      m.set(field, esc(t.length > max ? t.slice(0, max) : t) + (t.length > max ? ` <span class="more">${T.moreChars(t.length - max)}</span>` : ''))
+    }
+    return m.get(field)
+  }
+  // Markdown of an item, computed once.
+  const mdCache = new WeakMap()
+  function mdCached(it) {
+    if (!mdCache.has(it)) {
+      const t = String(it.text ?? '')
+      const clipped = t.length > MAX_RENDER_TEXT ? `${t.slice(0, MAX_RENDER_TEXT)}…` : t
+      // At most MAX_RENDER_TAGS elements per text: thousands of lines, list
+      // items or `code` spans would make every redraw of the view slow, so
+      // such a text is shown as plain text (one element) instead.
+      const html = md(clipped)
+      let tags = 0
+      for (let i = html.indexOf('<'); i >= 0 && tags <= MAX_RENDER_TAGS; i = html.indexOf('<', i + 1)) tags++
+      mdCache.set(it, tags > MAX_RENDER_TAGS ? `<div style="white-space:pre-wrap">${esc(clipped)}</div>` : html)
+    }
+    return mdCache.get(it)
   }
 
   // Small, safe markdown: everything is escaped first, then a few constructs.
@@ -792,7 +922,27 @@
       .replace(/`([^`\n]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
-      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)<>]{1,2000})\)/g, (m, label, href) => {
+        // A link into this dashboard (e.g. straight to a terminal) is shown as text.
+        // Judged on the URL as the browser will read it (entities decoded);
+        // one with user:password@ in it is never made a link.
+        let own = true
+        let realHost = ''
+        const decode = x => x.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+        try {
+          const u = new URL(decode(href))
+          const bare = h => h.toLowerCase().replace(/\.+(?=:|$)/, '') // "host." is the same host
+          own = bare(u.host) === bare(location.host) || !!u.username || !!u.password || /@/.test(href) || u.hash.startsWith('#/')
+          // Whenever the text isn't the address itself, the real host goes
+          // next to it (a label can pass for another site in many ways).
+          const l = decode(label.replace(/<[^>]*>/g, '')).trim()
+          // So does a host written with characters that look like others
+          // (gіthub.com with a Cyrillic і, a division slash for "/").
+          const written = decode(href).replace(/^https?:\/\//i, '').split(/[/?#\\]/)[0].replace(/^[^@]*@/, '')
+          if ((l !== decode(href) && l !== u.href) || /[^\x21-\x7e]/.test(written) || /(^|\.)xn--/i.test(u.hostname)) realHost = u.host
+        } catch {}
+        return own ? `${label} (${href})` : `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>${realHost ? ` <span class="more">(${esc(realHost)})</span>` : ''}`
+      })
     // Line by line: runs of "- " / "1. " lines become lists, headings stand
     // alone, other lines join into paragraphs; blank lines end a paragraph.
     const out = []
@@ -837,7 +987,7 @@
     }
   }
 
-  const byPresence = (a, b) => (b.online - a.online) || a.name.localeCompare(b.name, 'es', { numeric: true })
+  const byPresence = (a, b) => (b.online - a.online) || COLLATOR.compare(a.name, b.name)
 
   // Squads: each coordinator with the workers that report to it. Workers whose
   // coordinator isn't here (or sessions with no role) go in "orphans".
@@ -893,6 +1043,10 @@
 
     // The chat was cleared on the server: start over.
     reset() {
+      // A page still on its way belongs to the view before the reset: ignored.
+      this.gen = (this.gen ?? 0) + 1
+      this.loading = false
+      this.gapAfter = false
       this.items = []
       this.keys = new Set()
       this.nextBefore = null
@@ -905,17 +1059,52 @@
 
     key(it) { return it.t === 'message' ? `m${it.id}` : `e${it.id}` }
 
-    add(list, { live = false } = {}) {
+    // older: these items come from scrolling up (they are the oldest ones).
+    add(list, { live = false, older = false } = {}) {
       let added = 0
+      // What arrives live goes at the end, whatever time the session put on
+      // it (an event dated in the past must not slip in above, unseen); the
+      // time shown is still its own. A reload orders everything by time.
+      let last = this.items.length ? this.items[this.items.length - 1] : null
       for (const it of list) {
         const k = this.key(it)
         if (this.keys.has(k)) continue
         this.keys.add(k)
+        if (live && last) it.order = Math.max(it.ts, last.order ?? last.ts)
         this.items.push(it)
+        if (live) last = it
         added++
       }
       if (!added) return 0
-      this.items.sort((a, b) => a.ts - b.ts || (a.id ?? 0) - (b.id ?? 0))
+      this.items.sort((a, b) => (a.order ?? a.ts) - (b.order ?? b.ts) || (a.id ?? 0) - (b.id ?? 0))
+      // Keep the view bounded. Scrolling up drops the newest items (the
+      // "jump" button loads the latest again); new items drop the oldest
+      // (scrolling up loads them again).
+      if (this.items.length > MAX_VIEW_ITEMS) {
+        // Reading back (scrolled up, or a page on its way): new items don't
+        // push the old ones out from under the reader; they wait behind the
+        // jump button.
+        if (older || (live && (this.loading || !this.atBottom()))) {
+          const drop = this.items.splice(MAX_VIEW_ITEMS)
+          for (const it of drop) this.keys.delete(this.key(it))
+          this.gapAfter = true
+          this.jumpEl.hidden = false
+          this.jumpEl.textContent = T.jump(this.unseen)
+        } else {
+          const drop = this.items.splice(0, this.items.length - MAX_VIEW_ITEMS)
+          for (const it of drop) this.keys.delete(this.key(it))
+          // Scrolling up continues from the newest item dropped (by its own
+          // time): nothing between it and what is shown is skipped, whatever
+          // times a session put on its events (repeats are de-duplicated).
+          // (In the server's order: time, then events before messages, then id.)
+          const rank = x => (x.t === 'event' ? 1 : 0)
+          const c = drop.reduce((a, b) => (b.ts > a.ts || (b.ts === a.ts && (rank(b) > rank(a) || (rank(b) === rank(a) && (b.id ?? 0) > (a.id ?? 0)))) ? b : a))
+          // (+1: the server returns what is strictly older, and c must come back too.)
+          this.nextBefore = `${c.ts}:${c.t === 'event' ? 1 : 0}:${c.id + 1}`
+          this.evictions = (this.evictions ?? 0) + 1
+          this.hasMore = true
+        }
+      }
       if (live && !this.atBottom()) { this.unseen += added; this.jumpEl.hidden = false; this.jumpEl.textContent = T.jump(this.unseen) }
       return added
     }
@@ -927,40 +1116,72 @@
     }
 
     atBottom() { return this.scrollEl.scrollHeight - this.scrollEl.scrollTop - this.scrollEl.clientHeight < 60 }
-    toBottom() { this.scrollEl.scrollTop = this.scrollEl.scrollHeight; this.unseen = 0; this.jumpEl.hidden = true }
+    toBottom() {
+      // Newer items were dropped while reading back: load the latest again.
+      if (this.gapAfter) return this.reset()
+      this.scrollEl.scrollTop = this.scrollEl.scrollHeight; this.unseen = 0; this.jumpEl.hidden = true
+    }
 
     onScroll() {
-      if (this.atBottom()) { this.unseen = 0; this.jumpEl.hidden = true }
+      if (this.atBottom() && !this.gapAfter) { this.unseen = 0; this.jumpEl.hidden = true }
       if (this.scrollEl.scrollTop < 80) this.loadOlder()
     }
 
     async loadOlder(first = false) {
       if (this.loading || !this.hasMore) return
       this.loading = true
+      const gen = this.gen // a reset() meanwhile makes this answer stale
+      const evicted = this.evictions ?? 0 // and live items dropped meanwhile set their own cursor
       try {
         const q = `/api/timeline?session=${encodeURIComponent(this.name)}&limit=${this.full ? 200 : 120}${this.nextBefore != null ? `&before=${this.nextBefore}` : ''}`
         const r = await api(q)
+        if (gen !== this.gen) return
+        // Live items were dropped while this page was on its way: the page
+        // would leave a hole above them. Dropped; the next scroll asks again
+        // from the right place.
+        if ((this.evictions ?? 0) !== evicted) { this.hasMore = true; this.render(); return }
         this.nextBefore = r.next_before
         this.hasMore = r.has_more && r.items.length > 0
         const fromBottom = this.scrollEl.scrollHeight - this.scrollEl.scrollTop
-        this.add(r.items)
+        this.add(r.items, { older: !first })
         this.render()
         if (first) this.toBottom()
         else this.scrollEl.scrollTop = this.scrollEl.scrollHeight - fromBottom // keep the reader in place
       } catch (e) {
         if (e.status === 401) return showLogin(T.tokenInvalid)
+        // The server refused the request: don't ask again on every scroll.
+        if (e.status >= 400 && e.status < 500) { this.hasMore = false; this.render() }
       } finally {
-        this.loading = false
+        if (gen === this.gen) this.loading = false
       }
     }
 
     live(it) {
       if (!this.accepts(it)) return false
+      if (this.gapAfter) {
+        // Reading far back: count it; the jump button loads the latest.
+        if (this.keys.has(this.key(it))) return false
+        this.unseen++
+        this.jumpEl.textContent = T.jump(this.unseen)
+        return true
+      }
       const stick = this.atBottom()
       if (!this.add([it], { live: true })) return false
-      this.render()
-      if (stick) this.toBottom()
+      this.scheduleRender(stick)
       return true
+    }
+
+    // A burst of changes re-renders once per frame, not once per change.
+    scheduleRender(stick = false) {
+      this.stick = this.stick || stick
+      if (!this.frame) {
+        this.frame = requestAnimationFrame(() => {
+          this.frame = null
+          this.render()
+          if (this.stick) this.toBottom()
+          this.stick = false
+        })
+      }
     }
 
     // --- rendering ---------------------------------------------------------------
@@ -975,8 +1196,9 @@
       }
 
       const a = sessions.get(this.name)?.activity
+      const parts = []
       let group = null
-      const flush = () => { if (group) { html.push(this.renderGroup(group, a)); group = null } }
+      const flush = () => { if (group) { parts.push({ group, n: group.list.length }); group = null } }
       for (const it of this.items) {
         if (it.t === 'event' && (it.kind === 'tool_start' || it.kind === 'tool_end' || it.kind === 'subagent_start' || it.kind === 'subagent_stop')) {
           if (!group) group = { key: this.key(it), list: [] }
@@ -985,10 +1207,28 @@
         }
         if (it.t === 'event' && (it.kind === 'usage' || (it.kind === 'prompt' && it.channel))) continue
         flush()
-        html.push(this.renderItem(it))
+        parts.push({ it, n: 1 })
       }
       flush()
-      this.itemsEl.innerHTML = html.join('')
+      // At most MAX_VIEW_HTML of markup (and MAX_VIEW_TAGS tags) per redraw,
+      // newest first: a session can't make every redraw of its view parse
+      // megabytes (escaping can multiply a text's size). Older items are left
+      // out, and say so; a group of tools too big for what is left shows its
+      // newest tools.
+      const left = { chars: MAX_VIEW_HTML, tags: MAX_VIEW_TAGS }
+      const shown = []
+      let hidden = 0
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i]
+        const h = p.group ? this.renderGroup(p.group, a, left) : this.renderItem(p.it)
+        const tags = tagsIn(h)
+        if (h.length > left.chars || tags > left.tags) { for (let j = 0; j <= i; j++) hidden += parts[j].n; break }
+        shown.push(h)
+        left.chars -= h.length
+        left.tags -= tags
+      }
+      if (hidden) html.push(`<div class="older">${T.olderHidden(hidden)}</div>`)
+      this.itemsEl.innerHTML = html.join('') + shown.reverse().join('')
     }
 
     renderItem(it) {
@@ -996,17 +1236,17 @@
         const file = it.file ? `${it.text ? '\n' : ''}📎 ${esc(it.file.name)}` : ''
         if (it.system) return `<div class="sysline notice">${esc(it.text)}<div class="t">${hhmm(it.ts)} · ${T.serverNotice}</div></div>`
         if (it.from === this.name) {
-          return `<div class="sent"><div class="h">→ <b>${esc(it.target)}</b> · ${hhmm(it.ts)}${it.edited_at ? ' · editado' : ''}</div><div class="x">${esc(it.text ?? '')}${file}</div></div>`
+          return `<div class="sent"><div class="h">→ <b>${esc(it.target)}</b> · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="x">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
         }
-        return `<div class="row-user"><div class="bubble-head"><b>${esc(it.from)}</b>${it.target.startsWith('#') ? T.inGroup(esc(it.target)) : ''} · ${hhmm(it.ts)}</div><div class="bubble in">${esc(it.text ?? '')}${file}</div></div>`
+        return `<div class="row-user"><div class="bubble-head"><b>${esc(it.from)}</b>${it.target.startsWith('#') ? T.inGroup(esc(it.target)) : ''} · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="bubble in">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
       }
       switch (it.kind) {
-        case 'prompt': return `<div class="row-user"><div class="bubble-head"><b>${T.you}</b> · ${hhmm(it.ts)}</div><div class="bubble">${esc(it.text)}</div></div>`
-        case 'text': return `<div class="assistant">${md(it.text)}</div>`
+        case 'prompt': return `<div class="row-user"><div class="bubble-head"><b>${T.you}</b> · ${hhmm(it.ts)}</div><div class="bubble">${clipEsc(it, 'text', MAX_RENDER_TEXT)}</div></div>`
+        case 'text': return `<div class="assistant">${mdCached(it)}</div>`
         case 'stop': return `<div class="divider">${T.turnEnded} · ${hhmm(it.ts)}${num(it.background_tasks) ? ` · ${T.background(num(it.background_tasks))}` : ''}</div>`
-        case 'notification': return `<div class="sysline warn">⏳ ${esc(it.text || it.type)} · ${hhmm(it.ts)}</div>`
+        case 'notification': return `<div class="sysline warn">⏳ ${it.text ? clipEsc(it, 'text', 500) : esc(it.type)} · ${hhmm(it.ts)}</div>`
         case 'compact': return `<div class="sysline">${T.compactingLine} · ${hhmm(it.ts)}</div>`
-        case 'compacted': return `<div class="sysline">${T.compactedLine(it.trigger !== 'manual')} · ${hhmm(it.ts)}${it.summary ? `<details style="text-align:left"><summary>${T.compactSummary}</summary><pre style="white-space:pre-wrap;font:12px/1.4 var(--mono);background:var(--panel-2);padding:8px;border-radius:6px;max-height:300px;overflow:auto">${esc(it.summary)}</pre></details>` : ''}</div>`
+        case 'compacted': return `<div class="sysline">${T.compactedLine(it.trigger !== 'manual')} · ${hhmm(it.ts)}${it.summary ? `<details style="text-align:left"><summary>${T.compactSummary}</summary><pre style="white-space:pre-wrap;font:12px/1.4 var(--mono);background:var(--panel-2);padding:8px;border-radius:6px;max-height:300px;overflow:auto">${clipEsc(it, 'summary', MAX_RENDER_TEXT)}</pre></details>` : ''}</div>`
         case 'session_start': return `<div class="sysline">${T.sessionStarted(it.source === 'resume')}${it.cwd ? T.inDir(esc(it.cwd)) : ''} · ${hhmm(it.ts)}</div>`
         case 'session_end': return `<div class="sysline">${T.sessionEnded}${it.reason ? ` (${esc(it.reason)})` : ''} · ${hhmm(it.ts)}</div>`
         case 'observe_start': return `<div class="sysline">${T.observing(esc(it.level))} · ${hhmm(it.ts)}</div>`
@@ -1014,7 +1254,7 @@
       }
     }
 
-    renderGroup(group, activity) {
+    renderGroup(group, activity, left = { chars: Infinity, tags: Infinity }) {
       // Pair tool_start/tool_end by tool use id.
       const tools = []
       const byId = new Map()
@@ -1033,22 +1273,37 @@
         : failed.length ? `<span class="res err">✗ ${T.withErrors(failed.length)}</span>` : '<span class="res ok">✓</span>'
       const userChoice = this.openGroups.get(group.key)
       const open = userChoice ?? (running.length > 0)
-      const rows = tools.map(t => t.sub ? `<div class="tool"><div class="line">🤖 <span class="arg">${T.subagent(t.sub.kind === 'subagent_start')}</span></div>${t.sub.text ? `<details><summary>${T.result}</summary><pre>${esc(t.sub.text)}</pre></details>` : ''}</div>` : this.renderTool(t, waitingId)).join('')
+      // Newest tools first, as many as fit in what the view has left.
+      const rows = []
+      let chars = left.chars - 4000, tags = left.tags - 40, k = tools.length
+      for (; k > 0; k--) {
+        const t = tools[k - 1]
+        const row = t.sub ? `<div class="tool"><div class="line">🤖 <span class="arg">${T.subagent(t.sub.kind === 'subagent_start')}</span></div>${t.sub.text ? `<details><summary>${T.result}</summary><pre>${clipEsc(t.sub, 'text')}</pre></details>` : ''}</div>` : this.renderTool(t, waitingId)
+        const n = tagsIn(row)
+        if (row.length > chars || n > tags) break
+        rows.push(row)
+        chars -= row.length
+        tags -= n
+      }
+      if (k) rows.push(`<div class="tool"><div class="line"><span class="arg">${T.olderHidden(k)}</span></div></div>`)
+      rows.reverse()
       return `<details class="tools" data-g="${group.key}"${open ? ' open' : ''}>
         <summary><span>🔧</span><span class="names">${T.tools(real.length)} · ${esc(names.join(', '))}</span><span class="st">${st}</span></summary>
-        <div class="list">${rows}</div></details>`
+        <div class="list">${rows.join('')}</div></details>`
     }
 
     renderTool({ start, end }, waitingId) {
       let res
       if (!end && start.ref === waitingId) res = `<span class="res err">${T.permShort}</span>`
       else if (!end) res = `<span class="res run" data-since="${start.ts}">⏳ ${dur(now() - start.ts)}</span>`
-      else if (end.ok === false) res = `<span class="res err">✗ ${end.interrupted ? T.interrupted : esc(end.summary || T.error)}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
-      else res = `<span class="res ok">✓${end.summary ? ` ${esc(end.summary)}` : ''}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
+      else if (end.ok === false) res = `<span class="res err">✗ ${end.interrupted ? T.interrupted : end.summary ? clipEsc(end, 'summary', 300) : T.error}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
+      else res = `<span class="res ok">✓${end.summary ? ` ${clipEsc(end, 'summary', 300)}` : ''}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
       const det = []
-      if (start.detail) det.push(`<details><summary>${T.input}</summary><pre>${esc(start.detail)}</pre></details>`)
-      if (end?.detail) det.push(`<details><summary>${end.ok === false ? T.error : T.output}</summary><pre>${esc(end.detail)}</pre></details>`)
-      return `<div class="tool"><div class="line"><span>${toolIcon(start.tool)}</span><span class="tn">${esc(toolName(start.tool))}</span>${start.agent ? `<span class="agent">${esc(start.agent)}</span>` : ''}<span class="arg" title="${esc(start.summary)}">${esc(start.summary)}</span>${res}</div>${det.join('')}</div>`
+      if (start.detail) det.push(`<details><summary>${T.input}</summary><pre>${clipEsc(start, 'detail')}</pre></details>`)
+      if (end?.detail) det.push(`<details><summary>${end.ok === false ? T.error : T.output}</summary><pre>${clipEsc(end, 'detail')}</pre></details>`)
+      const sum = clipEsc(start, 'summary', 300)
+      const tip = esc(String(start.summary ?? '').slice(0, 300)) // an attribute: plain text only
+      return `<div class="tool"><div class="line"><span>${toolIcon(start.tool)}</span><span class="tn">${esc(toolName(start.tool))}</span>${start.agent ? `<span class="agent">${esc(start.agent)}</span>` : ''}<span class="arg" title="${tip}">${sum}</span>${res}</div>${det.join('')}</div>`
     }
 
     renderStatus() {
@@ -1068,7 +1323,7 @@
   }
 
   const ICON = { Bash: '⚙️', Read: '📖', Write: '✏️', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '✏️', Grep: '🔎', Glob: '🔎', WebFetch: '🌐', WebSearch: '🌐', Task: '🤖', Agent: '🤖', TodoWrite: '📋', Skill: '🧩' }
-  const toolIcon = t => ICON[t] ?? (String(t).startsWith('mcp__') ? '🔌' : '🔧')
+  const toolIcon = t => (Object.hasOwn(ICON, t) ? ICON[t] : String(t).startsWith('mcp__') ? '🔌' : '🔧')
   const toolName = t => String(t ?? '').startsWith('mcp__') ? String(t).split('__').slice(1).join(' › ') : (t ?? '')
 
   // ---------------------------------------------------------------------------
@@ -1080,10 +1335,44 @@
     const list = sortedSessions()
     const hostList = [...hosts.values()]
     const tab = (on, go, icon, label, count) => `<button role="tab" aria-selected="${on}" class="${on ? 'on' : ''}" data-go="${go}"><span>${icon}</span>${label}<span class="count">${count}</span></button>`
-    $('tabs').innerHTML = tab(!isMachines(r), '#/', '▦', T.tabSessions, `${list.filter(s => s.online).length}/${list.length}`) +
-      tab(isMachines(r), '#/hosts', '🖥️', T.machines, `${hostList.filter(h => h.online).length}/${hostList.length}`)
+    setHtml($('tabs'), tab(!isMachines(r), '#/', '▦', T.tabSessions, `${list.filter(s => s.online).length}/${list.length}`) +
+      tab(isMachines(r), '#/hosts', '🖥️', T.machines, `${hostList.filter(h => h.online).length}/${hostList.length}`))
   }
 
+  // What a burst of stream changes redraws, once per frame (hundreds of
+  // sessions changing at once would otherwise redraw the sidebar hundreds of
+  // times).
+  const pending = new Set()
+  function soon(fn) {
+    if (!pending.size) requestAnimationFrame(() => { const fns = [...pending]; pending.clear(); for (const f of fns) f() })
+    pending.add(fn)
+  }
+
+  // Rewritten only when what it shows changed: a rewrite every second would
+  // drop keyboard focus, open menus and clicks in progress.
+  // When only texts and attributes changed (a duration ticking, a dot's
+  // colour) they are patched in place, so focus and hover stay put too.
+  function setHtml(el, html) {
+    if (!el || el._html === html) return
+    const t = document.createElement('template')
+    t.innerHTML = html
+    if (el._html === undefined || !patch(el, t.content)) el.innerHTML = html
+    el._html = html
+  }
+  function patch(a, b) {
+    const x = a.childNodes, y = b.childNodes
+    if (x.length !== y.length) return false
+    for (let i = 0; i < x.length; i++) {
+      const m = x[i], n = y[i]
+      if (m.nodeType !== n.nodeType || m.nodeName !== n.nodeName) return false
+      if (m.nodeType === 3) { if (m.data !== n.data) m.data = n.data; continue }
+      if (m.nodeType !== 1) continue
+      for (const at of [...m.attributes]) if (!n.hasAttribute(at.name)) m.removeAttribute(at.name)
+      for (const at of n.attributes) if (m.getAttribute(at.name) !== at.value) m.setAttribute(at.name, at.value)
+      if (!patch(m, n)) return false
+    }
+    return true
+  }
   function renderNav() {
     const route = currentRoute()
     renderTabs()
@@ -1102,7 +1391,7 @@
     if (squads.length) html += `<div class="nav-label">${T.squads}</div>`
     for (const { coord, workers } of squads) {
       const here = route.view === 'session' && workers.some(w => w.name === route.name)
-      const open = here || (squadOpen[coord.name] ?? false)
+      const open = here || (Object.hasOwn(squadOpen, coord.name) && squadOpen[coord.name] === true)
       const on = workers.filter(w => w.online).length
       // Folded: the count chip also carries what needs attention inside.
       const waiting = workers.some(w => status(w).waiting)
@@ -1117,28 +1406,28 @@
     if (orphans.length) html += `<div class="nav-label">${squads.length ? T.noCoordinator : T.workers}</div>${orphans.map(item).join('')}`
     const archivedCount = sortedSessions({ archived: true }).length
     html += `<div class="nav-sep"></div><button class="nav-item ${route.view === 'archived' ? 'sel' : ''}" data-go="#/archived"><span>🗄️</span><span class="n">${T.archived}</span><span class="badge" style="background:var(--idle)" ${archivedCount ? '' : 'hidden'}>${archivedCount}</span><span class="s">${T.archivedCount(archivedCount)}</span></button>`
-    $('nav').innerHTML = html
+    setHtml($('nav'), html)
   }
 
   // Machines sidebar: every machine, with the sessions opened on it.
   function renderMachinesNav(route) {
-    const list = [...hosts.values()].sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name, LOCALE, { numeric: true }))
+    const list = [...hosts.values()].sort((a, b) => (b.online - a.online) || COLLATOR.compare(a.name, b.name))
     let html = `<button class="nav-item ${route.view === 'hosts' && !route.host ? 'sel' : ''}" data-go="#/hosts"><span>🖥️</span><span class="n">${T.allMachines}</span><span></span><span class="s">${T.machinesCount(list.filter(h => h.online).length, list.length)}</span></button>`
     if (list.length) html += `<div class="nav-label">${T.machines}</div>`
     for (const h of list) {
       const terms = h.info?.terminals ?? []
-      const sub = h.online ? `${T.hostOnline} · ${T.hostSessions(terms.length)}` : T.hostOffline(h.last_seen_at ? dur(now() - h.last_seen_at) : '—')
+      const sub = h.online ? `${T.hostOnline} · ${T.hostSessions(terms.length)}` : hostState(h)
       html += `<button class="nav-item ${route.view === 'hosts' && route.host === h.id ? 'sel' : ''}" data-go="#/h/${encodeURIComponent(h.id)}" title="${esc(sub)}">
         <span class="dot ${h.online ? 'ok' : ''}"></span><span class="n">${esc(h.name)}</span><span></span><span class="s">${esc(sub)}</span></button>`
       if (!h.online) continue
       for (const t of terms) {
-        const s = sessions.get(t.id)
+        const s = sessionOn(h.id, t.id)
         const st = s ? status(s) : { dot: '', text: '' }
         html += `<button class="nav-item sub ${t.role ?? ''} ${route.view === 'terminal' && route.host === h.id && route.term === t.id ? 'sel' : ''}" data-go="#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(t.id)}" title="${esc(st.text)}">
           <span class="dot ${st.dot}"></span><span class="n">⌨ ${esc(t.name)}</span>${st.waiting ? '<span class="badge perm">🔐</span>' : '<span></span>'}</button>`
       }
     }
-    $('nav').innerHTML = html
+    setHtml($('nav'), html)
   }
 
   $('tabs').addEventListener('click', e => {
@@ -1172,18 +1461,34 @@
   let sessionView = null
 
   const dec = v => { try { return decodeURIComponent(v) } catch { return v } }
+  // Set once the user moves around the dashboard (not on the page it opened on).
+  let navigatedInApp = false
+  // (A real click or key here, not a URL change made from outside.)
+  // (Inside the app itself: typing the token on the login page doesn't count.)
+  for (const ev of ['click', 'keydown']) document.addEventListener(ev, e => { if (e.isTrusted && !$('app').hidden && e.target.closest?.('#app')) navigatedInApp = true }, true)
 
+  // Names in the address are only ever session names and machine ids: any
+  // other text (a crafted link) goes to the main view, never into the header.
+  const ROUTE_NAME = /^[A-Za-z0-9_-]{1,32}$/
+  const ROUTE_ID = /^[A-Za-z0-9_-]{1,64}$/
   function currentRoute() {
     if (location.hash === '#/archived') return { view: 'archived' }
     if (location.hash === '#/hosts') return { view: 'hosts' }
     const q = location.hash.match(/^#\/q\/(.+)$/)
-    if (q) return { view: 'mosaic', squad: dec(q[1]) }
+    if (q) return ROUTE_NAME.test(dec(q[1])) ? { view: 'mosaic', squad: dec(q[1]) } : { view: 'mosaic' }
     const h = location.hash.match(/^#\/h\/(.+)$/)
-    if (h) return { view: 'hosts', host: dec(h[1]) }
+    if (h) return ROUTE_ID.test(dec(h[1])) ? { view: 'hosts', host: dec(h[1]) } : { view: 'hosts' }
     const t = location.hash.match(/^#\/t\/([^/]+)\/(.+)$/)
-    if (t) return { view: 'terminal', host: dec(t[1]), term: dec(t[2]) }
+    if (t) return ROUTE_ID.test(dec(t[1])) && ROUTE_NAME.test(dec(t[2])) ? { view: 'terminal', host: dec(t[1]), term: dec(t[2]) } : { view: 'hosts' }
     const m = location.hash.match(/^#\/s\/(.+)$/)
-    return m ? { view: 'session', name: dec(m[1]) } : { view: 'mosaic' }
+    return m && ROUTE_NAME.test(dec(m[1])) ? { view: 'session', name: dec(m[1]) } : { view: 'mosaic' }
+  }
+
+  // The Squadra session behind a machine's terminal: only one that machine
+  // opened (a machine could list any name; it can't make it its own).
+  function sessionOn(hostId, term) {
+    const s = sessions.get(term)
+    return s && s.host_id === hostId ? s : null
   }
 
   function roleTag(role) {
@@ -1197,39 +1502,39 @@
       if (r.squad) {
         const c = sessions.get(r.squad)
         const ws = sortedSessions().filter(s => s.role !== 'coordinator' && s.coordinator === r.squad)
-        $('topTitle').innerHTML = `<span class="dot ${c ? status(c).dot : ''}"></span>👥 ${esc(T.squadOf(r.squad))}`
+        setHtml($('topTitle'), `<span class="dot ${c ? status(c).dot : ''}"></span>👥 ${esc(T.squadOf(r.squad))}`)
         $('topSub').textContent = T.squadCount(ws.filter(w => w.online).length, ws.length)
-        $('topRight').innerHTML = `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-go="#/">${T.backAll}</button>`
+        setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
         return
       }
-      $('topTitle').innerHTML = T.allSessions
+      setHtml($('topTitle'), T.allSessions)
       $('topSub').textContent = ''
-      $('topRight').innerHTML = `<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`
+      setHtml($('topRight'), `<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`)
     } else if (r.view === 'hosts') {
       const h = r.host && hosts.get(r.host)
-      $('topTitle').innerHTML = h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines
+      setHtml($('topTitle'), h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines)
       $('topSub').textContent = h ? hostLine(h) : T.machinesSub
-      $('topRight').innerHTML = `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn primary" data-hact="new">${T.newSession}</button>`
+      setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn primary" data-hact="new">${T.newSession}</button>`)
     } else if (r.view === 'terminal') {
       const h = hosts.get(r.host)
       const t = h?.info?.terminals?.find(x => x.id === r.term)
-      const s = sessions.get(r.term)
-      $('topTitle').innerHTML = `<span class="dot ${s ? status(s).dot : ''}"></span>⌨ ${esc(r.term)} ${roleTag(t?.role ?? s?.role)}`
-      $('topSub').textContent = [h ? T.onHost(h.name) : '', t?.folder ?? ''].filter(Boolean).join(' · ')
+      const s = sessionOn(r.host, r.term)
+      setHtml($('topTitle'), `<span class="dot ${s ? status(s).dot : ''}"></span>⌨ ${esc(r.term)} ${roleTag(s?.role ?? t?.role)}`)
+      $('topSub').textContent = [h ? T.onHost(h.name) : '', t?.folder ?? '', h?.info && !t ? T.notListed : ''].filter(Boolean).join(' · ')
       const acts = []
       if (s) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.term)}">${T.chat}</button>`)
       acts.push(`<button class="btn" data-tact="redraw">${T.redraw}</button>`)
       if (t && h?.online) acts.push(`<button class="btn danger" data-tact="kill">${T.closeSession}</button>`)
       acts.push(`<button class="btn" data-go="#/h/${encodeURIComponent(r.host)}">${T.back}</button>`)
-      $('topRight').innerHTML = acts.join('')
+      setHtml($('topRight'), acts.join(''))
     } else if (r.view === 'archived') {
-      $('topTitle').innerHTML = T.archivedTitle
+      setHtml($('topTitle'), T.archivedTitle)
       $('topSub').textContent = T.archivedSub
-      $('topRight').innerHTML = `<button class="btn" data-go="#/">${T.backAll}</button>`
+      setHtml($('topRight'), `<button class="btn" data-go="#/">${T.backAll}</button>`)
     } else {
       const s = sessions.get(r.name)
       const a = s?.activity ?? {}
-      $('topTitle').innerHTML = `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)}${s?.archived_at ? ` <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>` : ''}`
+      setHtml($('topTitle'), `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)}${s?.archived_at ? ` <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>` : ''}`)
       $('topSub').textContent = [a.cwd, a.context_tokens ? T.context(kfmt(a.context_tokens)) + (a.context_pct != null ? ` (${T.contextPct(a.context_pct)})` : '') : '', s?.role === 'worker' && s.coordinator ? T.coordinatorOf(s.coordinator) : ''].filter(Boolean).join(' · ')
       const acts = []
       const where = terminalOf(r.name)
@@ -1242,7 +1547,7 @@
         if (!s.online) acts.push(`<button class="btn danger" data-act="delete" data-s="${esc(s.name)}">${T.delete}</button>`)
       }
       acts.push(`<button class="btn" data-go="${s?.archived_at ? '#/archived' : '#/'}">${s?.archived_at ? T.backArchived : T.backAll}</button>`)
-      $('topRight').innerHTML = acts.join('')
+      setHtml($('topRight'), acts.join(''))
     }
   }
 
@@ -1357,7 +1662,7 @@
         mosaicPanes.set(s.name, p)
       }
       p.pane.className = paneClass(s)
-      p.pane.querySelector('.pane-head').innerHTML = paneHead(s)
+      setHtml(p.pane.querySelector('.pane-head'), paneHead(s))
       // Only move panes that are out of order.
       const expected = prev ? prev.nextSibling : box.firstChild
       if (expected !== p.pane) box.insertBefore(p.pane, expected)
@@ -1406,6 +1711,7 @@
       ${where ? `<button data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}">${T.terminal}</button>` : ''}
       ${s.role === 'coordinator' ? `<button data-go="#/q/${encodeURIComponent(name)}">${T.viewSquad}</button><button data-act="addworker">${esc(T.addWorkerTo(name))}</button>` : ''}
       <button data-act="clear">${T.clearChat}</button>
+      ${off ? `<button data-act="kick" class="danger">${T.kick}</button>` : ''}
       <button data-act="archive" ${off ? 'disabled' : ''}>${T.archive}</button>
       <button data-act="delete" class="danger" ${off ? 'disabled' : ''}>${T.deleteSession}</button>
       ${off ? `<div class="hint">${T.offlineHint}</div>` : ''}`
@@ -1433,7 +1739,7 @@
     bg.addEventListener('click', e => { if (e.target === bg) close() })
     bg.querySelector('[data-cancel]').addEventListener('click', close)
     const ok = bg.querySelector('[data-ok]')
-    ok.focus()
+    ;(danger ? bg.querySelector('[data-cancel]') : ok).focus() // Enter never confirms something destructive
     ok.addEventListener('click', async () => {
       ok.disabled = true
       try { await run(); close() } catch (err) {
@@ -1459,11 +1765,15 @@
     if (action === 'addworker') return addWorkerTo(name)
     const s = sessions.get(name)
     const who = `<b>${esc(name)}</b>`
+    if (action === 'kick') {
+      return confirmDialog({ title: T.kickTitle(name), text: T.kickText(who), confirm: T.kick, danger: true, run: () => post('kick', name) })
+    }
     if (action === 'clear') {
       return confirmDialog({
         title: T.clearTitle(name),
         text: T.clearText(who, s?.online),
         confirm: T.clearChat,
+        danger: true,
         run: () => post('clear', name),
       })
     }
@@ -1568,19 +1878,22 @@
     renderTop()
     renderNav()
   }
-  window.addEventListener('hashchange', route)
+  // (Only while signed in: a link opened on the login page doesn't load views, or ask the server with no token.)
+  window.addEventListener('hashchange', () => { if (token && !$('app').hidden) route() })
 
   // ---------------------------------------------------------------------------
   // machines (squadra-host): list, add, rename, disconnect, open and close sessions
   const hostListeners = new Set()
 
   // The machine where a session runs, if it was opened from here.
+  // Only on the machine the server opened it on (host_id): another machine
+  // claiming a session with the same name never gets its terminal button.
   function terminalOf(name) {
-    for (const h of hosts.values()) {
-      const t = h.online && h.info?.terminals?.find(x => x.id === name)
-      if (t) return { host: h, term: t }
-    }
-    return null
+    const owner = sessions.get(name)?.host_id
+    if (!owner) return null
+    const h = hosts.get(owner)
+    const t = h?.online && h.info?.terminals?.find(x => x.id === name)
+    return t ? { host: h, term: t } : null
   }
 
   async function postJson(path, body) {
@@ -1591,7 +1904,12 @@
     })
     if (r.status === 401) { showLogin(T.tokenInvalid); throw new Error(T.unauthorized) }
     const j = await r.json()
-    if (!j.ok) throw new Error(j.parameters?.reason === 'name_in_use' ? T.nameTaken(body?.spec?.name ?? '') : j.description.replace(/^(Bad Request|Conflict|Forbidden): /, ''))
+    if (!j.ok) {
+      const why = j.description.replace(/^(Bad Request|Conflict|Forbidden): /, '')
+      // (A machine's own words are said to be its own, never the dashboard's.)
+      const r = j.parameters?.reason
+      throw new Error(r === 'name_in_use' ? T.nameTaken(body?.spec?.name ?? '') : r === 'open_on_host' ? T.openOnHost(body?.spec?.name ?? '') : r === 'machine_refused' ? `${T.machineSays}: «${why}»` : why)
+    }
     return j.result
   }
 
@@ -1600,14 +1918,20 @@
     return [i.hostname && i.hostname !== h.name ? i.hostname : '', [i.platform, i.arch].filter(Boolean).join(' '), i.claude ? `Claude ${i.claude.replace(/\s*\(Claude Code\)/, '')}` : '', i.tmux, i.version ? `host v${i.version}` : ''].filter(Boolean).join(' · ')
   }
 
+  // Connected, disconnected, or enrolled and never connected yet.
+  function hostState(h) {
+    if (h.online) return T.hostOnline
+    if (h.pending) return T.hostPending(h.created_at ? dur(now() - h.created_at) : '—')
+    return T.hostOffline(h.last_seen_at ? dur(now() - h.last_seen_at) : '—')
+  }
   function renderHosts(only) {
-    const list = [...hosts.values()].filter(h => !only || h.id === only).sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name, LOCALE, { numeric: true }))
-    if (!list.length) { $('hosts').innerHTML = `<div class="host-list"><div class="mosaic-empty">${T.noMachines}</div></div>`; return }
-    $('hosts').innerHTML = `<div class="host-list">${list.map(h => {
+    const list = [...hosts.values()].filter(h => !only || h.id === only).sort((a, b) => (b.online - a.online) || COLLATOR.compare(a.name, b.name))
+    if (!list.length) { setHtml($('hosts'), `<div class="host-list"><div class="mosaic-empty">${only && hosts.size ? `${T.machineNotFound} <a href="#/hosts">${T.allMachines}</a>` : T.noMachines}</div></div>`); return }
+    setHtml($('hosts'), `<div class="host-list">${list.map(h => {
       const i = h.info ?? {}
       const terms = i.terminals ?? []
       const rows = terms.map(t => {
-        const s = sessions.get(t.id)
+        const s = sessionOn(h.id, t.id)
         return `<div class="term-row">
           <span class="dot ${s ? status(s).dot : ''}" title="${esc(s ? status(s).text : '')}"></span><span class="n">${esc(t.name)}</span>${roleTag(t.role)}
           <span class="m" title="${esc(t.folder ?? '')}">${esc(t.folder ?? '')}${t.role === 'worker' && t.coordinator ? ` · ${esc(T.coordinatorOf(t.coordinator))}` : ''}</span>
@@ -1619,12 +1943,12 @@
       }).join('')
       return `<div class="host ${h.online ? '' : 'offline'}">
         <div class="host-head"><span class="dot ${h.online ? 'ok' : ''}"></span><span class="n">${esc(h.name)}</span>
-          <span class="m">${h.online ? T.hostOnline : T.hostOffline(h.last_seen_at ? dur(now() - h.last_seen_at) : '—')}${hostLine(h) ? ` · ${esc(hostLine(h))}` : ''}</span>
-          <span class="acts">${h.online ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : ''}<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button></span></div>
+          <span class="m">${hostState(h)}${hostLine(h) ? ` · ${esc(hostLine(h))}` : ''}</span>
+          <span class="acts">${h.online ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : `<button class="btn danger" data-hact="disconnect" data-h="${esc(h.id)}">${T.disconnect}</button>`}<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button></span></div>
         <div class="host-meta">${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span>${T.folders}: ${i.folders?.length ? i.folders.map(f => `<code>${esc(f)}</code>`).join(' ') : T.noFolders}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
         <div class="host-terms">${rows || `<div class="host-empty">${T.noTerminals}</div>`}</div>
       </div>`
-    }).join('')}</div>`
+    }).join('')}</div>`)
   }
 
   $('hosts').addEventListener('click', e => {
@@ -1701,23 +2025,22 @@
     const d = dialog(`<h3>${T.addTitle}</h3><p>${T.addIntro}</p>
       <div data-step="1">
         <label class="field"><span>${T.machineName}</span><input type="text" maxlength="40" placeholder="${esc(T.machineNameHint)}"></label>
-        <label class="check"><input type="checkbox" checked> <span>${T.configurePlugin}</span></label>
+        <label class="check"><input type="checkbox"> <span>${T.configurePlugin}</span></label>
         <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
         <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-gen>${T.generate}</button></div>
       </div>
       <div data-step="2" hidden>
-        <p style="margin-bottom:8px">${T.runThis}</p>
-        <pre class="cmd"></pre>
-        <div class="actions" style="justify-content:space-between;align-items:center"><span class="t valid"></span><button class="btn" data-copy>${T.copy}</button></div>
+        <p style="margin-bottom:8px">${T.stepsIntro}</p>
+        <ol class="steps"></ol>
         <div class="wait"><span class="dot info pulse"></span><span class="w">${T.waitingMachine}</span></div>
         <div class="actions"><button class="btn" data-cancel>${T.done}</button><button class="btn primary" data-newsession hidden>${T.newSession}</button></div>
       </div>`, { wide: true })
     const input = d.el.querySelector('input[type=text]')
     input.focus()
     let joined = null
-    const known = new Set(hosts.keys())
+    let ticket = null // this dialog's code: only the machine that used it counts
     const listener = h => {
-      if (h.removed || known.has(h.id) || !h.online) return
+      if (h.removed || !h.online || !ticket || h.enrollment !== ticket) return
       joined = h
       d.el.querySelector('.wait').innerHTML = `<span class="dot ok"></span><span>${T.machineJoined(esc(h.name))}</span>`
       d.el.querySelector('[data-newsession]').hidden = false
@@ -1727,20 +2050,27 @@
       e.target.disabled = true
       try {
         const r = await postJson('/api/hosts/enroll', { name: input.value.trim(), configure_plugin: d.el.querySelector('input[type=checkbox]').checked })
+        ticket = r.enrollment ?? null
         d.el.querySelector('[data-step="1"]').hidden = true
         d.el.querySelector('[data-step="2"]').hidden = false
-        d.el.querySelector('.cmd').textContent = r.command
-        if (/^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)) {
-          const w = document.createElement('p')
-          w.style.cssText = 'color:var(--err);font-size:13px;margin:0 0 10px'
-          w.textContent = T.httpWarn
-          d.el.querySelector('.cmd').after(w)
-        }
-        d.el.querySelector('.valid').textContent = T.codeValid(hhmm(r.expires_at))
+        // The steps, each command with its own copy button.
+        const host = '~/.config/squadra-host/squadra-host.mjs'
+        const cmd = (text, label = '') => `${label ? `<div class="lbl">${label}</div>` : ''}<div class="cmdrow"><pre class="cmd">${esc(text)}</pre><button class="btn" data-copy>${T.copy}</button></div>`
+        const insecure = /^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)
+        d.el.querySelector('.steps').innerHTML = [
+          `<p>${T.stepNeeds}</p>${cmd('curl -fsSL https://claude.ai/install.sh | bash', T.lblClaude)}${cmd('sudo apt install tmux', T.lblTmuxLinux)}${cmd('brew install tmux', T.lblTmuxMac)}`,
+          `<p>${T.stepPlugin}</p>${cmd(String(r.plugin_command ?? ''))}`,
+          `<p>${T.stepEnroll}</p>${cmd(String(r.command ?? ''))}${insecure ? `<p class="note" style="color:var(--err);font-size:13px">${esc(T.httpWarn)}</p>` : ''}<p class="note valid">${esc(T.codeValid(hhmm(r.expires_at)))}</p>`,
+          `<p>${T.stepFolders}</p>${cmd(`node ${host} folders add ${T.exampleFolder}`)}`,
+          `<p>${T.stepService}</p>${cmd(`mkdir -p ~/.config/systemd/user\nnode ${host} service > ~/.config/systemd/user/squadra-host.service\nsystemctl --user daemon-reload && systemctl --user enable --now squadra-host`, T.lblLinux)}${cmd(`node ${host} service > ~/Library/LaunchAgents/com.squadra.host.plist\nlaunchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.squadra.host.plist`, T.lblMac)}<p class="note">${T.lingerNote}</p>`,
+        ].map(x => `<li>${x}</li>`).join('')
         hostListeners.add(listener)
-        d.el.querySelector('[data-copy]').addEventListener('click', async ev => {
-          try { await navigator.clipboard.writeText(r.command); ev.target.textContent = T.copied } catch {
-            const range = document.createRange(); range.selectNodeContents(d.el.querySelector('.cmd'))
+        d.el.querySelector('.steps').addEventListener('click', async ev => {
+          const b = ev.target.closest('[data-copy]')
+          if (!b) return
+          const pre = b.parentElement.querySelector('.cmd')
+          try { await navigator.clipboard.writeText(pre.textContent); b.textContent = T.copied } catch {
+            const range = document.createRange(); range.selectNodeContents(pre)
             getSelection().removeAllRanges(); getSelection().addRange(range)
           }
         })
@@ -1760,15 +2090,19 @@
   function newSessionDialog(hostId, preset = {}) {
     const online = [...hosts.values()].filter(h => h.online)
     if (!online.length) return alertBox(T.noOnlineMachines)
-    const coords = [...new Set(['coord', ...[...sessions.values()].filter(s => s.role === 'coordinator').map(s => s.name)])]
-    const hasCoord = !!preset.coordinator || [...sessions.values()].some(s => s.role === 'coordinator' && !s.deleted)
+    // Coordinators to suggest. A session declares its role itself, so only
+    // one opened from the dashboard (host_id) is pre-filled; any other one
+    // must be typed or picked on purpose.
+    const coords = [...sessions.values()].filter(s => s.role === 'coordinator' && !s.deleted).map(s => s.name)
+    const ownCoords = [...sessions.values()].filter(s => s.opened_role === 'coordinator' && s.role === 'coordinator' && s.host_id && !s.deleted).map(s => s.name)
+    const hasCoord = !!preset.coordinator || ownCoords.length > 0
     const d = dialog(`<h3>${preset.coordinator ? esc(T.addWorkerTo(preset.coordinator)) : T.newSessionTitle}</h3>
       <label class="field"><span>${T.machine}</span><select name="host">${online.map(h => `<option value="${esc(h.id)}" ${h.id === hostId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></label>
       <div class="row2">
         <label class="field"><span>${T.role}</span><select name="role"><option value="worker" ${hasCoord ? 'selected' : ''}>${T.roleWorker}</option><option value="coordinator" ${hasCoord ? '' : 'selected'}>${T.roleCoordinator}</option></select></label>
         <label class="field"><span>${T.sessionName}</span><input type="text" name="name" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off"></label>
       </div>
-      <label class="field" data-only="worker"><span>${T.coordinatorName}</span><input type="text" name="coordinator" list="coordList" maxlength="32" value="${esc(preset.coordinator ?? coords.find(c => sessions.get(c)?.role === 'coordinator') ?? 'coord')}"><datalist id="coordList">${coords.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label class="field" data-only="worker"><span>${T.coordinatorName}</span><input type="text" name="coordinator" list="coordList" maxlength="32" value="${esc(preset.coordinator ?? (ownCoords.length === 1 ? ownCoords[0] : ''))}"><datalist id="coordList">${coords.map(c => `<option value="${esc(c)}" label="${esc(ownCoords.includes(c) ? T.coordOwn : T.coordSelf)}">`).join('')}</datalist></label>
       <div class="row2">
         <label class="field"><span>${T.folder}</span><select name="folder"></select></label>
         <label class="field"><span>${T.subfolder}</span><input type="text" name="sub" placeholder="${esc(T.subfolderHint)}" autocomplete="off"></label>
@@ -1786,6 +2120,18 @@
       if (f('role').value === 'coordinator') return sessions.has('coord') && sessions.get('coord').online ? '' : 'coord'
       for (let i = 1; ; i++) if (!sessions.get(`worker${i}`)?.online && !terminalOf(`worker${i}`)) return `worker${i}`
     }
+    // A coordinator that wasn't opened from this dashboard is only a name a
+    // session gave itself: said right next to the field.
+    const coordHint = document.createElement('div')
+    coordHint.style.cssText = 'color:var(--err);font-size:12px;min-height:1em'
+    f('coordinator').after(coordHint)
+    const checkCoord = () => {
+      const v = f('coordinator').value.trim()
+      const s = v && !ownCoords.includes(v) ? sessions.get(v) : null
+      coordHint.textContent = !v || ownCoords.includes(v) ? '' : `⚠ ${s && !s.deleted ? (s.role === 'coordinator' ? T.coordSelf : T.coordNotCoord) : T.coordNone}`
+    }
+    f('coordinator').addEventListener('input', checkCoord)
+    checkCoord()
     const sync = () => {
       d.el.querySelector('[data-only=worker]').hidden = f('role').value !== 'worker'
       const h = hosts.get(f('host').value)
@@ -1810,7 +2156,12 @@
         folder: sub ? `${base.replace(/\/+$/, '')}/${sub}` : base,
         resume: f('resume').checked,
       }
-      if (spec.role === 'worker') spec.coordinator = f('coordinator').value.trim() || 'coord'
+      if (spec.role === 'worker') {
+        // A worker's coordinator is always chosen, never assumed: a session
+        // can call itself "coord" without being yours.
+        spec.coordinator = f('coordinator').value.trim()
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.coordinator)) { err.textContent = T.coordinatorName + ': A-Z a-z 0-9 _ -'; f('coordinator').focus(); return }
+      }
       if (f('compact').value) spec.compact_window = Number(f('compact').value)
       if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.name)) { err.textContent = T.sessionName + ': A-Z a-z 0-9 _ -'; f('name').focus(); return }
       ok.disabled = true
@@ -1847,10 +2198,22 @@
 
   const termLink = {
     ws: null, ready: false, views: new Set(), backoff: 1000, timer: null,
+    retry() {
+      for (const v of this.views) v.overlay(T.termLinkDown)
+      if (this.views.size) { clearTimeout(this.timer); this.timer = setTimeout(() => this.ensure(), this.backoff); this.backoff = Math.min(this.backoff * 2, 15000) }
+    },
     ensure() {
-      if (this.ws || !token) return
-      const ws = this.ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/terminal`)
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'auth', token }))
+      if (this.ws || this.connecting || !token) return
+      // A one-time ticket (the token itself never goes in the socket request):
+      // the server only accepts the socket with it.
+      this.connecting = true
+      postJson('/api/terminal/ticket', {}).then(({ ticket }) => {
+        this.connecting = false
+        if (!this.ws && this.views.size) this.open(ticket)
+      }, () => { this.connecting = false; if (token) this.retry() })
+    },
+    open(ticket) {
+      const ws = this.ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/terminal`, ['squadra', `auth.${ticket}`])
       ws.onmessage = ev => {
         let m
         try { m = JSON.parse(ev.data) } catch { return }
@@ -1861,9 +2224,7 @@
         if (this.ws !== ws) return
         this.ws = null
         this.ready = false
-        if (ev.code === 4001) return showLogin(T.tokenInvalid)
-        for (const v of this.views) v.overlay(T.termLinkDown)
-        if (this.views.size) { clearTimeout(this.timer); this.timer = setTimeout(() => this.ensure(), this.backoff); this.backoff = Math.min(this.backoff * 2, 15000) }
+        this.retry()
       }
     },
     send(m) { if (this.ready && this.ws?.readyState === 1) this.ws.send(JSON.stringify(m)) },
@@ -1889,7 +2250,8 @@
     renderFoot() {
       const h = hosts.get(this.host)
       const ro = h?.info?.allow_input === false
-      this.foot.innerHTML = ro ? `<span class="ro">👁 ${T.readOnly}</span><span>${esc(T.typingOff)}</span>` : `<span>${esc(T.termHint(h?.name ?? this.host))}</span>`
+      this.foot.innerHTML = (ro ? `<span class="ro">👁 ${T.readOnly}</span><span>${esc(T.typingOff)}</span>` : `<span>${esc(T.termHint(h?.name ?? this.host))}</span>`) +
+        (this.notice ? `<span class="ro">⚠ ${T.machineSays}: ${esc(this.notice)}</span>` : '')
     }
 
     start() {
@@ -1897,16 +2259,38 @@
       this.x = new window.Terminal({
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13.5, cursorBlink: true, scrollback: 5000, theme: dark, allowProposedApi: false,
         // Links printed by the program (OSC 8): only http(s), after a confirmation, in a new tab.
-        linkHandler: { activate: (e, uri) => { if (/^https?:\/\//i.test(uri) && confirm(`${T.openLink}\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer') } },
+        // Only plain http(s) links, shown as they are (no user:password@, no
+        // control or direction characters that could make it read otherwise).
+        linkHandler: { activate: (e, uri) => {
+          let u
+          try { u = new URL(uri) } catch { return }
+          if (!/^https?:$/.test(u.protocol) || u.username || u.password || /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(uri)) return
+          if (confirm(`${T.openLink}\n${u.href}`)) window.open(u.href, '_blank', 'noopener,noreferrer')
+        } },
       })
       this.fit = new window.FitAddon.FitAddon()
       this.x.loadAddon(this.fit)
       this.x.open(this.box)
       this.fitNow()
+      // What xterm.js answers by itself to a program's queries (device
+      // attributes, cursor position, modes, focus) isn't sent: tmux already
+      // answers them, and every dashboard watching would type them in again.
+      // (Unless a key was just pressed: Shift+F3 also looks like a report.)
+      let keyAt = 0
+      this.box.addEventListener('keydown', () => { keyAt = performance.now() }, true)
+      const REPORT = /^(?:\x1b\[[?>=]?[\d;]*c|\x1b\[\??\d+;\d+R|\x1b\[\??[\d;]*\$y|\x1bP[01]\$r[^\x1b]*\x1b\\|\x1b\[[IO]|\x1b\[[\d;]*t|\x1b\][\d;]*rgb:[^\x07\x1b]*(?:\x07|\x1b\\))+$/
       this.x.onData(data => {
         if (hosts.get(this.host)?.info?.allow_input === false) return
+        if (REPORT.test(data) && performance.now() - keyAt > 100) return
         termLink.send({ t: 'in', host: this.host, term: this.term, data })
       })
+      // Pasted text can't carry escape sequences (they could end bracketed
+      // paste and run what follows): control and bidi characters are dropped.
+      this.box.addEventListener('paste', e => {
+        const text = e.clipboardData?.getData('text') ?? ''
+        const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u115f\u1160\u17b4\u17b5\u2065\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}\u180b-\u180f\ufe00-\ufe0f\u{e0100}-\u{e01ef}\p{Cf}]/gu, '')
+        if (clean !== text) { e.preventDefault(); e.stopPropagation(); this.x.paste(clean) }
+      }, true)
       let resizeTimer = null
       this.x.onResize(({ cols, rows }) => {
         clearTimeout(resizeTimer)
@@ -1914,7 +2298,9 @@
       })
       this.ro = new ResizeObserver(() => this.fitNow())
       this.ro.observe(this.box)
-      this.x.focus()
+      // Not when the page was opened straight on this terminal (e.g. from a
+      // link): typing goes to a machine only after the user chose it here.
+      if (navigatedInApp) this.x.focus()
       termLink.add(this)
     }
 
@@ -1938,7 +2324,9 @@
       if (m.t === 'out') { this.x.write(b64bytes(m.data)); return }
       if (m.t === 'exit') return this.overlay(T.termEnded)
       if (m.t === 'host_down') return this.overlay(T.termHostDown)
-      if (m.t === 'notice') this.foot.innerHTML = `<span class="ro">⚠ ${esc(m.text)}</span>`
+      // What the machine says goes next to the footer, never in place of it:
+      // the read-only state shown always comes from the machine's settings.
+      if (m.t === 'notice') { this.notice = String(m.text ?? '').slice(0, 300); this.renderFoot() }
     }
 
     destroy() {
@@ -1968,6 +2356,10 @@
       groups = data.groups ?? []
       hosts.clear()
       for (const h of data.hosts ?? []) hosts.set(h.id, h)
+      // After a reconnect, what happened in between isn't in the open chats:
+      // they load again from the server.
+      if (streamHelloSeen) for (const v of views) v.reset()
+      streamHelloSeen = true
       route()
       return
     }
@@ -1975,10 +2367,10 @@
       if (data.removed) hosts.delete(data.id); else hosts.set(data.id, data)
       for (const fn of hostListeners) fn(data)
       const r = currentRoute()
-      if (r.view === 'hosts') { if (r.host && data.removed && data.id === r.host) { location.hash = '#/hosts'; return } renderHosts(r.host); renderTop() }
-      if (r.view === 'terminal' || r.view === 'session') renderTop()
-      if (r.view === 'mosaic') for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) p.pane.querySelector('.pane-head').innerHTML = paneHead(s) }
-      renderNav()
+      if (r.view === 'hosts') { if (r.host && data.removed && data.id === r.host) { location.hash = '#/hosts'; return } renderHosts(r.host); soon(renderTop) }
+      if (r.view === 'terminal' || r.view === 'session') soon(renderTop)
+      if (r.view === 'mosaic') for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) setHtml(p.pane.querySelector('.pane-head'), paneHead(s)) }
+      soon(renderNav)
       return
     }
     if (type === 'session') {
@@ -1987,13 +2379,14 @@
       const r = currentRoute()
       if (r.view === 'mosaic') {
         if (!prev || data.deleted || !!prev.archived_at !== !!data.archived_at || prev.role !== data.role || prev.coordinator !== data.coordinator) buildMosaic()
-        else { const p = mosaicPanes.get(data.name); if (p) { p.pane.className = paneClass(data); p.pane.querySelector('.pane-head').innerHTML = paneHead(data) } refreshSquadRows() }
+        else { const p = mosaicPanes.get(data.name); if (p) { p.pane.className = paneClass(data); setHtml(p.pane.querySelector('.pane-head'), paneHead(data)) } soon(refreshSquadRows) }
       }
       if (r.view === 'archived') renderArchived()
       if (r.view === 'session' && r.name === data.name && data.deleted) { location.hash = '#/'; return }
-      for (const v of views) if (v.name === data.name) { v.renderStatus(); v.render() }
-      renderNav()
-      if (r.view === 'session' || r.squad) renderTop()
+      for (const v of views) if (v.name === data.name) { v.renderStatus(); v.scheduleRender() }
+      soon(renderNav)
+      // The top bar shows one session (or one squad): only its changes matter.
+      if ((r.view === 'session' && r.name === data.name) || r.view === 'terminal' || r.squad) soon(renderTop)
       return
     }
     if (type === 'cleared') {
@@ -2001,7 +2394,15 @@
       if (s) s.cleared_at = data.at
       for (const v of views) if (v.name === data.session) v.reset()
       unread.delete(data.session)
-      renderNav()
+      soon(renderNav)
+      return
+    }
+    if (type === 'edited') {
+      // An edited message: the new text replaces the old one where it is shown.
+      for (const v of views) {
+        const i = v.items.findIndex(x => x.t === 'message' && x.id === data.id)
+        if (i >= 0) { v.items[i] = { ...v.items[i], text: data.text, edited_at: data.edited_at }; v.scheduleRender() }
+      }
       return
     }
     if (type === 'event' || type === 'message') {
@@ -2015,7 +2416,7 @@
         const owners = it.t === 'event' ? [it.session] : [it.from, it.target].filter(n => sessions.has(n))
         let changed = false
         for (const n of owners) if (n !== r.name) { unread.set(n, (unread.get(n) ?? 0) + 1); changed = true }
-        if (changed) renderNav()
+        if (changed) soon(renderNav)
       }
       void shown
     }
@@ -2023,9 +2424,14 @@
 
   function setConn(cls, text) { $('connDot').className = `dot ${cls}`; $('connText').textContent = text }
 
+  // Each sign-in has its own stream loop: an older one (waiting to reconnect
+  // when the admin logged out) stops instead of opening a second stream.
+  let streamGen = 0
   async function connect() {
+    const gen = ++streamGen
     let backoff = 1000
     for (;;) {
+      if (gen !== streamGen) return
       streamAbort = new AbortController()
       try {
         const r = await fetch('/api/stream', { headers: { Authorization: `Bearer ${token}` }, signal: streamAbort.signal })
@@ -2054,6 +2460,7 @@
       } catch (e) {
         if (e.name === 'AbortError') return
       }
+      if (gen !== streamGen) return
       setConn('err', T.reconnecting)
       await new Promise(res => setTimeout(res, backoff))
       backoff = Math.min(backoff * 2, 15000)
@@ -2064,7 +2471,9 @@
   function renderAlerts() {
     const box = $('alerts')
     if (!box) return
-    const list = sortedSessions().filter(s => s.online)
+    // Sessions opened from the dashboard (host_id) first: a flood from other
+    // sessions can't push them out of view.
+    const list = sortedSessions().filter(s => s.online).sort((a, b) => !!b.host_id - !!a.host_id)
     const items = []
     for (const s of list) {
       const st = status(s)
@@ -2107,15 +2516,21 @@
   // login: the dashboard is only built after the server accepts the token
   function show(id) { for (const x of ['splash', 'login', 'app']) $(x).hidden = x !== id }
 
-  function showLogin(err = '') {
+  // keep: the server couldn't be reached (not a wrong token): the saved token stays.
+  function showLogin(err = '', { keep = false } = {}) {
+    streamGen++
     streamAbort?.abort()
+    // (Open dialogs go too: an enrollment command isn't left over the login page.)
+    for (const m of document.querySelectorAll('.modal-bg')) { try { m.onclose?.() } catch {} ; m.remove() }
     clearMosaic()
     sessionView?.destroy(); sessionView = null
     termView?.destroy(); termView = null
     termLink.close()
     sessions.clear()
     hosts.clear()
-    store.del('squadraToken'); store.del('swarmToken')
+    closeMenu()
+    // (Not a token another tab has just signed in with.)
+    if (!keep) { if ((store.get('squadraToken') ?? token) === token) store.del('squadraToken'); store.del('swarmToken') }
     token = null
     show('login')
     $('loginErr').textContent = err
@@ -2127,6 +2542,7 @@
     token = candidate
     await api('/api/state') // throws if the token is wrong
     store.set('squadraToken', token)
+    $('tokenInput').value = ''
     show('app')
     connect()
   }
@@ -2158,6 +2574,25 @@
   $('menuBtn').setAttribute('aria-label', T.sessionsMenu)
   $('addHostBtn').title = T.addTitle
   $('addHostBtn').setAttribute('aria-label', T.addTitle)
+  // The button shows the mode it switches to.
+  function themeButtons() {
+    const dark = themeNow() === 'dark'
+    for (const b of document.querySelectorAll('[data-theme-toggle]')) {
+      b.textContent = dark ? '☀️' : '🌙'
+      b.title = dark ? T.lightMode : T.darkMode
+      b.setAttribute('aria-label', b.title)
+    }
+  }
+  for (const b of document.querySelectorAll('[data-theme-toggle]')) {
+    b.addEventListener('click', () => {
+      const next = themeNow() === 'dark' ? 'light' : 'dark'
+      document.documentElement.dataset.theme = next
+      store.set('squadraTheme', next)
+      themeButtons()
+    })
+  }
+  darkQuery.addEventListener('change', themeButtons)
+  themeButtons()
   for (const b of document.querySelectorAll('[data-lang]')) {
     b.classList.toggle('on', b.dataset.lang === LANG)
     b.addEventListener('click', () => { store.set('squadraLang', b.dataset.lang); location.reload() })
@@ -2167,10 +2602,13 @@
   }
   fetch('/health').then(r => r.json()).then(j => { if (j.version) setVersion(j.version) }).catch(() => {})
 
+  // Logged out in another tab of this browser: this one too.
+  window.addEventListener('storage', e => { if (e.key === 'squadraToken' && !e.newValue && token) showLogin() })
+
   // boot
   if (token) {
     show('splash')
-    enter(token).catch(err => showLogin(err.status === 401 ? T.storedTokenInvalid : T.cannotConnect(err.message)))
+    enter(token).catch(err => err.status === 401 ? showLogin(T.storedTokenInvalid) : showLogin(T.cannotConnect(err.message), { keep: true }))
   } else {
     show('login')
     $('tokenInput').focus()

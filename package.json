@@ -1,6 +1,6 @@
 {
   "name": "squadra",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "server": "node server/server.js",
-    "test": "node --test test/e2e.test.mjs test/host.test.mjs test/security.test.mjs"
+    "test": "node --test test/e2e.test.mjs test/host.test.mjs test/security.test.mjs test/upgrade.test.mjs"
   },
   "repository": {
     "type": "git",

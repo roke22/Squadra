@@ -17,15 +17,16 @@ import { createHash } from 'node:crypto'
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const MAX_MESSAGE = 2 * 1024 * 1024 // per message, after reassembly
 
-export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } = {}) {
+export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE, protocol = null, log = m => process.stderr.write(`${m}\n`) } = {}) {
   const key = req.headers['sec-websocket-key']
   if (req.headers.upgrade?.toLowerCase() !== 'websocket' || !key) {
     socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
+    setTimeout(() => socket.destroy(), 1000).unref() // (never left half open)
     return null
   }
   const accept = createHash('sha1').update(key + GUID).digest('base64')
   socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
-    `Sec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    `Sec-WebSocket-Accept: ${accept}\r\n` + (protocol ? `Sec-WebSocket-Protocol: ${protocol}\r\n` : '') + '\r\n')
   socket.setNoDelay(true)
   socket.setTimeout(0)
 
@@ -46,6 +47,9 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
     get open() { return !closed },
     send(text) {
       if (closed) return false
+      // A peer that doesn't read can't make the server hold its output:
+      // past 16 MB waiting, the connection goes.
+      if (socket.writableLength > 16 * 1024 * 1024) { ws.close(4008, 'not reading'); return false }
       socket.write(frame(0x1, Buffer.from(String(text), 'utf8')))
       return true
     },
@@ -75,12 +79,16 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
 
   socket.on('data', chunk => {
     if (closed) return
+    try { ws.onactivity?.() } catch {} // (any bytes: a big message still arriving is a sign of life)
     chunks.push(chunk)
     buffered += chunk.length
     parse()
   })
   socket.on('close', finish)
   socket.on('error', finish)
+  // The peer closed its side without a close frame (it crashed): closed here
+  // too, at once (the socket would otherwise stay half open).
+  socket.on('end', () => ws.close(1001, 'connection ended'))
   if (buffered) setImmediate(parse)
 
   // The first n buffered bytes (joining chunks only as far as needed).
@@ -149,12 +157,14 @@ export function acceptWebSocket(req, socket, head, { maxMessage = MAX_MESSAGE } 
       }
       fragments.push(payload)
       fragmentsSize += payload.length
-      if (fragmentsSize > ws.maxMessage) return fail(1009, 'message too big')
+      // Empty fragments cost memory too: a message has at most 1024 pieces.
+      if (fragmentsSize > ws.maxMessage || fragments.length > 1024) return fail(1009, 'message too big')
       if (!fin) continue
       const data = Buffer.concat(fragments)
       fragments = []; fragmentsSize = 0
       if (fragmentOpcode === 0x1) {
-        try { ws.onmessage(data.toString('utf8')) } catch (err) { process.stderr.write(`squadra-server: websocket handler: ${err?.stack ?? err}\n`) }
+        // (A handler error goes to the caller's log, which limits how often it writes.)
+        try { ws.onmessage(data.toString('utf8')) } catch (err) { log(`websocket handler: ${err?.stack ?? err}`) }
       }
     }
   }

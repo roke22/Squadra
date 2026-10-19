@@ -3,7 +3,7 @@ name: login
 description: Join the Squadra as coordinator or as a worker. Use when the user types /squadra:login, or asks to connect this session to Squadra as coordinator or worker.
 user-invocable: true
 disable-model-invocation: true
-argument-hint: "coordinator [name] | <worker-name> [--coord <coordinator>] [--observe off|activity|full] [--force]"
+argument-hint: "coordinator [name] | <worker-name> [--coord <coordinator>] [--observe off|activity|full]"
 ---
 
 # /squadra:login — join Squadra
@@ -32,21 +32,26 @@ Arguments passed: `$ARGUMENTS`
   - `/squadra:login api --coord boss` → worker `api` whose coordinator is `boss`
 
 - `--observe <off|activity|full>` → pass `observe`. What Squadra's web
-  dashboard sees of this session: `off` nothing, `activity` tools and state
-  only, `full` also Claude's text and tool output. Default: the level set
+  dashboard sees of this session: `off` nothing, `activity` tools with short
+  arguments, state, the first 200 characters of prompts and the first line of
+  tool errors, `full` also prompts (up to 4000 characters), Claude's text and tool output. Default: the level set
   with `/squadra:configure observe <level>`, or `full`. (The older Spanish
   names `actividad` and `completo` also work.)
   - `/squadra:login worker1 --observe activity`
-- `--force` → pass `force: true`. Only when the user typed it themselves.
-  - `/squadra:login worker1 --force`
 
 Names: letters, digits, `_` and `-`, up to 32 characters.
 
 A name can be held by only one active session at a time (first come, first
 served). If another active session already uses it, login is refused and the
-other session is left untouched. `--force` takes the name anyway and
-disconnects the other session — meant for a session that is stuck or whose
-terminal was lost.
+other session is left untouched. A stuck session can only be disconnected by
+the dashboard admin (⋯ → Disconnect session), which also cancels its secret:
+the name is then used again by opening it from its machine in the dashboard,
+or by deleting it there.
+
+Every login is confirmed by the user in Claude Code (it shows the role, the
+coordinator and what the dashboard will see): the coordinator gets to answer
+this session's permission prompts. A Claude Code that can't ask only logs in
+with the role and coordinator the user approved before.
 
 ## Do it
 
@@ -59,8 +64,11 @@ Call Squadra MCP server's `login` tool with `role`, `name` and, for workers,
 - If it says the URL or token is missing, point to
   `/squadra:configure <url> <token>`.
 - If it says another ACTIVE session is connected with that name, tell the
-  user and suggest another name. Mention `--force` only as the way to kick a
-  session they know is stuck; never retry with `force` on your own.
+  user and suggest another name, or that the dashboard admin can disconnect
+  a stuck session.
+- If it says the user did not confirm, or that a change needs confirmation,
+  tell the user; the coordinator of an existing name is changed with
+  `/squadra:access coordinator <name>`.
 - If it says the name is registered by another machine or installation,
   suggest another name or `/squadra:configure reset-identity`.
 - For a coordinator, remind the user that each new worker shows up here as a

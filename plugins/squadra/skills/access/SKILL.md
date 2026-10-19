@@ -6,8 +6,11 @@ disable-model-invocation: true
 allowed-tools:
   - Read
   - Glob
-  - Write(~/.claude/channels/squadra/**)
-  - Edit(~/.claude/channels/squadra/**)
+  - Write(~/.claude/channels/squadra/*/access.json)
+  - Edit(~/.claude/channels/squadra/*/access.json)
+  - Write(~/.claude/channels/squadra/*/approved/*)
+  - Write(~/.claude/channels/squadra/*/allow-pins.json)
+  - Edit(~/.claude/channels/squadra/*/allow-pins.json)
 ---
 
 # /squadra:access — Squadra Channel Access Management
@@ -27,12 +30,18 @@ tool. Its `Files:` line ends with `state <path>`: use that path everywhere
 below in place of `<state-dir>`. If there is no `state` part, the session is
 not logged in: tell the user to run `/squadra:login …` first, and stop.
 
-This skill only edits files under `~/.claude/channels/squadra/`. If the state
-directory is elsewhere (custom `CLAUDE_CONFIG_DIR` or `SQUADRA_STATE_DIR`),
-Claude Code will ask the user before each write: that is expected.
+This skill only edits `access.json`, `allow-pins.json` and `approved/<name>`
+in a session's state directory. Any other write (or a state directory elsewhere: custom
+`CLAUDE_CONFIG_DIR` or `SQUADRA_STATE_DIR`) makes Claude Code ask the user
+first: that is expected.
 
-If `$SQUADRA_ACCESS_MODE` is `static`, access is fixed at startup: edits to
-access.json only apply after restarting the session. Say so.
+A coordinator's `permissionApprovers` take effect at its next login, where
+Claude Code asks the user to confirm them (also when the session is started
+from the dashboard): after changing them, tell the user to log out and in
+again. Without that confirmation they are not used.
+
+If the status tool's `Access:` line says `(static)`, access was fixed at
+startup: edits to access.json only apply after restarting the session. Say so.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -62,7 +71,10 @@ Arguments passed: `$ARGUMENTS`
 Missing file = `{dmPolicy:"pairing", allowFrom:[], groups:{}, pending:{}}`.
 
 Sender IDs are Squadra session names (`coord`, `w1`, ...). The server
-authenticates every sender, so a name can't be spoofed.
+authenticates every sender, so a name can't be spoofed while its session holds it.
+A name deleted and registered again is a new identity: `<state-dir>/allow-pins.json`
+(`{"<name>": "i:<identity>"}`, written by the channel server) remembers which
+one this session talks to, and messages from another one are dropped.
 
 ---
 
@@ -92,6 +104,18 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
    tells the other session it's paired.
 8. Confirm: who was approved (senderId).
 
+### `coordinator <name>` (workers)
+
+Changes who coordinates this session — the session that can give it tasks
+and answer its permission prompts.
+
+1. Validate `<name>` matches `[A-Za-z0-9_-]{1,32}`.
+2. Read access.json. Set `approved = { "role": "worker", "coordinator": "<name>" }`
+   and add `<name>` to `allowFrom` (dedupe). Delete `coordinator-pin.json`
+   in the state dir if it names a different coordinator (tell the user).
+3. Write. Tell the user to log out and in again (`/squadra:logout`, then
+   `/squadra:login <this-name> --coord <name>`) for it to take effect.
+
 ### `deny <code>`
 
 1. Read access.json, delete `pending[<code>]`, write back.
@@ -102,10 +126,27 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 1. Read access.json (create default if missing).
 2. Add `<session-name>` to `allowFrom` (dedupe).
 3. Write back.
+4. Delete the `<session-name>` key from `<state-dir>/allow-pins.json` if it
+   exists: the next session with that name to write is pinned.
 
 ### `remove <session-name>`
 
 1. Read, filter `allowFrom` to exclude `<session-name>`, write.
+2. Delete the `<session-name>` key from `<state-dir>/allow-pins.json` if it exists.
+
+### `unpin <session-name>`
+
+For a session that was deleted and registered again on purpose (the channel
+warned that its messages are being ignored).
+
+1. Validate `<session-name>` matches `[A-Za-z0-9_-]{1,32}`.
+2. Delete its key from `<state-dir>/allow-pins.json` (if the file or key is
+   missing, say so and stop). Write back.
+3. Tell the user: the next session with that name to write is accepted and
+   pinned, so only do this if they know who holds the name now.
+4. If `<session-name>` is this worker's own coordinator, it is also pinned in
+   `<state-dir>/coordinator-pin.json`: tell the user to delete that file too
+   and log in again (`/squadra:logout`, then `/squadra:login …`).
 
 ### `policy <mode>`
 
@@ -123,8 +164,9 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
    few seconds.
 
 Groups are private on the server: the first session to add a group creates
-it, and the others can only join after a member invites them. This session
-invites everyone in `invite` and `allowFrom`. So the usual setup is: the
+it, and the others can only join after the owner invites them. Only the
+session that created the group invites: its `invite` and `allowFrom` lists are
+the ones that count (other members' lists are ignored by the server). So the usual setup is: the
 coordinator runs `group add #team --invite worker1,worker2`, then each worker
 runs `group add #team`.
 

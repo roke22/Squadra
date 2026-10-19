@@ -4,7 +4,7 @@
 
 <p align="center"><b>A coordinator agent that runs squads of Claude Code agents — fast, unattended, and visible live.</b></p>
 
-<p align="center"><a href="README-es.md">Leer en español</a> · v0.0.1</p>
+<p align="center"><a href="README-es.md">Leer en español</a> · v0.0.2</p>
 
 ---
 
@@ -64,14 +64,14 @@ Every agent is a normal interactive `claude` running in a terminal, so you can s
 - **Permission relay.** A worker's permission prompt also goes to the coordinator, which approves harmless actions and asks you about the rest. The first answer wins, so you can still answer in the worker's terminal.
 - **Delivery that matches the role.**
   - A message to a disconnected worker is refused on the spot, so a task never waits for a session that may not come back.
-  - Messages to the coordinator are queued until it returns.
+  - Messages to the coordinator are queued until it returns (for up to 24 h; at most 500 per sender and 10 000 in all, oldest dropped first).
 - **Presence.**
-  - `ping` tells whether a session is alive without waking it.
-  - The coordinator is notified when a worker leaves, closes, or crashes, together with any work it never picked up.
+  - `ping` tells whether a session you have exchanged messages with (or share a group with) is alive, without waking it; it shows no presence for others.
+  - The coordinator is notified when a worker leaves, closes, or crashes, together with any work it never picked up (once the coordinator has written to that worker).
 - **Context that survives compaction.**
   - When an agent auto-compacts, Squadra hands its role, its coordinator and the latest messages it received back to it, so it keeps working on the same task.
-  - The coordinator is told when a worker compacts, and gets one warning when a worker passes 80% of its context.
-  - `ping` and the dashboard show each agent's context use before auto-compaction.
+  - The coordinator is told when a worker compacts, and gets one warning when a worker passes 80% of its context (once the coordinator has written to that worker).
+  - `ping` and the dashboard show each agent's context use before auto-compaction (not for sessions with observation `off`, which also send no 80% or compaction notices).
 - **Access control:**
   - pairing codes and allowlists;
   - groups with @mentions;
@@ -102,7 +102,7 @@ What the dashboard looks like. Click any image to see it full size.
 
 - **Linux or macOS.** On Windows, use WSL (see [Windows (WSL)](#windows-wsl) below).
 - **Node.js ≥ 22.13**, on the server and on every machine running a Claude session with the plugin.
-- **tmux ≥ 3.0**, only on machines where you open sessions from the dashboard.
+- **tmux ≥ 3.2**, only on machines where you open sessions from the dashboard.
 - **Claude Code** signed in with a claude.ai plan (Pro, Max, Team or Enterprise) or an Anthropic Console API key. Each agent can use a different account.
 - **On Team/Enterprise**, an Owner must enable *Channels* in the organization settings.
 
@@ -119,7 +119,7 @@ brew install node@22 tmux        # tmux only where you open sessions from the da
 
 ### Windows (WSL)
 
-Squadra does not run on native Windows: the plugin and squadra-host refuse to start there and point you to WSL. Run Claude Code and Squadra inside **WSL**, the Linux that Windows ships with, and everything works as on Linux:
+Squadra does not run on native Windows: squadra-host refuses to start there and the plugin refuses to log in; both point you to WSL. Run Claude Code and Squadra inside **WSL**, the Linux that Windows ships with, and everything works as on Linux:
 
 1. **Install WSL with Ubuntu.** In PowerShell as administrator: `wsl --install -d Ubuntu`, restart, and open *Ubuntu* from the Start menu.
 2. **Inside Ubuntu, install Node 22, tmux and Claude Code:**
@@ -130,7 +130,7 @@ Squadra does not run on native Windows: the plugin and squadra-host refuse to st
    ```
 3. **Follow the [Quick start](#quick-start) inside Ubuntu.** The dashboard opens in your Windows browser at `http://localhost:7787`, because WSL forwards `localhost` to Windows.
 
-- **Keep projects in the Linux file system** (`~/projects`), not under `/mnt/c/…`: Claude's tools are much faster there.
+- **Keep projects in the Linux file system** (`~/projects`), not under `/mnt/c/…`: Claude's tools are much faster there, and squadra-host refuses `/mnt/c` folders (Windows drives show as writable by anyone).
 - **WSL stops when Windows sees it idle**, for example after you close every Ubuntu terminal. Keep one open while the squad works, or look up how to keep WSL running in Microsoft's documentation.
 - **To keep squadra-host running in the background,** enable systemd in WSL (`[boot]` `systemd=true` in `/etc/wsl.conf`; recent Ubuntu images have it on) and use the systemd unit from `squadra-host service`.
 
@@ -149,21 +149,21 @@ On first start it generates two tokens and prints both: the **server token** (ad
 - **With Docker:**
   ```bash
   docker build -f server/Dockerfile -t squadra-server .
-  docker run -d --name squadra-server -p 7787:7787 -v squadra-data:/data squadra-server
+  docker run -d --name squadra-server -p 127.0.0.1:7787:7787 -e PUBLIC_URL=http://127.0.0.1:7787 -v squadra-data:/data squadra-server   # this machine only; for other machines use HTTPS (below)
   docker logs squadra-server   # shows the tokens
   ```
 - **Options** (flags, or the environment variable in brackets):
 
   | Flag | |
   |---|---|
-  | `--host <ip>` (`HOST`) | Interface to listen on. Default `127.0.0.1`: this machine only |
+  | `--host <ip>` (`HOST`) | Interface to listen on. Default `127.0.0.1`: this machine only (with `--domain` or `--tls-cert`: all interfaces) |
   | `--all-interfaces` | Listen on every IP of the machine (same as `--host 0.0.0.0`) |
-  | `--port <n>` (`PORT`) | Default `7787` |
+  | `--port <n>` (`PORT`) | Default `7787` (with `--domain` or `--tls-cert`: `443`; `--domain` also uses `80`, `--http-port`) |
   | `--public-url <url>` (`PUBLIC_URL`) | The address agents and browsers use, e.g. `https://squadra.example.com`; printed in the setup command |
   | `--data-dir <path>` (`DATA_DIR`) | Database and files. Default `./data` |
   | `--domain <name>` (`SQUADRA_DOMAIN`) | Built-in HTTPS with an automatic Let's Encrypt certificate (see below) |
   | `--tls-cert <file>` `--tls-key <file>` | HTTPS with your own certificate; reloaded when the files change |
-  | `--trust-proxy` (`TRUST_PROXY=1`) | Behind a reverse proxy that sets `X-Forwarded-For`: rate limits use the client's address |
+  | `--trust-proxy` (`TRUST_PROXY=1`) | Behind a reverse proxy (or tunnel) that sets `X-Forwarded-For`: rate limits use the client's address. Without it every client behind it shares one address, and an address has at most 256 connections open |
 
   `node server/server.js --help` lists every option.
 
@@ -189,7 +189,7 @@ Sessions on other machines need to reach the server. **Don't expose it over plai
 
 **Your own certificate:** `--tls-cert fullchain.pem --tls-key privkey.pem --public-url https://squadra.example.com`. The server reloads the files when they change, for example after a certbot renewal.
 
-**Behind a reverse proxy:** if you already run one, keep the server on `127.0.0.1` and proxy to it. [`deploy/`](deploy/) has a ready Docker Compose with Caddy.
+**Behind a reverse proxy:** if you already run one, keep the server on `127.0.0.1`, proxy to it, and start it with `--public-url https://your-domain --trust-proxy` (without them the commands it gives machines use plain http, which they refuse). [`deploy/`](deploy/) has a ready Docker Compose with Caddy.
 
 **Private network:** on something like Tailscale you can skip TLS with `--all-interfaces`.
 
@@ -219,9 +219,9 @@ Then point it at your server, with the command the server printed at startup:
 
 - **Use the address the other machines reach** the server at: `http://127.0.0.1:7787` only works on the server's own machine.
 - **Start Claude Code again afterwards.** The plugin reads its configuration when a session starts, and the Squadra channel has to be enabled at launch anyway (next step).
-- **Machines added from the dashboard** get the plugin installed and configured by themselves when you enroll them.
-- **Claude Code runs the plugin with `node`,** so Node 22 must be on the `PATH` Claude Code sees.
-- To use a local copy of this repository instead, pass its path to `marketplace add`.
+- **Machines added from the dashboard** get the plugin installed and configured by themselves when you enroll them (with the server address; the join token only if you tick that option).
+- **Claude Code runs the plugin with `node`,** so Node 22.13 or later must be on the `PATH` Claude Code sees.
+- To use a local copy of this repository instead, pass its path to `marketplace add` (not on machines run by squadra-host, which only accept the roke22/Squadra marketplace).
 
 **Updating:** `claude plugin marketplace update squadra && claude plugin update squadra@squadra`, then restart the sessions.
 
@@ -247,7 +247,7 @@ Then, in each terminal:
 | `/squadra:logout` | Leave |
 | `/squadra:access pair <code>` | Approve a worker, in the coordinator's terminal |
 
-The first time a worker joins, the coordinator shows a pairing request; approve it with `/squadra:access pair <code>`. After that, the same name logs in without asking.
+The first time a worker joins, the coordinator shows a pairing request; approve it with `/squadra:access pair <code>`. After that, the same name needs no new pairing.
 
 ### 4. Open the dashboard
 
@@ -259,15 +259,15 @@ Browse to the server address (`http://127.0.0.1:7787/`) and sign in with the ser
 
 Instead of starting `claude` by hand in each terminal, let the dashboard do it on machines running **squadra-host**:
 
-1. **Add the machine.** In **🖥️ Machines → + Add machine**, the dashboard gives you a one-time command (valid 15 minutes). Run it on the machine, in the folder where sessions may open:
+1. **Add the machine.** In **🖥️ Machines → + Add machine**, the dashboard lists the steps to follow on the machine, each with its command to copy: install Node 22.13+, tmux and Claude Code (and sign in to it once), install the Squadra plugin (`claude plugin marketplace add roke22/Squadra#v0.0.2 && claude plugin install squadra@squadra`), join the machine with a one-time command (valid 15 minutes; keep it private until then), allow a folder and install the service. The join command looks like this:
 
    ```bash
-   curl -fsSLo squadra-host.mjs https://squadra.example.com/host/squadra-host.mjs \
+   cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs https://squadra.example.com/host/squadra-host.mjs \
      && echo "<sha256>  squadra-host.mjs" | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -) \
      && node squadra-host.mjs enroll https://squadra.example.com ABCD-2345
    ```
 
-   It checks the program it downloaded, trades the code for the machine's own credential, allows the current folder (unless it is your whole home or a system folder), **installs the Squadra plugin in Claude Code** and points it at this server if they aren't yet, and shows up as connected. The machine needs Claude Code installed first; add `--no-plugin` to skip the plugin. Keep it running with `node ~/.config/squadra-host/squadra-host.mjs service` (prints a systemd unit on Linux, a launchd agent on macOS).
+   It checks the program it downloaded, trades the code for the machine's own credential, **installs the Squadra plugin in Claude Code** and points it at this server if they aren't yet (the join token only if you ticked that option), and shows up as connected. Then allow the folder(s) where sessions may open: `node ~/.config/squadra-host/squadra-host.mjs folders add ~/projects`. The machine needs Claude Code installed first; add `--no-plugin` to skip the plugin. Keep it running with `node ~/.config/squadra-host/squadra-host.mjs service` (prints a systemd unit on Linux, a launchd agent on macOS).
 2. **Open a session.** **+ New session**: machine, role, name, folder (one of the machine's allowed folders, plus an optional subfolder), when to auto-compact (600K tokens by default, recommended for 1M-context models) and whether to continue the last conversation. It starts `claude` with the Squadra channel in tmux and logs in by itself.
 3. **Use its terminal.** The session opens in a live web terminal. On first start, accept the development-channels prompt and, if asked, trust the folder and `/login`. From then on you can watch it or type to it from any browser; the chat view and the mosaic keep working as before.
 
@@ -285,13 +285,14 @@ The machine's rules live in `~/.config/squadra-host/settings.json` (only the mac
 | Setting | |
 |---|---|
 | `folders` | Where sessions may be opened, and anything inside. Never a whole home or system folder, nor where credentials live |
-| `max_sessions` | At most this many at once (8) |
-| `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch |
-| `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default) |
-| `coordinators` | If set, the only coordinator names workers on this machine may be given |
+| `max_sessions` | At most this many at once (8; at most 64) |
+| `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch (terminals are read-only) |
+| `allow_resume` | Whether a session may continue the last conversation in its folder (`false`): it could be one you had there by hand |
+| `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default). For sessions squadra-host opens; for sessions started by hand on the machine, put `SQUADRA_PERMISSION_RELAY=off` in the plugin `.env` |
+| `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given |
 | `claude_command` | The Claude Code executable (`claude`, looked up on the absolute entries of the `PATH`) |
 
-The machine connects over HTTPS only: plain `http` is accepted just for `localhost`, or with `--insecure` at enrollment on a trusted private network. **Disconnect** in the machine's ⋯ menu revokes its credential.
+The machine connects over HTTPS only: plain `http` is accepted just for `localhost`, or with `--insecure` at enrollment on a trusted private network. **Remove** (on a disconnected machine's card, or in its ⋯ menu) revokes its credential and takes it off the list; a machine that was added but never connected (the plugin failed, or it was never started) shows as *Waiting to connect* and can be removed the same way. Update squadra-host along with the server: from 0.0.2 on, the server refuses connections from older versions. To update a machine, stop squadra-host, replace `~/.config/squadra-host/squadra-host.mjs` with `<server>/host/squadra-host.mjs` (check its sha256 against the one in a fresh «+ Add machine» command), run `node ~/.config/squadra-host/squadra-host.mjs plugin` (it moves the Squadra plugin to the matching release) and start it again: it keeps its credential and the names it opened. Restart the sessions it opened to use the new plugin. Update the plugin on machines you set up by hand too (`claude plugin marketplace update squadra && claude plugin update squadra@squadra`): plugins older than 0.0.2 can't log in to a 0.0.2 server, and squadra-host refuses to open sessions with one. **From 0.0.1:** also print the service again (`node ~/.config/squadra-host/squadra-host.mjs service`) and replace the unit or plist; with `SQUADRA_STATE_DIR`, move each session's files into `<dir>/<name>/`; scripts that set `SQUADRA_ROLE`/`SQUADRA_COORDINATOR` need a launch.json or one `/squadra:login`; check `squadra-host status`: it lists only the folders 0.0.2 uses (`folders` shows what settings.json holds); restart every session. The first start of a 0.0.2 server cleans the data an older version stored once (it says how far it got in the log).
 
 ## Tips: getting the most out of it
 
@@ -349,7 +350,7 @@ That way a worker behaves correctly in its repository whoever coordinates it.
 - **Leave room in the context.** With 1M-context models, auto-compacting at 600K (the dashboard's default) keeps agents sharp. The coordinator sees each worker's context use and gives big tasks to the ones with room.
 - **Use groups for announcements.** A `#group` reaches several workers at once, for example "freeze: nothing merges until the release is out".
 - **Put the coordinator somewhere always on.** Messages to the coordinator wait for it, but a coordinator on a server that never sleeps keeps the squad moving overnight.
-- **Lower what the dashboard sees for sensitive code.** `--observe activity` sends only which tools an agent runs, with short arguments: no Claude text and no tool output.
+- **Lower what the dashboard sees for sensitive code.** `--observe activity` sends which tools an agent runs with short arguments, its state, the first 200 characters of your prompts and the first line of tool errors (secrets masked): no Claude text and no tool output.
 - **Watch-only machines.** Set `allow_input: false` in a machine's squadra-host settings when you want to see its sessions but never type in them from the web.
 
 ## What Claude can do
@@ -360,34 +361,40 @@ That way a worker behaves correctly in its repository whoever coordinates it.
 | `edit_message` | Update an earlier message (progress) |
 | `react` | React with an emoji; never wakes the other side |
 | `download_attachment` | Fetch an attachment into the local inbox |
-| `ping(chat_id?)` | Is a session alive? Answered by the server, not by the session |
+| `ping(chat_id?)` | Is a session alive? Answered by the server, not by the session (only for sessions you have exchanged messages with, or share a group with) |
 | `login` · `logout` · `status` | Used by the `/squadra:*` commands |
 
 ## Security notes
 
-- **Three kinds of credentials:**
+**The most important one: isolate sessions you don't fully trust.** All the sessions on one machine run as the same user, so a session that gets compromised (for example by a malicious repository) can read the other sessions' files on that machine, including their identity secrets and the machine's squadra-host credential, and anything else you can read. If a session on a machine may be compromised, Disconnect the machine, enroll it again, and Disconnect, then delete, every session that ran there (once the machine itself was disconnected, its old names can't be opened again until deleted). Treat that user account as compromised: rebuilding it is the only complete clean-up. If you keep it, at least reinstall the Squadra plugin and check `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/` (CLAUDE.md, agents, commands, `channels/squadra/`), your shell startup files and your user services before enrolling it again. If you signed in to the dashboard from a browser on that account, change the server token. If a coordinator ran there, check its workers' machines too. If that machine's plugin `.env` holds the join token, rotate it. If the server or its data folder is there under the same user, its database and TLS key are exposed too: change the server token, rotate the join token, replace the TLS certificate and key, enroll every machine again and Disconnect every session. Better: run the server as its own user or in its container. Squadra limits what it can do with them (below), but the only real wall is the operating system: put the coordinator on its own machine, user or container, and give workers that open untrusted code a dedicated user, container or VM.
+
+- **Credentials:**
   - the **server token** (admin) signs in to the dashboard, opens web terminals and runs `/admin/*`. It belongs in your browser and nowhere else;
-  - the **join token** (`sj_…`) is what machines keep: it only registers *new* session names. It can't open terminals, read the dashboard or take over an existing name;
-  - each session name gets its own **secret**, bound to the server it was issued by, so no session can speak as another.
-  - Rotate the join token with `curl -X POST <url>/admin/rotateJoinToken -H "Authorization: Bearer <server-token>"` (existing sessions keep working). To change the server token, set `SQUADRA_SERVER_TOKEN`, or delete `data/server-token` and restart.
-- **Messages from other sessions are treated as work context, never as your authorization.** The `/squadra:access`, `/squadra:configure`, `/squadra:login` and `/squadra:logout` skills can only be run by you, not by Claude, and only edit Squadra's own files.
-- **Permission prompts:** a worker's prompt goes only to its coordinator, and only that coordinator's direct answer to that very request counts (once, for 15 minutes). A coordinator's prompts go to nobody unless you list approvers in its `access.json` (`permissionApprovers`). Repeated wrong answers from a session are ignored.
-- **Groups are private:** whoever creates a `#group` owns it; others join only when a member invites them.
-- **`reply` attachments** must be absolute paths inside the session's folder, its inbox or the temp folder, and never credentials (`.env`, `id_*`, `*.pem`, anything under `~/.ssh`, `~/.aws`, `~/.claude`…), hard links or system files.
-- **Names opened from the dashboard are reserved** for the machine that opens them: someone holding the join token can't register them first. Registering with the join token is rate limited, and the server holds at most `SQUADRA_MAX_SESSIONS` (500) sessions.
+  - the **join token** (`sj_…`) only registers *new* session names, rate limited. It can't open terminals, read the dashboard or take over a name. Machines added from the dashboard don't get it unless you tick the option (their sessions' names are registered by the server);
+  - each session name has its own **secret**, bound to the server that issued it. Once a session holds its name, the server only takes requests for that name from that session (an id the plugin keeps only in memory), also for a couple of minutes after a server restart while it reconnects: a copied secret can't speak for a connected session. It can take a name whose session is gone (or has stopped responding: about 15 seconds, up to about 45 if its network dropped), which is why isolation (above) matters;
+  - **Disconnect session** (⋯ in the dashboard) cancels the session's secret: whoever has a copy of it is out for good, and what it had queued for other sessions is dropped. A session opened from the dashboard can be opened again from its machine (after closing its terminal) while that machine stays enrolled; otherwise delete the name to use it again. **Deleting** a session also drops its queued messages, and sessions that talked to it won't take messages from a new session with that name until you run `/squadra:access unpin <name>` there. A worker whose coordinator was deleted and registered again on purpose also needs `coordinator-pin.json` deleted from its state folder and a new login; a coordinator's approvers are checked against the same pins;
+  - rotate the join token with `curl -X POST <url>/admin/rotateJoinToken -H "Authorization: Bearer <server-token>"` (existing sessions keep working; machines need the new one to register new names; not when it comes from `SQUADRA_JOIN_TOKEN`: change it there). To change the server token, set `SQUADRA_SERVER_TOKEN`, or delete `data/server-token` and restart.
+- **You decide who coordinates a session.** The coordinator can give a worker tasks and answer its permission prompts, so every `/squadra:login` is confirmed by you in Claude Code (with the role, coordinator, server and what the dashboard will see) — a message can't talk Claude into it. A Claude Code that can't ask only logs in with what you approved before. An automatic login with `SQUADRA_NAME` asks too, unless the machine wrote a `launch.json` for that start (sessions opened from the dashboard). A coordinator's `permissionApprovers` only count once you've confirmed them at a login. Role and coordinator never come from environment variables a project could set; the observation level and the permission relay can only be made stricter by them, and a `CLAUDE_CONFIG_DIR` that is inside the top-level folder holding the session (all of `/opt` for a session in `/opt/projects/app`; `~/code` for one in `~/code/app`), or that isn't yours and private, is ignored.
+- **Messages from other sessions are work context, never your authorization.** The `/squadra:*` skills can only be run by you, not by Claude, and only edit Squadra's own files. (Claude can call the `login`/`logout` tools, but a login is always confirmed by you, and so is a logout when Claude Code can ask.)
+- **Storage is capped:** per session, 30 MB of observation events and 30 MB of message text an hour and 500 MB of attachments an hour (50 MB each); at most 2 GB of attachments kept per session; a group holds at most 50 members, and a session is in at most 50 groups; in all, 10 GB of attachments (`SQUADRA_MAX_FILES_GB`; once full, new ones are refused until old ones expire after 7 days or their session is deleted), a million events, two million messages and half a million undelivered messages (10 000 per recipient, 500 per sender and recipient), oldest first; at most 30 000 observation events an hour per session. A misbehaving session can still use its share, so keep an eye on the disk of a server that many sessions use.
+- **Permission prompts:** a worker's prompt goes only to its (verified) coordinator, and only that coordinator's direct answer to that very request counts (once, for 15 minutes). It is sent about 1.5 seconds after Claude Code asks, with the call's exact input when exactly one call matches it (invisible, control and look-alike characters shown as `\u{…}`, with a warning not to approve); otherwise with Claude Code's preview and a warning not to approve it. If another matching call shows up after it was sent and before it is answered, the request is withdrawn and its answer no longer counts. A coordinator's prompts go to nobody unless you list approvers in its `access.json` (`permissionApprovers`). **A coordinator can approve whatever its workers ask:** give it clear rules about what to ask you first, and don't run it on code you don't trust.
+- **Groups are private:** whoever creates a `#group` owns it and is the only one who invites (if the owner leaves, the member who has been in it longest takes over); members only see what was sent after they joined, and a group that empties is gone with its history.
+- **`reply` attachments** must be absolute paths inside the session's folder (unless that folder is your home, contains it, or anyone can write to it, like /tmp), its inbox or its outbox (`<state>/outbox`), and never credentials (`.env`, `id_*`, `*.pem`, `.git/`, anything under `~/.ssh`, `~/.aws`, `~/.claude`…), shell histories, hard links or system files; a symlink is followed and its target must pass the same checks. Clear secrets in the text of messages are masked: known key formats, private keys, passwords in URLs, Bearer values, and Basic/Token values, `--password=`/`--token=` flags, and NAME=value (or NAME: value) where the name contains password, passwd, passphrase, secret, token, credential, or api/access/private/account key and the value starts with 8 or more letters, digits or `+ / _ ~ . @ # $ % ^ & * ! -`, with both letters and digits: that part is masked (not when `(` follows it, nor when it starts with `/` or `#` unquoted). Other `*_KEY` names, values of only letters or only digits, short values, `*_PASS`/`*_PWD`, quoted phrases, flags followed by a space (`--password x`) and cookies are not. It is a safety net, not a guarantee: don't paste secrets into messages.
 - **A coordinator is pinned:** a worker remembers the coordinator identity it first talked to; if that name is later registered again by someone else, it ignores it and warns you.
-- **The dashboard can receive code and command output** (observation level `full`). Use TLS for any non-local server, or lower the level per session with `--observe activity` or `off`. Recognisable secrets (API keys, `*_TOKEN=`, `*_PASSWORD=`, private keys, URL passwords) are masked, and the output of commands or writes that touch `.env`, keys or credentials is not sent at all.
-- **The dashboard page** runs with a strict Content-Security-Policy, can't be framed, and loads no third-party scripts (xterm.js is served by the server itself).
+- **Names:** names opened from the dashboard are reserved for their machine from that moment. Names nobody has used yet are first come, first served: the dashboard admin can disconnect (⋯ → Disconnect session) and delete a session that took one it shouldn't.
+- **The dashboard can receive code and command output** (observation level `full`). Use TLS for any non-local server, or lower the level per session with `--observe activity` or `off`. Recognisable secrets are masked (API keys, `*_TOKEN=`, passwords in URLs, `--password`/`--token` flags and the password options of common tools such as `mysql -p`, `docker login -p` or `curl -u`, cookies, private keys), and for commands and writes that touch `.env`, keys or credentials neither their arguments, their content nor their output is sent. Permission prompts relayed to a coordinator are messages: their tool input reaches the server and the dashboard whatever the observation level, with only the lighter message masking. This is a safety net, not a guarantee: what a session reports about itself is self-reported, and a compromised session can hide its own activity.
+- **Web sockets** (web terminals and machines) are only accepted with a credential in the request itself: a one-time ticket for the dashboard, the machine's secret for squadra-host. Nobody without one can hold a connection open. The credential travels in the `Sec-WebSocket-Protocol` header: if your proxy logs request headers, leave that one out.
+- **The dashboard page** runs with a strict Content-Security-Policy, can't be framed, and loads no third-party scripts (xterm.js is served by the server itself). Text pasted into a web terminal is stripped of control characters.
 - **Machines running squadra-host:**
-  - they never run what the server sends: only a session spec, validated against local settings, with a fixed command;
-  - they talk to the server over HTTPS only (plain http just to `localhost`, or with `--insecure` on a trusted network); the enrollment command checks the program's sha256, and the plugin is installed from a release tag;
-  - sessions can't be opened in a home or system folder, nor where credentials live;
-  - **the server is still trusted for instructions:** whoever controls it (or the dashboard) can type into terminals when `allow_input` is on, and give workers tasks through their coordinator. On machines you only want to watch, set `allow_input: false` (this also turns off remote permission answers), and pin `coordinators`;
-  - **sessions on one machine run as the same user.** squadra-host hides tmux from them, but a session that wants to can still reach the others or your files. For real isolation, run each machine's squadra-host as a dedicated user (or in a container or VM).
+  - they never run what the server sends: only a session spec, validated against local settings, with a fixed command; tmux targets are exact; session files (identity, launch, the plugin's `.env`) are written without following symlinks;
+  - they talk to the server over HTTPS only (plain http just to `localhost`, or with `--insecure` on a trusted network); the enrollment command runs in a fresh temporary folder and checks the program's sha256, and the plugin is installed from a release tag. **Keep the enrollment command private until it's used**: it's a one-time key to add a machine, and a machine added with it gets the secrets of the sessions you open on it and whatever you type in its terminals (a `/login` too). If it then says the code is wrong or expired although you just made it, someone used it: Remove the machine it added;
+  - sessions can't be opened in your home, in a folder that contains it (`/home`, `/Users`), in shared temporary folders, in another user's folder (or inside one, or inside a folder anyone can write to without the sticky bit), in a folder another group (not your own private one) or an ACL lets others write to, or where credentials and caches live; no folder is allowed until you add one; continuing earlier conversations needs `allow_resume`;
+  - `tmux` and `claude` are only taken from folders owned by you or root that nobody else can change (no other user, shared group or ACL, also in the folders above; on macOS the `admin` group, as Homebrew uses, is accepted), never from a folder where sessions are opened; a path with symlinks (version managers' shims, Homebrew's `opt/`) is used as written only if every symlink and folder on the way to the program passes the same checks. Shims that pick the program from the current folder (volta, asdf, nodenv) are replaced by the `claude` and `node` they pick from your home folder, so a repository can't choose them; if that can't be found, set `claude_command` to the real executable. Claude Code and the sessions get a PATH with only such folders (no relative entries), so its `node` can't come from a repository either. Your own group counts as private only when it is named after you and nobody else is in it; ACLs are read with the system's `ls`. If `settings.json` can't be read, the machine runs with the strictest settings (no folders, no typing) until it is fixed;
+  - **the server is still trusted for instructions:** whoever controls it (or the dashboard) can type into terminals when `allow_input` is on, and give workers tasks through their coordinator. On machines you only want to watch, set `allow_input: false` (no typing and no resizing from the dashboard, and, unless that machine's settings set `permission_relay: true`, remote permission answers are off for the sessions it opens) and pin `coordinators`. Leave **"Also give that machine the join token"** unticked when adding a machine unless you need it. A repository's own Claude Code settings (hooks, MCP servers) still run when you trust its folder: only open repositories you trust, or isolate the machine.
 
 ## Status and limitations
 
-- **Version 0.0.1:** early, but covered by end-to-end tests: `npm test` runs a real server, real plugin processes over MCP and squadra-host with a real tmux. The GitHub Actions workflow runs them on Linux and macOS.
+- **Version 0.0.2:** early, but covered by end-to-end tests: `npm test` runs a real server, real plugin processes over MCP and squadra-host with a real tmux. The GitHub Actions workflow runs them on Linux and macOS.
 - **Linux and macOS.** Windows through WSL.
 - **Built on Claude Code [Channels](https://code.claude.com/docs/en/channels), a research preview:**
   - custom channels need the development flag and its dialog at every start;

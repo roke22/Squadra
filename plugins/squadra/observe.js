@@ -34,31 +34,51 @@ export function normalizeLevel(v) {
 const LIMITS = {
   activity: { summary: 200, prompt: 200, detail: 0, text: 0 },
   full: { summary: 400, prompt: 4000, detail: 2000, text: 8000 },
+  off: { summary: 0, prompt: 0, detail: 0, text: 0 }, // (nothing is sent; this only keeps the handlers from throwing)
 }
 
 // --- redaction ----------------------------------------------------------------
 
+// Every quantifier is bounded, so no input can make these run long (ReDoS).
 const SECRET_PATTERNS = [
-  /\b(sk-[A-Za-z0-9_-]{16,})/g,                       // Anthropic/OpenAI style keys
-  /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g,
+  /\b(sk-(?=[A-Za-z_-]{0,300}\d)[A-Za-z0-9_-]{16,300})/g, // Anthropic/OpenAI style keys (they have digits)
+  /\b(gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255})/g,
   /\b((?:A3T[A-Z0-9]|AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16})\b/g, // AWS key ids
   /\b(AIza[0-9A-Za-z_-]{35})/g,                        // Google API key
-  /\b((?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,})/g,  // Stripe
-  /\b(xox[abprs]-[A-Za-z0-9-]{10,})/g,                 // Slack
-  /\b(npm_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,})/g, // npm, GitLab
-  /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, // JWT
-  /\b((?:sq|sw|sh|sj)_[A-Za-z0-9_-]{20,})/g,           // Squadra secrets (identity, host, join)
+  /\b((?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,200})/g, // Stripe
+  /\b(xox[abprs]-[A-Za-z0-9-]{10,200})/g,              // Slack
+  /\b(npm_[A-Za-z0-9]{30,100}|glpat-[A-Za-z0-9_-]{20,100})/g, // npm, GitLab
+  /\b(hf_[A-Za-z0-9]{30,100}|SG\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,128})/g, // Hugging Face, SendGrid
+  /\b(eyJ[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096}\.[A-Za-z0-9_-]{10,4096})/g, // JWT
+  /\b((?:sq|sw|sh|sj)_[A-Za-z0-9_-]{20,100})/g,        // Squadra secrets (identity, host, join)
+  /\b(ya29\.[A-Za-z0-9_-]{20,2000})/g,                 // Google OAuth access tokens
+  /\b(\d{6,12}:AA[A-Za-z0-9_-]{30,40})\b/g,            // Telegram bot tokens
+  /([?&]sig=)[A-Za-z0-9%+/=]{20,500}/g,                 // Azure SAS signatures
+  /\b(dop_v1_[a-f0-9]{40,100}|pypi-AgE[A-Za-z0-9_-]{30,300}|glsa_[A-Za-z0-9_]{20,100})/g, // DigitalOcean, PyPI, Grafana
+  /(AccountKey=)[A-Za-z0-9+/=]{20,200}/g,               // Azure storage connection strings
+  /(https:\/\/hooks\.slack\.com\/services\/)[A-Za-z0-9/]{10,200}/g, // Slack webhooks
+  /(https:\/\/(?:discord|discordapp)\.com\/api\/webhooks\/)[A-Za-z0-9/_-]{10,200}/g, // Discord webhooks
 ]
 // Private keys, whole block (or up to the end when the output is cut).
-const PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g
+const PEM = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY( BLOCK)?-----[\s\S]{0,20000}?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY( BLOCK)?-----|$)|PuTTY-User-Key-File-[\s\S]{0,20000}?(?:Private-MAC: [0-9a-f]{0,128}|$)/g
 // user:password@ in URLs (postgres://, https://, …).
-const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s:/@]+):([^\s@/]+)@/gi
+const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)([^\s:/@]{1,200}):([^\s@/]{1,200})@/gi
 // NAME=value where the name mentions a secret, with any prefix or suffix:
 // password=…, DB_PASSWORD=…, SQUADRA_SERVER_TOKEN=…, AWS_SECRET_ACCESS_KEY=…
-const KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credentials?|auth)[A-Za-z0-9_.-]{0,40})(["']?\s*[:=]\s*["']?)([^\s"',;]{4,})/gi
-const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g
+const KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|pwd|pw|pass|secret|hmac|token|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|license[_-]?key|account[_-]?key|authorization|credentials?|auth|cookie|contrase(?:ñ|n)a|clave)[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})("[^"\n]{1,500}"|'[^'\n]{1,500}'|[^\s"',;]{4,500})/gi
+const BEARER = /\b(Bearer|bearer|BEARER|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,1000}/g
+// Secrets in command lines: --password x, --token=x, mysql -pX, curl -u user:pass.
+const CLI_FLAGS = /(--(?:password|passwd|token|secret|api-?key|access-?key|auth)(?:=|\s+))(["']?)[^\s"']{3,500}\2/gi
+const CLI_SHORT = /(\bmysql(?:dump)?\b[^\n|;&]{0,200}?\s-p)([^\s]{3,200})|(\bcurl\b[^\n|;&]{0,200}?\s(?:-u|--user)\s+)([^\s:]{1,100}):([^\s]{1,200})/gi
+// netrc lines, sshpass -p X, openssl -pass pass:X / -k X, docker/az/mongosh
+// -p X, redis-cli -a X, htpasswd -b file user X, smbclient -U user%X,
+// wget --http-password X, mysqldump -p X, kubectl --from-literal=k=X.
+const OTHER_CLI = /(\bmachine\s+\S{1,200}\s+login\s+\S{1,200}\s+password\s+|\bsshpass\s+-p\s*|\s-pass(?:in|out)?\s+pass:|\bopenssl\b[^\n|;&]{0,200}?\s-k\s+|\b(?:docker|podman)\s+login\b[^\n|;&]{0,200}?\s(?:-p|--password)\s+|\baz\s+login\b[^\n|;&]{0,200}?\s-p\s+|\bmongo(?:sh)?\b[^\n|;&]{0,200}?\s-p\s+|\bredis-cli\b[^\n|;&]{0,200}?\s-a\s+|\bhtpasswd\s+-b\w*\s+\S{1,200}\s+\S{1,200}\s+|\bsmbclient\b[^\n|;&]{0,200}?\s-U\s+[^\s%]{1,100}%|--http-password[=\s]+|\bmysql(?:dump)?\b[^\n|;&]{0,200}?\s-p\s+|--from-literal=[^=\s]{1,100}=)([^\s'"]{1,500})/gi
+// Cookie headers.
+const COOKIE = /\b((?:Set-)?Cookie:\s{0,5})[^\n]{1,4000}/gi
 
-const REDACT_MAX = 100_000 // everything sent is clipped well below this anyway
+// The text is cut before matching: what is sent is clipped well below this.
+const REDACT_MAX = 25_000
 export function redact(text) {
   if (typeof text !== 'string' || !text) return text
   let out = text.length > REDACT_MAX ? text.slice(0, REDACT_MAX) : text
@@ -66,22 +86,96 @@ export function redact(text) {
   for (const re of SECRET_PATTERNS) out = out.replace(re, '[REDACTED]')
   out = out.replace(URL_CREDENTIALS, '$1$2:[REDACTED]@')
   out = out.replace(BEARER, '$1 [REDACTED]')
+  out = out.replace(COOKIE, '$1[REDACTED]')
+  out = out.replace(CLI_FLAGS, '$1[REDACTED]')
+  out = out.replace(OTHER_CLI, '$1[REDACTED]')
+  out = out.replace(CLI_SHORT, (m, a, _p, c, user) => (a ? `${a}[REDACTED]` : `${c}${user}:[REDACTED]`))
   out = out.replace(KEY_VALUE, (_, k, sep) => `${k}${sep}[REDACTED]`)
   return out
 }
 
+// A tool's input, masked value by value before it becomes JSON text (once
+// quoted inside JSON, "password": "x" reads \"password\": \"x\", which the
+// patterns can't see): every string as text, and a string or number under a
+// secret-looking key (a string) as a whole. `mask` is redact or maskOutgoing's text.
+const SECRET_KEY = /^(?:[A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|account[_-]?key|credentials?|authorization|cookie|contrase(?:ñ|n)a|clave))[A-Za-z0-9_.-]{0,40}$/i
+export function maskDeep(value, mask, depth = 0) {
+  let masked = 0
+  const walk = (v, d) => {
+    if (typeof v === 'string') { const r = mask(v); if (r !== v) masked++; return r }
+    if (!v || typeof v !== 'object' || d > 20) return v
+    if (Array.isArray(v)) return v.map(x => walk(x, d + 1))
+    const out = Object.create(null) // ("__proto__" is a field like any other here)
+    for (const [k, x] of Object.entries(v)) {
+      // (Counts of tokens — max_tokens, tokens — aren't secrets; a number
+      // under a password, secret or PIN key is.)
+      const secretKey = SECRET_KEY.test(k) && !/tokens$/i.test(k)
+      const numberSecret = typeof x === 'number' && Number.isFinite(x) && /pass|secret|^pin$|[_-]pin$/i.test(k) && String(x).length >= 4
+      if ((secretKey && typeof x === 'string' && x.length >= 4 && !/^\[REDACTED/.test(x)) || numberSecret) { masked++; out[k] = '[REDACTED]' } else out[k] = walk(x, d + 1)
+    }
+    return out
+  }
+  return { value: walk(value, depth), masked }
+}
+
+// For text a session sends to others (reply, edit): only what is clearly a
+// secret — known key formats, private keys, passwords in URLs, Authorization
+// values, and NAME=value / NAME: value where the value looks like a secret
+// (no spaces, brackets or code). Ordinary code such as
+// `const token = getToken(req)` stays as written. The whole text is checked.
+const OUT_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|account[_-]?key|credentials?)[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/gi
+const NOT_SECRET = /^(true|false|null|none|undefined|required|optional|string|number|boolean|redacted|\[redacted\]|example|changeme|xxx+|\*+)$/i
+export function maskOutgoing(text) {
+  if (typeof text !== 'string' || !text) return { text, masked: 0 }
+  let masked = 0
+  const count = f => (...a) => { masked++; return f(...a) }
+  let out = text.replace(PEM, count(() => '[REDACTED PRIVATE KEY]'))
+  for (const re of SECRET_PATTERNS) out = out.replace(re, count(() => '[REDACTED]'))
+  out = out.replace(URL_CREDENTIALS, count((_, a, b) => `${a}${b}:[REDACTED]@`))
+  out = out.replace(BEARER, count((_, k) => `${k} [REDACTED]`))
+  out = out.replace(OUT_KEY_VALUE, (m, k, sep, q, v) => {
+    // A secret has letters and digits; names in code don't (process.env.API_KEY,
+    // os.environ["X"], my-tls-secret, /auth/reset-password).
+    if (NOT_SECRET.test(v) || !/\d/.test(v) || !/[A-Za-z]/.test(v) || (!q && /^[/#]/.test(v))) return m
+    masked++
+    return `${k}${sep}${q}[REDACTED]${q}`
+  })
+  return { text: out, masked }
+}
+
 // Commands and files whose content is likely to be secrets: their output (or,
 // for writes, their content) is not sent at all, whatever the level.
-const SECRET_FILE = /(^|[\/\s'"=])(\.env(\.[\w.-]+)?|id_(rsa|dsa|ecdsa|ed25519)|[\w.-]+\.(pem|key|p12|pfx)|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|credentials(\.json)?|\.aws\/|\.ssh\/|\.kube\/config)(?=$|[\s'";|&)])/i
-const SECRET_COMMAND = /(^|[\s;|&(])(printenv|env|set|export\s+-p)(?=$|[\s;|&)])|\bsecurity\s+find-[a-z-]*password\b|\bgpg\b.*--export-secret|\bkubectl\s+get\s+secrets?\b/i
+const SECRET_FILE = /(^|[\/\s'"=~<])(\.env(\.[\w.*?{},-]{0,40})?|\.envrc|id_(rsa|dsa|ecdsa|ed25519)[\w.-]{0,20}|[\w.-]{1,100}\.(pem|key|p12|pfx|tfvars|tfstate)|\.netrc|\.git-credentials|\.git\/config|\.npmrc|\.pypirc|\.pgpass|\.vault-token|[\w.-]{0,60}credentials(\.(json|ya?ml|toml|ini|csv|txt|xml|conf|cfg|env|enc))?|\.aws\/|\.ssh\/|\.kube\/config|\.docker\/config\.json|[\w-]{0,60}secrets?\.(json|ya?ml|toml|ini|txt|env|enc|conf|cfg|properties|xml)|\.claude\.json|\.claude\/settings\.local\.json|\.yarnrc\.yml|\.htpasswd|wp-config\.php|\.gitconfig|[\w.-]{0,40}_history|\.local\/share\/keyrings\/|\.password-store\/|\/proc\/[\w]{1,10}\/environ|vault\.ya?ml|master\.key|[\w.-]{1,100}\.(asc|gpg|ppk|ovpn)|\.my\.cnf|\.s3cfg|\.boto|auth\.json|rclone\.conf|\.terraformrc|\.secrets|client_secret[\w.-]{0,120}\.json|[\w.-]{1,60}\.env|\.dev\.vars|kubeconfig|[\w.-]{1,60}\.p8|service[-_]?account[\w.-]{0,40}\.json|channels\/squadra\/[^\s'";|&)]{0,200}identity\.json)(?=$|[\s'";|&)*?[{,>:`$~\\/])/i
+const SECRET_COMMAND = /(^|[\s;|&(])(printenv|env|set|export|export\s+-p|declare\s+-[xp])(?=\s*($|[;|&)>]))|(^|[\s;|&(])printenv\s|\/proc\/[^\s\/]{1,20}\/environ|\bprocess\.env\b|\bos\.environ\b|\bENV\b\s*\[|\bps\s+[a-z-]{0,10}e[a-z]{0,10}w|\becho\s[^\n;|&]{0,200}\$\{?[A-Za-z0-9_]{0,40}(SECRET|TOKEN|PASS|KEY|PWD)|\b(op|bw)\s+(item\s+)?get\b|\bpass\s+show\b|\bkeyring\s+get\b|\bgit\s+credential\b|\bgh\s+auth\s+status\b[^\n]{0,100}--show-token|\bgcloud\s+auth\s+(print-access-token|print-identity-token|application-default\s+print-access-token)\b|\baz\s+account\s+get-access-token\b|\baws\s+(sts\s+get-session-token|configure\s+(export-credentials|list)|ecr\s+get-login-password)\b|\bgit\s+config\b[^\n]{0,100}remote\.[^\n\s]{1,100}\.url|\bkubectl\s+config\s+view\b|\bterraform\s+(output|show)\b|\bsops\s+(-d|--decrypt)\b|\bansible-vault\s+(view|decrypt)\b|\bdirenv\s+export\b|\bnpm\s+config\s+get\s+[^\n]{0,100}_auth|\bsecurity\s+find-[a-z-]{1,40}password\b|\bgpg\b[^\n]{0,200}--export-secret|\bkubectl\s+get\s+secrets?\b|\bgh\s+auth\s+token\b|\baws\s+configure\s+get\b|\bdocker\s+inspect\b|\bsource\s+[^\s;|&]*\.env/i
+// Folders whose files are all secrets (keyrings, password stores, keys).
+const SECRET_DIR = /(^|[\/\s'"=~])(\.local\/share\/keyrings|secrets|\.secrets|run\/secrets|\.config\/gh|\.config\/squadra-host|\.password-store|\.gnupg|\.ssh|\.aws|\.azure|\.config\/gcloud|Library\/Keychains)\//i
+// Whose output may hold secrets: what touchesSecrets says, plus output read
+// later from a background shell (which command it was isn't known here) and
+// shell-like MCP tools, judged by their command as Bash would be.
+function outputMaySecrets(tool, toolInput) {
+  if (/^(BashOutput|TaskOutput)$/.test(tool)) return true
+  const i = toolInput && typeof toolInput === 'object' ? toolInput : {}
+  if (/^mcp__/.test(tool) && /shell|exec|terminal|bash|command|run/i.test(tool)) {
+    // (Every string in its input, whatever the field is called: args, argv…)
+    const strings = []
+    const walk = (v, d) => { if (strings.length > 200 || d > 10) return; if (typeof v === 'string') strings.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x, d + 1) }
+    walk(i, 0)
+    return !strings.length || strings.length > 200 || strings.some(cmd => touchesSecrets('Bash', { command: cmd }))
+  }
+  return touchesSecrets(tool, toolInput)
+}
 export function touchesSecrets(tool, toolInput) {
   const i = toolInput && typeof toolInput === 'object' ? toolInput : {}
   if (tool === 'Bash') {
-    const cmd = String(i.command ?? '')
-    return SECRET_FILE.test(cmd) || SECRET_COMMAND.test(cmd)
+    const cmd = String(i.command ?? '').slice(0, 10_000)
+    return SECRET_FILE.test(cmd) || SECRET_DIR.test(cmd) || SECRET_COMMAND.test(cmd)
   }
-  const path = String(i.file_path ?? i.notebook_path ?? i.path ?? '')
-  return path !== '' && SECRET_FILE.test(path)
+  const path = String(i.file_path ?? i.notebook_path ?? i.path ?? '').slice(0, 4096)
+  // Grep and Glob also by their pattern (".env*", "**/*.pem").
+  const glob = String(i.glob ?? i.pattern ?? '').slice(0, 4096)
+  // (Glob characters read as letters: "*.pem" is a key file name.)
+  const hit = v => v !== '' && [v, ' ' + v.replace(/[*?{}[\]]/g, 'x')].some(x => SECRET_FILE.test(x) || SECRET_DIR.test(x))
+  return hit(path) || ((tool === 'Grep' || tool === 'Glob') && hit(glob))
 }
 
 function clip(text, max) {
@@ -191,7 +285,9 @@ export function compactPointFor(model, env = process.env) {
 
 // contextProvider: () => text to give back to Claude right after a compaction
 // (asked for by the SessionStart "compact" hook through the same socket).
-export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '' }) {
+// onToolInput(tool, input): the exact input of each tool call, at every level
+// (kept in memory by the plugin to show the coordinator exactly what will run).
+export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null }) {
   level = normalizeLevel(level) ?? 'full'
   const limits = LIMITS[level]
   let server = null
@@ -282,6 +378,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
 
   function onHook({ ts, input }) {
     if (!input || typeof input !== 'object') return
+    if (input.hook_event_name === 'PreToolUse' && onToolInput) { try { onToolInput(String(input.tool_name ?? ''), input.tool_input) } catch {} }
     // Claude Code's working directory (it can change during a session).
     const cwdChanged = typeof input.cwd === 'string' && input.cwd !== cwd
     if (cwdChanged) cwd = input.cwd
@@ -304,15 +401,20 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
       }
       case 'PreToolUse': {
         const tool = String(input.tool_name ?? '')
+        // A command or file that touches secrets: only what it is (the
+        // command's name, the tool), never its arguments or content.
+        const secret = touchesSecrets(tool, input.tool_input)
+        // (Not even the command's name: a quoted value before it could split into it.)
+        const summary = secret && tool === 'Bash'
+          ? 'command … (touches secrets: not shown)'
+          : summarizeTool(tool, input.tool_input, cwd)
         return push({
           ...base,
           kind: 'tool_start',
           id: input.tool_use_id,
           tool,
-          summary: clip(redact(summarizeTool(tool, input.tool_input, cwd)), limits.summary),
-          // Writing a .env or a key: its content is not sent.
-          ...(limits.detail && !(tool !== 'Bash' && touchesSecrets(tool, input.tool_input))
-            ? { detail: clip(redact(JSON.stringify(input.tool_input ?? {}, null, 2)), limits.detail) } : {}),
+          summary: clip(redact(summary), limits.summary),
+          ...(limits.detail && !secret ? { detail: clip(redact(JSON.stringify(maskDeep(input.tool_input ?? {}, redact).value, null, 2)), limits.detail) } : {}),
         })
       }
       case 'PostToolUse': {
@@ -326,7 +428,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           summary: summarizeResult(tool, input.tool_response),
           ...(input.duration_ms != null ? { duration_ms: input.duration_ms } : {}),
           ...(limits.detail
-            ? { detail: touchesSecrets(tool, input.tool_input) ? '(output not sent: this command or file may contain secrets)' : clipMiddle(redact(resultDetail(tool, input.tool_response)), limits.detail) }
+            ? { detail: outputMaySecrets(tool, input.tool_input) ? '(output not sent: this command or file may contain secrets)' : clipMiddle(redact(resultDetail(tool, input.tool_response)), limits.detail) }
             : {}),
         })
       }
@@ -339,9 +441,9 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           tool: String(input.tool_name ?? ''),
           ok: false,
           interrupted: input.is_interrupt === true,
-          summary: clip(redact(error.split('\n')[0]), 200),
+          summary: outputMaySecrets(String(input.tool_name ?? ''), input.tool_input) ? '(error not shown: the command may touch secrets)' : clip(redact(error.split('\n')[0]), 200),
           ...(input.duration_ms != null ? { duration_ms: input.duration_ms } : {}),
-          ...(limits.detail && !touchesSecrets(String(input.tool_name ?? ''), input.tool_input) ? { detail: clipMiddle(redact(error), limits.detail) } : {}),
+          ...(limits.detail && !outputMaySecrets(String(input.tool_name ?? ''), input.tool_input) ? { detail: clipMiddle(redact(error), limits.detail) } : {}),
         })
       }
       case 'Notification':
