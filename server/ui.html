@@ -271,6 +271,11 @@
   .host-head .n { font-weight: 650; font-size: 15px; }
   .host-head .m { color: var(--muted); font-size: 12.5px; }
   .host-head .acts { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .fchip { display: inline-flex; align-items: center; gap: 2px; }
+  .fchip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 3px; font-size: 11px; border-radius: 4px; }
+  .fchip button:hover { background: var(--panel-2); color: var(--err); }
+  .fchip.home code { background: color-mix(in srgb, var(--warn) 18%, var(--panel-2)); }
+  .host-meta .addf { padding: 0 8px; font-size: 12px; }
   .host-meta { padding: 0 14px 10px; color: var(--muted); font-size: 12.5px; display: flex; gap: 6px 14px; flex-wrap: wrap; }
   .plugin-missing { color: var(--err); font-weight: 600; }
   .host-terms { border-top: 1px solid var(--line); }
@@ -281,9 +286,12 @@
   .term-row .acts { display: flex; gap: 6px; }
   .host-empty { padding: 12px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
   .modal.wide { width: min(680px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
-  .steps { margin: 0 0 12px; padding-left: 22px; }
-  .steps > li { margin: 0 0 14px; }
-  .steps > li > p { margin: 0 0 6px; color: var(--text); }
+  .steps { margin: 0 0 12px; }
+  .steps > p { margin: 0 0 6px; color: var(--text); }
+  .steps .check { margin: 4px 0 8px; }
+  .steps .manual { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .steps .manual summary { cursor: pointer; margin-bottom: 6px; }
+  .os-pick { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
   .steps .lbl { font-size: 12px; color: var(--muted); margin: 6px 0 4px; }
   .steps .cmdrow { display: flex; gap: 6px; align-items: flex-start; }
   .steps .cmdrow .cmd { flex: 1; margin: 0 0 6px; }
@@ -380,6 +388,8 @@
     set: (k, v) => { try { localStorage.setItem(k, v) } catch {} },
     del: k => { try { localStorage.removeItem(k) } catch {} },
   }
+
+  let serverVersion = null // (from /health and the stream)
 
   // Light or dark: the system's, unless chosen with the 🌙/☀️ button
   // (remembered per browser). Set first thing, so the page doesn't flash.
@@ -497,8 +507,12 @@
       editedMark: 'edited',
       coordOwn: 'opened from this dashboard',
       coordSelf: 'says it is a coordinator (not opened from here)',
-      coordNotCoord: 'this session is not a coordinator',
-      coordNone: 'no session has this name (yet)',
+      coordOffline: 'disconnected',
+      coordPick: '— choose a coordinator —',
+      coordNoneYet: 'There is no coordinator yet: open one first (Role: Coordinator), then add its workers.',
+      coordRequired: 'Choose the worker\'s coordinator',
+      noFoldersHere: 'This machine has no allowed folders yet: add one with <b>+ Folder</b> (here or on the machine\'s card).',
+      folderRequired: 'Choose a folder (the machine has none allowed yet)',
       clearText: (who, online) => `Deletes ${who}'s activity from the server (prompts, tools, Claude's text). Messages between sessions are hidden in this chat but stay in the other sessions' chats.${online ? ' The session stays connected and new activity keeps showing up.' : ''} The conversation inside Claude itself is not touched.`,
       archiveTitle: n => `Archive ${n}`,
       archiveText: who => `${who} disappears from the mosaic and the list and moves to «Archived» with all its history. If it reconnects, it is unarchived automatically.`,
@@ -536,13 +550,27 @@
       hostPending: ago => `Waiting to connect · added ${ago} ago`,
       hostOnline: 'Connected',
       folders: 'Folders',
-      noFolders: 'none: add one on the machine with <code>node ~/.config/squadra-host/squadra-host.mjs folders add &lt;path&gt;</code>',
+      noFolders: 'none yet',
+      addFolder: '+ Folder',
+      hostOld: (v, s) => `⚠ squadra-host ${v} is older than the server (${s}): on the machine run <code>squadra-host update</code> (from 0.0.2: add the machine again with <b>+ Add machine</b> and remove this one)`,
+      addFolderTitle: n => `Allow a folder on ${n}`,
+      addFolderText: 'Sessions can be opened in this folder and anything inside it. A path on that machine, such as <code>~/projects</code> or <code>/home/me/work</code>.',
+      addFolderHome: 'Your whole home folder (<code>~</code>) only if squadra-host was started with <code>--allow-home</code>.',
+      folderPath: 'Folder',
+      allow: 'Allow',
+      removeFolder: f => `Stop allowing ${f}`,
+      removeFolderTitle: 'Stop allowing this folder?',
+      stopAllowing: 'Stop allowing',
+      removeFolderText: f => `No new sessions can be opened in <code>${f}</code>. Sessions already open there keep running.`,
+      homeFolder: 'home folder: all your files; permissions only in its terminal',
+      foldersLocal: 'changed on the machine only (<code>squadra-host folders add &lt;path&gt;</code>)',
+      homeSession: 'This is your home folder: the session reaches all your files, and its permission prompts are answered only in its terminal (not by the coordinator).',
       maxSessions: n => `up to ${n} sessions`,
       typingOn: 'typing from here: allowed',
       typingOff: 'watch only (typing turned off on the machine)',
       noTerminals: 'No sessions open on this machine.',
       pluginOk: v => `Squadra plugin ${v ? `v${v}` : 'installed'}`,
-      pluginMissing: missing => `⚠ Squadra plugin ${missing ? 'not installed' : 'disabled'}: run <code>node ~/.config/squadra-host/squadra-host.mjs plugin</code> on the machine`,
+      pluginMissing: missing => `⚠ Squadra plugin ${missing ? 'not installed' : 'disabled'}: run <code>squadra-host plugin</code> on the machine`,
       terminal: '⌨ Terminal',
       chat: 'Chat',
       closeSession: 'Close session',
@@ -556,24 +584,18 @@
       save: 'Save',
       name: 'Name',
       addTitle: 'Add a machine',
-      addIntro: 'You will get the steps to run on the machine: what to install, the Squadra plugin, a one-time command that joins it to this server, and how to keep it running.',
+      addIntro: 'You will get one command to run on the machine: it installs everything it needs and joins it to this server.',
       machineName: 'Name for the machine (optional)',
       machineNameHint: 'Defaults to its hostname.',
       configurePlugin: 'Also give that machine the join token, so sessions started there by hand can join (sessions opened from this dashboard don\'t need it). Anyone who sees the command could take it.',
       generate: 'Generate command',
-      stepsIntro: 'On the machine, in this order:',
-      stepNeeds: 'Install what it needs: <b>Node.js 22.13+</b>, <b>tmux</b> and <b>Claude Code</b>. Then run <code>claude</code> once and sign in.',
-      lblClaude: 'Claude Code:',
-      lblTmuxLinux: 'tmux on Linux (Debian/Ubuntu; or your distribution\'s package):',
-      lblTmuxMac: 'tmux on macOS:',
-      stepPlugin: 'Install the Squadra plugin in Claude Code:',
-      stepEnroll: 'Join the machine to this server. It carries a single-use code: keep it private until it is used. It stays connected, showing what it does.',
-      stepFolders: 'Allow the folder (or folders) where sessions may be opened; use your own path:',
-      exampleFolder: '~/projects',
-      stepService: 'To keep it running in the background, stop the command from step 3 (Ctrl+C) and install the service:',
-      lblLinux: 'Linux (systemd):',
-      lblMac: 'macOS (launchd):',
-      lingerNote: 'On Linux, to keep it running after you log out: <code>loginctl enable-linger $USER</code>',
+      osPick: 'The machine runs',
+      runOn: os => os === 'windows' ? 'Run this in <b>PowerShell</b> on the machine:' : 'Run this in a terminal on the machine (as your user):',
+      runWhat: 'It installs what is missing (tmux, Node.js 22, Claude Code), joins the machine with a single-use code, installs the Squadra plugin and the <code>squadra-host</code> command, and leaves it running in the background. Keep the command private until it is used.',
+      windowsNote: 'On Windows, Squadra runs inside WSL (Ubuntu): if WSL isn\'t installed, the command tells you how.',
+      allowHome: 'Also allow my whole home folder for sessions (<code>--allow-home</code>): to let Claude manage the computer. Sessions there reach all your files, and their permission prompts are answered only in their own terminal.',
+      afterJoin: 'Then: run <code>claude</code> once on the machine and sign in, and choose here where sessions may be opened (the machine\'s <b>+ Folder</b>).',
+      manualCmd: 'Already have tmux, Node.js 22 and Claude Code? Just squadra-host:',
       copy: 'Copy',
       copied: 'Copied ✓',
       codeValid: t => `Single-use code, valid until ${t}.`,
@@ -713,8 +735,12 @@
       editedMark: 'editado',
       coordOwn: 'abierta desde este panel',
       coordSelf: 'dice ser coordinador (no abierta desde aquí)',
-      coordNotCoord: 'esta sesión no es coordinadora',
-      coordNone: 'ninguna sesión se llama así (todavía)',
+      coordOffline: 'desconectado',
+      coordPick: '— elige un coordinador —',
+      coordNoneYet: 'Todavía no hay ningún coordinador: abre uno primero (Rol: Coordinador) y después añade sus workers.',
+      coordRequired: 'Elige el coordinador del worker',
+      noFoldersHere: 'Esta máquina aún no tiene carpetas permitidas: añade una con <b>+ Carpeta</b> (aquí o en la tarjeta de la máquina).',
+      folderRequired: 'Elige una carpeta (la máquina aún no tiene ninguna permitida)',
       clearText: (who, online) => `Se borra del servidor la actividad de ${who} (prompts, herramientas, textos de Claude). Los mensajes entre sesiones se ocultan en este chat, pero siguen en el de las otras sesiones.${online ? ' La sesión sigue conectada y lo nuevo seguirá apareciendo.' : ''} La conversación en el propio Claude no se toca.`,
       archiveTitle: n => `Archivar ${n}`,
       archiveText: who => `${who} deja de aparecer en el mosaico y en la lista, y pasa a «Archivadas» con todo su historial. Si vuelve a conectarse, se desarchiva sola.`,
@@ -752,13 +778,27 @@
       hostPending: ago => `Pendiente de conectar · añadida hace ${ago}`,
       hostOnline: 'Conectada',
       folders: 'Carpetas',
-      noFolders: 'ninguna: añade una en la máquina con <code>node ~/.config/squadra-host/squadra-host.mjs folders add &lt;ruta&gt;</code>',
+      noFolders: 'ninguna todavía',
+      addFolder: '+ Carpeta',
+      hostOld: (v, s) => `⚠ squadra-host ${v} es más antiguo que el servidor (${s}): en la máquina ejecuta <code>squadra-host update</code> (desde la 0.0.2: vuelve a añadir la máquina con <b>+ Añadir máquina</b> y elimina esta)`,
+      addFolderTitle: n => `Permitir una carpeta en ${n}`,
+      addFolderText: 'Se podrán abrir sesiones en esta carpeta y en todo lo que contiene. Una ruta de esa máquina, como <code>~/proyectos</code> o <code>/home/yo/trabajo</code>.',
+      addFolderHome: 'Tu carpeta personal entera (<code>~</code>) solo si squadra-host se arrancó con <code>--allow-home</code>.',
+      folderPath: 'Carpeta',
+      allow: 'Permitir',
+      removeFolder: f => `Dejar de permitir ${f}`,
+      removeFolderTitle: '¿Dejar de permitir esta carpeta?',
+      stopAllowing: 'Dejar de permitir',
+      removeFolderText: f => `No se podrán abrir sesiones nuevas en <code>${f}</code>. Las que ya están abiertas ahí siguen funcionando.`,
+      homeFolder: 'carpeta personal: todos tus ficheros; permisos solo en su terminal',
+      foldersLocal: 'se cambian solo en la máquina (<code>squadra-host folders add &lt;ruta&gt;</code>)',
+      homeSession: 'Es tu carpeta personal: la sesión accede a todos tus ficheros, y sus permisos se aprueban solo en su terminal (no el coordinador).',
       maxSessions: n => `hasta ${n} sesiones`,
       typingOn: 'escribir desde aquí: permitido',
       typingOff: 'solo ver (escribir está desactivado en la máquina)',
       noTerminals: 'No hay sesiones abiertas en esta máquina.',
       pluginOk: v => `Plugin de Squadra ${v ? `v${v}` : 'instalado'}`,
-      pluginMissing: missing => `⚠ Plugin de Squadra ${missing ? 'sin instalar' : 'desactivado'}: ejecuta <code>node ~/.config/squadra-host/squadra-host.mjs plugin</code> en la máquina`,
+      pluginMissing: missing => `⚠ Plugin de Squadra ${missing ? 'sin instalar' : 'desactivado'}: ejecuta <code>squadra-host plugin</code> en la máquina`,
       terminal: '⌨ Terminal',
       chat: 'Chat',
       closeSession: 'Cerrar sesión',
@@ -772,24 +812,18 @@
       save: 'Guardar',
       name: 'Nombre',
       addTitle: 'Añadir una máquina',
-      addIntro: 'Obtendrás los pasos para hacer en la máquina: qué instalar, el plugin de Squadra, un comando de un solo uso que la da de alta en este servidor y cómo dejarla en marcha.',
+      addIntro: 'Obtendrás un único comando para ejecutar en la máquina: instala todo lo necesario y la da de alta en este servidor.',
       machineName: 'Nombre de la máquina (opcional)',
       machineNameHint: 'Por defecto, su hostname.',
       configurePlugin: 'Dar también a esa máquina el token de alta, para que puedan unirse sesiones abiertas allí a mano (las que se abren desde este panel no lo necesitan). Quien vea el comando podría quedárselo.',
       generate: 'Generar comando',
-      stepsIntro: 'En la máquina, en este orden:',
-      stepNeeds: 'Instala lo necesario: <b>Node.js 22.13+</b>, <b>tmux</b> y <b>Claude Code</b>. Después ejecuta <code>claude</code> una vez e inicia sesión.',
-      lblClaude: 'Claude Code:',
-      lblTmuxLinux: 'tmux en Linux (Debian/Ubuntu; o el paquete de tu distribución):',
-      lblTmuxMac: 'tmux en macOS:',
-      stepPlugin: 'Instala el plugin de Squadra en Claude Code:',
-      stepEnroll: 'Da de alta la máquina en este servidor. Lleva un código de un solo uso: guárdalo en privado hasta usarlo. Se queda conectada, mostrando lo que hace.',
-      stepFolders: 'Permite la carpeta (o carpetas) donde se podrán abrir sesiones; pon tu propia ruta:',
-      exampleFolder: '~/proyectos',
-      stepService: 'Para dejarla en marcha en segundo plano, detén el comando del paso 3 (Ctrl+C) e instala el servicio:',
-      lblLinux: 'Linux (systemd):',
-      lblMac: 'macOS (launchd):',
-      lingerNote: 'En Linux, para que siga en marcha cuando cierres sesión: <code>loginctl enable-linger $USER</code>',
+      osPick: 'La máquina usa',
+      runOn: os => os === 'windows' ? 'Ejecuta esto en <b>PowerShell</b> en la máquina:' : 'Ejecuta esto en una terminal de la máquina (con tu usuario):',
+      runWhat: 'Instala lo que falte (tmux, Node.js 22, Claude Code), da de alta la máquina con un código de un solo uso, instala el plugin de Squadra y el comando <code>squadra-host</code>, y la deja funcionando en segundo plano. Guarda el comando en privado hasta usarlo.',
+      windowsNote: 'En Windows, Squadra funciona dentro de WSL (Ubuntu): si no tienes WSL, el comando te dice cómo instalarlo.',
+      allowHome: 'Permitir también mi carpeta personal entera para las sesiones (<code>--allow-home</code>): para que Claude administre el equipo. Las sesiones ahí acceden a todos tus ficheros, y sus permisos se aprueban solo en su propia terminal.',
+      afterJoin: 'Después: ejecuta <code>claude</code> una vez en la máquina e inicia sesión, y elige aquí dónde se pueden abrir sesiones (<b>+ Carpeta</b> en la máquina).',
+      manualCmd: '¿Ya tienes tmux, Node.js 22 y Claude Code? Solo squadra-host:',
       copy: 'Copiar',
       copied: 'Copiado ✓',
       codeValid: t => `Código de un solo uso, válido hasta las ${t}.`,
@@ -1918,6 +1952,18 @@
     return [i.hostname && i.hostname !== h.name ? i.hostname : '', [i.platform, i.arch].filter(Boolean).join(' '), i.claude ? `Claude ${i.claude.replace(/\s*\(Claude Code\)/, '')}` : '', i.tmux, i.version ? `host v${i.version}` : ''].filter(Boolean).join(' · ')
   }
 
+  // A machine's allowed folders: removable, and one more can be added, when
+  // the machine lets the dashboard change them (squadra-host 0.0.3+).
+  function folderChips(h) {
+    const i = h.info ?? {}
+    const editable = h.online && i.folders_from_dashboard === true
+    const chips = (i.folders ?? []).map(f => {
+      const home = i.home && f === i.home
+      return `<span class="fchip ${home ? 'home' : ''}" title="${esc(home ? T.homeFolder : f)}"><code>${home ? '🏠 ' : ''}${esc(f)}</code>${editable ? `<button type="button" data-hact="rmfolder" data-h="${esc(h.id)}" data-f="${esc(f)}" title="${esc(T.removeFolder(f))}" aria-label="${esc(T.removeFolder(f))}">✕</button>` : ''}</span>`
+    }).join(' ')
+    return `${chips || T.noFolders}${editable ? ` <button type="button" class="btn addf" data-hact="addfolder" data-h="${esc(h.id)}">${T.addFolder}</button>` : h.online && i.folders_from_dashboard === false && i.version ? ` <span class="t">(${T.foldersLocal})</span>` : ''}`
+  }
+
   // Connected, disconnected, or enrolled and never connected yet.
   function hostState(h) {
     if (h.online) return T.hostOnline
@@ -1945,7 +1991,7 @@
         <div class="host-head"><span class="dot ${h.online ? 'ok' : ''}"></span><span class="n">${esc(h.name)}</span>
           <span class="m">${hostState(h)}${hostLine(h) ? ` · ${esc(hostLine(h))}` : ''}</span>
           <span class="acts">${h.online ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : `<button class="btn danger" data-hact="disconnect" data-h="${esc(h.id)}">${T.disconnect}</button>`}<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button></span></div>
-        <div class="host-meta">${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span>${T.folders}: ${i.folders?.length ? i.folders.map(f => `<code>${esc(f)}</code>`).join(' ') : T.noFolders}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
+        <div class="host-meta">${i.version && serverVersion && olderThan(i.version, serverVersion) ? `<span class="plugin-missing">${T.hostOld(esc(i.version), esc(serverVersion))}</span>` : ''}${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span class="folders">${T.folders}: ${folderChips(h)}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
         <div class="host-terms">${rows || `<div class="host-empty">${T.noTerminals}</div>`}</div>
       </div>`
     }).join('')}</div>`)
@@ -1957,7 +2003,7 @@
     const go = e.target.closest('[data-go]')
     if (go) location.hash = go.dataset.go
     const act = e.target.closest('[data-hact]')
-    if (act) hostAction(act.dataset.hact, act.dataset.h, act.dataset.t)
+    if (act) hostAction(act.dataset.hact, act.dataset.h, act.dataset.t ?? act.dataset.f)
   })
 
   function openHostMenu(anchor, id) {
@@ -1991,7 +2037,7 @@
     return { el: bg, close }
   }
 
-  function hostAction(action, id, term) {
+  function hostAction(action, id, term, extra = term) {
     const h = hosts.get(id)
     if (action === 'add') return addMachineDialog()
     if (action === 'new') return newSessionDialog(id)
@@ -2007,6 +2053,10 @@
       input.addEventListener('keydown', e => { if (e.key === 'Enter') save() })
       return
     }
+    if (action === 'addfolder' && h) return addFolderDialog(id)
+    if (action === 'rmfolder' && h) {
+      return confirmDialog({ title: T.removeFolderTitle, text: T.removeFolderText(esc(extra)), confirm: T.stopAllowing, danger: true, run: () => postJson('/api/hosts/folders', { host: id, action: 'remove', path: extra }) })
+    }
     if (action === 'disconnect' && h) {
       return confirmDialog({ title: T.disconnectTitle(h.name), text: T.disconnectText(esc(h.name)), confirm: T.disconnect, danger: true, run: () => postJson('/api/hosts/remove', { host: id }) })
     }
@@ -2021,6 +2071,36 @@
     }
   }
 
+  // Allow one more folder on a machine: it checks the path against its own
+  // rules and says why when it can't be allowed. done(folder) after it is.
+  function addFolderDialog(hostId, done) {
+    const h = hosts.get(hostId)
+    if (!h) return
+    const d = dialog(`<h3>${esc(T.addFolderTitle(h.name))}</h3><p>${T.addFolderText} ${T.addFolderHome}</p>
+      <label class="field"><span>${T.folderPath}</span><input type="text" maxlength="4096" placeholder="~/projects" autocomplete="off" spellcheck="false"></label>
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.allow}</button></div>`)
+    const input = d.el.querySelector('input')
+    input.focus()
+    const ok = d.el.querySelector('[data-ok]')
+    const save = async () => {
+      const path = input.value.trim()
+      if (!path) return input.focus()
+      ok.disabled = true
+      try {
+        const r = await postJson('/api/hosts/folders', { host: hostId, action: 'add', path })
+        d.close()
+        // (The machine's list as it answered: shown now, before its next update arrives.)
+        const list = Array.isArray(r.folders) ? r.folders : null
+        const host = hosts.get(hostId)
+        if (host && list) host.info = { ...(host.info ?? {}), folders: list }
+        done?.(list?.[list.length - 1] ?? null)
+      } catch (err) { d.el.querySelector('.err').textContent = err.message.replace(/^Bad Request: /, ''); ok.disabled = false }
+    }
+    ok.addEventListener('click', save)
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') save() })
+  }
+
   function addMachineDialog() {
     const d = dialog(`<h3>${T.addTitle}</h3><p>${T.addIntro}</p>
       <div data-step="1">
@@ -2030,8 +2110,8 @@
         <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-gen>${T.generate}</button></div>
       </div>
       <div data-step="2" hidden>
-        <p style="margin-bottom:8px">${T.stepsIntro}</p>
-        <ol class="steps"></ol>
+        <div class="os-pick"><span>${T.osPick}</span><span class="seg">${['linux', 'macos', 'windows'].map(o => `<button type="button" data-os="${o}">${{ linux: 'Linux', macos: 'macOS', windows: 'Windows' }[o]}</button>`).join('')}</span></div>
+        <div class="steps"></div>
         <div class="wait"><span class="dot info pulse"></span><span class="w">${T.waitingMachine}</span></div>
         <div class="actions"><button class="btn" data-cancel>${T.done}</button><button class="btn primary" data-newsession hidden>${T.newSession}</button></div>
       </div>`, { wide: true })
@@ -2053,17 +2133,25 @@
         ticket = r.enrollment ?? null
         d.el.querySelector('[data-step="1"]').hidden = true
         d.el.querySelector('[data-step="2"]').hidden = false
-        // The steps, each command with its own copy button.
-        const host = '~/.config/squadra-host/squadra-host.mjs'
-        const cmd = (text, label = '') => `${label ? `<div class="lbl">${label}</div>` : ''}<div class="cmdrow"><pre class="cmd">${esc(text)}</pre><button class="btn" data-copy>${T.copy}</button></div>`
+        // One command for the machine's system, with its copy button.
+        const guess = /Mac/i.test(navigator.platform) ? 'macos' : /Win/i.test(navigator.platform) ? 'windows' : 'linux'
+        let os = guess, home = false
+        const cmd = text => `<div class="cmdrow"><pre class="cmd">${esc(text)}</pre><button class="btn" data-copy>${T.copy}</button></div>`
         const insecure = /^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)
-        d.el.querySelector('.steps').innerHTML = [
-          `<p>${T.stepNeeds}</p>${cmd('curl -fsSL https://claude.ai/install.sh | bash', T.lblClaude)}${cmd('sudo apt install tmux', T.lblTmuxLinux)}${cmd('brew install tmux', T.lblTmuxMac)}`,
-          `<p>${T.stepPlugin}</p>${cmd(String(r.plugin_command ?? ''))}`,
-          `<p>${T.stepEnroll}</p>${cmd(String(r.command ?? ''))}${insecure ? `<p class="note" style="color:var(--err);font-size:13px">${esc(T.httpWarn)}</p>` : ''}<p class="note valid">${esc(T.codeValid(hhmm(r.expires_at)))}</p>`,
-          `<p>${T.stepFolders}</p>${cmd(`node ${host} folders add ${T.exampleFolder}`)}`,
-          `<p>${T.stepService}</p>${cmd(`mkdir -p ~/.config/systemd/user\nnode ${host} service > ~/.config/systemd/user/squadra-host.service\nsystemctl --user daemon-reload && systemctl --user enable --now squadra-host`, T.lblLinux)}${cmd(`node ${host} service > ~/Library/LaunchAgents/com.squadra.host.plist\nlaunchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.squadra.host.plist`, T.lblMac)}<p class="note">${T.lingerNote}</p>`,
-        ].map(x => `<li>${x}</li>`).join('')
+        const draw = () => {
+          for (const b of d.el.querySelectorAll('[data-os]')) b.classList.toggle('on', b.dataset.os === os)
+          const extra = (home ? ' --allow-home' : '') + (insecure ? ' --insecure' : '')
+          d.el.querySelector('.steps').innerHTML = `<p>${T.runOn(os)}</p>${cmd(String(r.install?.[os] ?? '') + extra)}
+            <label class="check"><input type="checkbox" data-home ${home ? 'checked' : ''}> <span>${T.allowHome}</span></label>
+            <p class="note">${T.runWhat}${os === 'windows' ? ` ${T.windowsNote}` : ''}</p>
+            ${insecure ? `<p class="note" style="color:var(--err);font-size:13px">${esc(T.httpWarn)}</p>` : ''}
+            <p class="note valid">${esc(T.codeValid(hhmm(r.expires_at)))}</p>
+            <p class="note">${T.afterJoin}</p>
+            ${os === 'windows' ? '' : `<details class="manual"><summary>${T.manualCmd}</summary>${cmd(String(r.command ?? '') + extra)}</details>`}`
+        }
+        draw()
+        d.el.querySelector('.os-pick').addEventListener('click', ev => { const b = ev.target.closest('[data-os]'); if (b) { os = b.dataset.os; draw() } })
+        d.el.querySelector('.steps').addEventListener('change', ev => { if (ev.target.matches('[data-home]')) { home = ev.target.checked; draw() } })
         hostListeners.add(listener)
         d.el.querySelector('.steps').addEventListener('click', async ev => {
           const b = ev.target.closest('[data-copy]')
@@ -2096,13 +2184,27 @@
     const coords = [...sessions.values()].filter(s => s.role === 'coordinator' && !s.deleted).map(s => s.name)
     const ownCoords = [...sessions.values()].filter(s => s.opened_role === 'coordinator' && s.role === 'coordinator' && s.host_id && !s.deleted).map(s => s.name)
     const hasCoord = !!preset.coordinator || ownCoords.length > 0
+    // The worker's coordinator is picked from the ones that exist: those
+    // opened from this dashboard first; the rest only declared it themselves.
+    // Pre-selected only when it can't be anyone else (adding a worker to a
+    // squad, or the dashboard's only coordinator).
+    const coordOptions = () => {
+      const list = [...new Set([...(preset.coordinator ? [preset.coordinator] : []), ...ownCoords, ...coords])]
+      if (!list.length) return `<option value="">—</option>`
+      const pick = preset.coordinator ?? (ownCoords.length === 1 ? ownCoords[0] : '')
+      const label = c => {
+        const st = sessions.get(c)
+        return [c, ownCoords.includes(c) ? T.coordOwn : T.coordSelf, st && !st.online ? T.coordOffline : ''].filter(Boolean).join(' · ')
+      }
+      return `${pick ? '' : `<option value="" selected>${T.coordPick}</option>`}${list.map(c => `<option value="${esc(c)}" ${c === pick ? 'selected' : ''}>${esc(label(c))}</option>`).join('')}`
+    }
     const d = dialog(`<h3>${preset.coordinator ? esc(T.addWorkerTo(preset.coordinator)) : T.newSessionTitle}</h3>
       <label class="field"><span>${T.machine}</span><select name="host">${online.map(h => `<option value="${esc(h.id)}" ${h.id === hostId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></label>
       <div class="row2">
         <label class="field"><span>${T.role}</span><select name="role"><option value="worker" ${hasCoord ? 'selected' : ''}>${T.roleWorker}</option><option value="coordinator" ${hasCoord ? '' : 'selected'}>${T.roleCoordinator}</option></select></label>
         <label class="field"><span>${T.sessionName}</span><input type="text" name="name" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off"></label>
       </div>
-      <label class="field" data-only="worker"><span>${T.coordinatorName}</span><input type="text" name="coordinator" list="coordList" maxlength="32" value="${esc(preset.coordinator ?? (ownCoords.length === 1 ? ownCoords[0] : ''))}"><datalist id="coordList">${coords.map(c => `<option value="${esc(c)}" label="${esc(ownCoords.includes(c) ? T.coordOwn : T.coordSelf)}">`).join('')}</datalist></label>
+      <label class="field" data-only="worker"><span>${T.coordinatorName}</span><select name="coordinator">${coordOptions()}</select></label>
       <div class="row2">
         <label class="field"><span>${T.folder}</span><select name="folder"></select></label>
         <label class="field"><span>${T.subfolder}</span><input type="text" name="sub" placeholder="${esc(T.subfolderHint)}" autocomplete="off"></label>
@@ -2126,20 +2228,49 @@
     coordHint.style.cssText = 'color:var(--err);font-size:12px;min-height:1em'
     f('coordinator').after(coordHint)
     const checkCoord = () => {
-      const v = f('coordinator').value.trim()
-      const s = v && !ownCoords.includes(v) ? sessions.get(v) : null
-      coordHint.textContent = !v || ownCoords.includes(v) ? '' : `⚠ ${s && !s.deleted ? (s.role === 'coordinator' ? T.coordSelf : T.coordNotCoord) : T.coordNone}`
+      const v = f('coordinator').value
+      coordHint.textContent = !coords.length && !preset.coordinator ? T.coordNoneYet : v && !ownCoords.includes(v) ? `⚠ ${T.coordSelf}` : ''
     }
-    f('coordinator').addEventListener('input', checkCoord)
+    f('coordinator').addEventListener('change', checkCoord)
     checkCoord()
-    const sync = () => {
-      d.el.querySelector('[data-only=worker]').hidden = f('role').value !== 'worker'
+    // The machine's allowed folders, kept current while the dialog is open
+    // (one added there shows up here by itself).
+    const folderHint = document.createElement('div')
+    folderHint.className = 'hint'
+    folderHint.style.cssText = 'font-size:12px;color:var(--muted)'
+    d.el.querySelector('[name=folder]').closest('.row2').after(folderHint)
+    let shownFolders = null
+    const syncFolders = () => {
       const h = hosts.get(f('host').value)
       const folders = h?.info?.folders ?? []
-      f('folder').innerHTML = folders.length ? folders.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('') : `<option value="">—</option>`
+      const key = JSON.stringify(folders)
+      if (key === shownFolders) return
+      shownFolders = key
+      const was = f('folder').value
+      f('folder').innerHTML = folders.length ? folders.map(x => `<option value="${esc(x)}" ${x === was ? 'selected' : ''}>${x === h?.info?.home ? '🏠 ' : ''}${esc(x)}</option>`).join('') : `<option value="">—</option>`
+      noteFolder()
     }
+    // What to do without folders (+ Folder right here), or what a session in
+    // the home folder means.
+    const noteFolder = () => {
+      const h = hosts.get(f('host').value)
+      const editable = h?.info?.folders_from_dashboard === true
+      if (!(h?.info?.folders ?? []).length) folderHint.innerHTML = `${T.noFoldersHere}${editable ? ` <button type="button" class="btn" data-addf>${T.addFolder}</button>` : ''}`
+      else folderHint.innerHTML = h?.info?.home && f('folder').value === h.info.home && !f('sub').value.trim() ? `⚠ ${T.homeSession}` : ''
+    }
+    folderHint.addEventListener('click', e => { if (e.target.closest('[data-addf]')) addFolderDialog(f('host').value, folder => { shownFolders = null; syncFolders(); if (folder) f('folder').value = folder; noteFolder(); renderHosts(currentRoute().host) }) })
+    const sync = () => {
+      d.el.querySelector('[data-only=worker]').hidden = f('role').value !== 'worker'
+      syncFolders()
+    }
+    const onHost = h => { if (h.id === f('host').value) syncFolders() }
+    hostListeners.add(onHost)
+    const closed = d.el.onclose
+    d.el.onclose = () => { hostListeners.delete(onHost); closed?.() }
     f('role').addEventListener('change', () => { f('name').value = suggestName(); sync() })
     f('host').addEventListener('change', sync)
+    f('folder').addEventListener('change', noteFolder)
+    f('sub').addEventListener('input', noteFolder)
     f('name').value = suggestName()
     sync()
     f('name').focus()
@@ -2159,9 +2290,10 @@
       if (spec.role === 'worker') {
         // A worker's coordinator is always chosen, never assumed: a session
         // can call itself "coord" without being yours.
-        spec.coordinator = f('coordinator').value.trim()
-        if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.coordinator)) { err.textContent = T.coordinatorName + ': A-Z a-z 0-9 _ -'; f('coordinator').focus(); return }
+        spec.coordinator = f('coordinator').value
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.coordinator)) { err.textContent = T.coordRequired; f('coordinator').focus(); return }
       }
+      if (!base) { err.textContent = T.folderRequired; f('folder').focus(); return }
       if (f('compact').value) spec.compact_window = Number(f('compact').value)
       if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.name)) { err.textContent = T.sessionName + ': A-Z a-z 0-9 _ -'; f('name').focus(); return }
       ok.disabled = true
@@ -2597,7 +2729,15 @@
     b.classList.toggle('on', b.dataset.lang === LANG)
     b.addEventListener('click', () => { store.set('squadraLang', b.dataset.lang); location.reload() })
   }
+  // "0.0.2" < "0.0.3" (numeric parts).
+  const olderThan = (a, b) => {
+    const x = String(a).split('.').map(n => parseInt(n, 10)), y = String(b).split('.').map(n => parseInt(n, 10))
+    if ([...x, ...y].some(Number.isNaN)) return false
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
+    return false
+  }
   function setVersion(v) {
+    serverVersion = v
     for (const el of document.querySelectorAll('.ver')) el.textContent = `Squadra v${v}`
   }
   fetch('/health').then(r => r.json()).then(j => { if (j.version) setVersion(j.version) }).catch(() => {})

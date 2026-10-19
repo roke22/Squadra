@@ -1874,6 +1874,7 @@ const dashboardActions = {
   'hosts/enroll': (p, req) => createEnrollment(p, req),
   'hosts/rename': p => renameHost(String(p.host ?? ''), p.name),
   'hosts/remove': p => removeHost(String(p.host ?? '')),
+  'hosts/folders': p => changeHostFolders(p),
   'terminals/open': p => openTerminalOn(p),
   'terminals/kill': p => killTerminalOn(p),
   'terminal/ticket': () => newTerminalTicket(),
@@ -1894,6 +1895,10 @@ const ENROLL_TTL_MS = 15 * 60 * 1000
 const HOST_REPLY_TIMEOUT_MS = 20_000
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O, 1/I
 const HOST_SCRIPT = [new URL('../host/squadra-host.mjs', import.meta.url), new URL('./squadra-host.mjs', import.meta.url)]
+// The installers that prepare a machine and run squadra-host (install/ in
+// the repository, or next to this file in the Docker image).
+const INSTALLERS = { 'linux.sh': 'text/x-shellscript; charset=utf-8', 'macos.sh': 'text/x-shellscript; charset=utf-8', 'windows.bat': 'text/plain; charset=utf-8' }
+const installer = name => cachedFile(new URL(`../install/${name}`, import.meta.url)) ?? cachedFile(new URL(`./install/${name}`, import.meta.url))
 const hostScript = () => {
   for (const f of HOST_SCRIPT) {
     const c = cachedFile(f, body => ({ sha: createHash('sha256').update(body).digest('hex') }))
@@ -1966,6 +1971,14 @@ function createEnrollment(p, req) {
     sha256: sha,
     // The Squadra plugin release that goes with this server (squadra-host pins the same one).
     plugin_command: `claude plugin marketplace add roke22/Squadra#v${VERSION} && claude plugin install squadra@squadra`,
+    // One command per system: the installer prepares the machine (tmux, Node,
+    // Claude Code) and runs squadra-host with this code. (Windows: inside WSL.)
+    install: {
+      linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''}`,
+      macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''}`,
+      windows: `irm ${q(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${base} ${code}`,
+    },
+    // Just squadra-host, on a machine that already has what it needs.
     // Downloaded into a new private folder: nobody can swap the file between the check and the run.
     command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code}`,
   }
@@ -2072,6 +2085,9 @@ function sanitizeHostInfo(info) {
     claude: str(info.claude, 80),
     version: str(info.version, 40),
     folders: (Array.isArray(info.folders) ? info.folders : []).slice(0, 50).map(f => str(f, 500)).filter(Boolean),
+    home: str(info.home, 500),
+    // (Older machines don't say: their folders are changed there only.)
+    folders_from_dashboard: info.folders_from_dashboard === true,
     max_sessions: Number.isInteger(info.max_sessions) ? info.max_sessions : null,
     allow_input: info.allow_input !== false,
     plugin: info.plugin && typeof info.plugin === 'object'
@@ -2327,7 +2343,7 @@ function upgrade(req, socket, head) {
     if (path === '/host/connect' && req.headers.upgrade?.toLowerCase() === 'websocket') {
       if (allow('old-host-log', 'all', 1)) process.stderr.write(`squadra-server: a squadra-host older than 0.0.2 tried to connect from ${req.socket.remoteAddress}: update it (see the README)\n`)
       const old = acceptWebSocket(req, socket, head, { log: logError, maxMessage: 1024 })
-      old?.close(4426, 'this squadra-host is older than the server (0.0.2): update it, see the README')
+      old?.close(4426, 'this squadra-host is older than the server (0.0.2): update it: add the machine again from the dashboard (+ Add machine)')
       return
     }
     return refuse(426, 'Upgrade Required')
@@ -2396,6 +2412,18 @@ function renameHost(id, name) {
 // hands its secret to the machine with the spec, so nobody holding the join
 // token can grab the name first. A name registered by some other session is
 // refused (delete that session in the dashboard to free it).
+// Allow or remove a folder on a machine: the machine checks it against its
+// own rules (and may keep its folders to itself) and answers with its list.
+async function changeHostFolders(p) {
+  const id = String(p.host ?? '')
+  const action = p.action === 'add' || p.action === 'remove' ? p.action : null
+  if (!action) throw bad('action must be add or remove')
+  const path = typeof p.path === 'string' ? p.path.trim() : ''
+  if (!path || path.length > 4096 || /[\x00-\x1f\x7f]/.test(path)) throw bad('a folder path is needed')
+  const r = await askHost(id, { t: 'folders', action, path })
+  return { folders: (Array.isArray(r?.folders) ? r.folders : []).slice(0, 50).filter(f => typeof f === 'string').map(f => cleanText(f.slice(0, 1000)).slice(0, 500)) }
+}
+
 async function openTerminalOn(p) {
   const id = String(p.host ?? '')
   const spec = p.spec && typeof p.spec === 'object' && !Array.isArray(p.spec) ? { ...p.spec } : null
@@ -2711,6 +2739,12 @@ async function handle(req, res) {
       const f = hostScript()
       if (!f) throw new ApiError(404, 'Not Found')
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+      return res.end(f.body)
+    }
+    if (req.method === 'GET' && path.startsWith('/install/') && Object.hasOwn(INSTALLERS, path.slice('/install/'.length))) {
+      const f = installer(path.slice('/install/'.length))
+      if (!f) throw new ApiError(404, 'Not Found')
+      res.writeHead(200, { 'Content-Type': INSTALLERS[path.slice('/install/'.length)], 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       return res.end(f.body)
     }
     if (path === '/host/enroll') {

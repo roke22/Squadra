@@ -8,7 +8,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir, homedir, userInfo } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -346,11 +346,12 @@ test('third audit: shared or containing folders, symlinked identity files and re
   writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, folders: [...settings.folders, '/'] }))
   const root = await dash('terminals/open', { host: hostId, spec: { name: 'r1', role: 'worker', folder: '/' } })
   assert.equal(root.ok, false)
-  // Continuing an earlier conversation needs allow_resume.
-  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+  // Continuing an earlier conversation: allowed unless the machine says "allow_resume": false.
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, allow_resume: false }))
   const resume = await dash('terminals/open', { host: hostId, spec: { name: 'r2', role: 'worker', folder: allowed, resume: true } })
   assert.equal(resume.ok, false)
   assert.match(resume.description, /allow_resume/)
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
   // identity.json behind a symlink: the symlink is replaced, its target untouched.
   const dir = join(claudeDir, 'channels', 'squadra', 'sym1')
   mkdirSync(dir, { recursive: true })
@@ -362,6 +363,61 @@ test('third audit: shared or containing folders, symlinked identity files and re
   assert.equal(readFileSync(target, 'utf8'), 'keep me')
   assert.ok(!lstatSync(join(dir, 'identity.json')).isSymbolicLink())
   await dash('terminals/kill', { host: hostId, term: 'sym1' })
+})
+
+test('folders from the dashboard, and the home folder only with --allow-home', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const hostEnv = { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', SQUADRA_HOST_TEST_SKIP_TAG_CHECK: '1' }
+  const shown = () => dash('hosts').then(r => r.result.find(h => h.id === hostId)?.info ?? {})
+  const extra = join(work, 'more')
+  mkdirSync(extra, { recursive: true })
+  const add = await dash('hosts/folders', { host: hostId, action: 'add', path: extra })
+  assert.ok(add.ok, add.description)
+  assert.ok(add.result.folders.includes(extra))
+  await waitFor(async () => (await shown()).folders?.includes(extra), { what: 'folder shown' })
+  assert.equal((await shown()).folders_from_dashboard, true)
+  // The machine checks it: a missing folder, and the home folder without --allow-home.
+  const missing = await dash('hosts/folders', { host: hostId, action: 'add', path: join(work, 'nope') })
+  assert.equal(missing.ok, false)
+  assert.match(missing.description, /does not exist/)
+  const home = await dash('hosts/folders', { host: hostId, action: 'add', path: '~' })
+  assert.equal(home.ok, false)
+  assert.match(home.description, /--allow-home/)
+  assert.ok((await dash('hosts/folders', { host: hostId, action: 'remove', path: extra })).ok)
+  await waitFor(async () => !(await shown()).folders?.includes(extra), { what: 'folder gone' })
+  // A machine can keep its folders to itself.
+  const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, folders_from_dashboard: false }))
+  const locked = await dash('hosts/folders', { host: hostId, action: 'add', path: extra })
+  assert.equal(locked.ok, false)
+  assert.match(locked.description, /folders_from_dashboard/)
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+
+  // --allow-home: the home folder is allowed, and a session there never has
+  // its permission prompts answered remotely.
+  const myHome = userInfo().homedir
+  execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), '--allow-home', 'folders'], { env: hostEnv, stdio: 'ignore' })
+  await waitFor(async () => (await shown()).home === myHome && (await shown()).folders?.includes(myHome), { what: 'home allowed' })
+  const r = await dash('terminals/open', { host: hostId, spec: { name: 'hm1', role: 'worker', coordinator: 'boss', folder: myHome } })
+  assert.ok(r.ok, r.description)
+  const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'hm1', 'launch.json'), 'utf8'))
+  assert.equal(launch.permission_relay, false)
+  // (Its credentials folders still can't be a session's folder.)
+  mkdirSync(join(myHome, '.ssh'), { recursive: true, mode: 0o700 })
+  const ssh = await dash('terminals/open', { host: hostId, spec: { name: 'hm2', role: 'worker', coordinator: 'boss', folder: join(myHome, '.ssh') } })
+  assert.equal(ssh.ok, false)
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'hm1' })).ok)
+  execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), '--no-allow-home', 'folders'], { env: hostEnv, stdio: 'ignore' })
+  await waitFor(async () => !(await shown()).home && !(await shown()).folders?.includes(myHome), { what: 'home no longer allowed' })
+
+  // One squadra-host at a time: a second one (by hand, next to the service) says so and stops.
+  let second = null
+  try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: hostEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { second = err }
+  assert.ok(second, 'a second squadra-host must not run')
+  assert.match(second.stderr, /already running/)
+  // The service leaves the sessions running when it stops or restarts.
+  const unit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: hostEnv, encoding: 'utf8' })
+  assert.match(unit, /^KillMode=process$/m)
+  assert.match(unit, /^RestartPreventExitStatus=2$/m)
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {

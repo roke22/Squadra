@@ -13,7 +13,7 @@
       "name": "squadra",
       "source": "./plugins/squadra",
       "description": "Channel that lets Claude Code sessions message each other through a Squadra server, with one session acting as coordinator.",
-      "version": "0.0.2"
+      "version": "0.0.3"
     }
   ]
 }

@@ -629,6 +629,13 @@ test('a machine added but never connected shows as pending and can be removed', 
   const r = await call('host/enroll', { code: en.result.code, info: { hostname: 'pend1' } })
   assert.ok(r.ok, r.description)
   assert.match(en.result.plugin_command, /^claude plugin marketplace add roke22\/Squadra#v\d+\.\d+\.\d+ && claude plugin install squadra@squadra$/)
+  // One command per system, each running the installer the server serves (and nothing else under /install/).
+  for (const os of ['linux', 'macos', 'windows']) assert.ok(en.result.install[os].includes(en.result.code), os)
+  assert.match(en.result.install.linux, /\/install\/linux\.sh' \| bash -s -- /)
+  const sh = await fetch(`${URL_}/install/linux.sh`)
+  assert.equal(sh.status, 200)
+  assert.match(await sh.text(), /squadra-host\.mjs enroll/)
+  assert.notEqual((await fetch(`${URL_}/install/..%2Fserver.js`)).status, 200)
   const find = async () => (await get('api/state', ADMIN)).result.hosts.find(h => h.id === r.result.id)
   const h = await find()
   assert.equal(h.online, false)

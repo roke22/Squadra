@@ -233,7 +233,7 @@ function channelLaunchStatus() {
 
 const WINDOWS_HINT =
   'Squadra does not support native Windows. Run Claude Code inside WSL (Windows Subsystem for Linux), ' +
-  'for example Ubuntu, and install the plugin there: everything then works as on Linux. See "Windows (WSL)" in the README.'
+  'for example Ubuntu, and install the plugin there: everything then works as on Linux. See "Windows (WSL)" in docs/reference.md.'
 
 const LAUNCH_HINT =
   'Start the session with:\n' +
