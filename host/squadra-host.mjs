@@ -61,7 +61,10 @@ const FORBIDDEN_TREES = [
   // Shared temporary folders (other users can plant a repository there).
   // SQUADRA_HOST_TEST_ALLOW_TMP=1 lifts this, for the test suite only.
   ...(process.env.SQUADRA_HOST_TEST_ALLOW_TMP === '1' ? [] : ['/tmp', '/var/tmp', '/private/tmp', '/var/folders', '/private/var/folders', tmpdir()]),
-].filter(Boolean))
+// (Not this user's own home, though: run as root — --allow-root —, /root is
+// where its projects are, judged like any home: the folders inside it are
+// fine, the whole of it only with --allow-home, its credentials never.)
+].filter(d => d && resolve(d) !== resolve(HOME)))
 const realOr = p => { try { return realpathSync.native(p) } catch { return resolve(p) } }
 // macOS file systems ignore case: compare that way there.
 const norm = p => (platform() === 'darwin' ? p.toLowerCase() : p)
