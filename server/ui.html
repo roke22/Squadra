@@ -512,6 +512,9 @@
       roleCoordinator: 'coordinator',
       roleWorker: 'worker',
       roleSolo: 'standalone',
+      reopen: 'Reopen',
+      reopenTitle: n => `Reopen ${n}`,
+      reopenHint: 'Same name, role and folder as before. Once it opens, type <code>/resume</code> in its terminal to pick up the conversation where it was left.',
       roleSoloOption: 'Standalone session (no coordinator)',
       soloHint: 'A normal Claude Code session, outside any squad: no Squadra instructions and no messages from other sessions. The dashboard still shows what it does.',
       standalone: 'Standalone',
@@ -760,6 +763,9 @@
       roleCoordinator: 'coordinador',
       roleWorker: 'worker',
       roleSolo: 'independiente',
+      reopen: 'Reabrir',
+      reopenTitle: n => `Reabrir ${n}`,
+      reopenHint: 'Mismo nombre, rol y carpeta que antes. Cuando se abra, escribe <code>/resume</code> en su terminal para retomar la conversación donde se quedó.',
       roleSoloOption: 'Sesión independiente (sin coordinador)',
       soloHint: 'Una sesión normal de Claude Code, fuera de cualquier escuadra: sin instrucciones de Squadra ni mensajes de otras sesiones. El panel sigue mostrando lo que hace.',
       standalone: 'Independientes',
@@ -1674,6 +1680,7 @@
         return
       }
       if (where) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
+      if (reopenable(s)) acts.push(`<button class="btn primary" data-reopen="${esc(r.name)}">${T.reopen}</button>`)
       if (s) {
         acts.push(`<button class="btn" data-act="clear" data-s="${esc(s.name)}">${T.clearChat}</button>`)
         if (!s.online) acts.push(s.archived_at
@@ -1689,6 +1696,8 @@
   $('topRight').addEventListener('click', e => {
     const c = e.target.closest('[data-c]')
     if (c) { cols = c.dataset.c; store.set('squadraCols', cols); applyCols(); renderTop() }
+    const ro = e.target.closest('[data-reopen]')
+    if (ro) return reopen(ro.dataset.reopen)
     const md = e.target.closest('[data-mode]')
     if (md) { mosaicMode = md.dataset.mode === 'chats' ? 'chats' : 'terms'; store.set('squadraMosaicMode', mosaicMode); buildMosaic(); renderTop() }
     const go = e.target.closest('[data-go]')
@@ -1869,6 +1878,7 @@
     menuEl.className = 'menu'
     const where = terminalOf(name)
     menuEl.innerHTML = `
+ ${reopenable(s) ? `<button data-act="reopen">${T.reopen}</button>` : ''}
       <button data-go="#/s/${encodeURIComponent(name)}">${T.openChat}</button>
       ${where ? `<button data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}">${T.terminal}</button>` : ''}
       ${s.role === 'coordinator' ? `<button data-go="#/q/${encodeURIComponent(name)}">${T.viewSquad}</button><button data-act="addworker">${esc(T.addWorkerTo(name))}</button>` : ''}
@@ -1887,6 +1897,7 @@
       if (!b || b.disabled) return
       closeMenu()
       if (b.dataset.go) location.hash = b.dataset.go
+      else if (b.dataset.act === 'reopen') reopen(name)
       else runAction(b.dataset.act, name)
     })
   }
@@ -2351,6 +2362,19 @@
   }
 
   // A worker for this coordinator's squad, by default on the coordinator's machine.
+  // A session opened from here that ended (/quit, closed): open it again on
+  // its machine, as it was.
+  function reopenable(s) {
+    const role = s?.opened_role ?? s?.role
+    return !!(s && !s.online && !s.archived_at && s.host_id && hosts.get(s.host_id)?.online && !terminalOf(s.name) && ['coordinator', 'worker', 'solo'].includes(role))
+  }
+  function reopen(name) {
+    const s = sessions.get(name)
+    if (!reopenable(s)) return
+    const role = s.opened_role ?? s.role
+    newSessionDialog(s.host_id, { reopen: true, name, role, coordinator: role === 'worker' ? s.coordinator ?? undefined : undefined, folder: s.activity?.cwd ?? null })
+  }
+
   function addWorkerTo(coord) {
     newSessionDialog(terminalOf(coord)?.host.id, { coordinator: coord })
   }
@@ -2378,7 +2402,7 @@
       }
       return `${pick ? '' : `<option value="" selected>${T.coordPick}</option>`}${list.map(c => `<option value="${esc(c)}" ${c === pick ? 'selected' : ''}>${esc(label(c))}</option>`).join('')}`
     }
-    const d = dialog(`<h3>${preset.coordinator ? esc(T.addWorkerTo(preset.coordinator)) : T.newSessionTitle}</h3>
+    const d = dialog(`<h3>${preset.reopen ? esc(T.reopenTitle(preset.name)) : preset.coordinator ? esc(T.addWorkerTo(preset.coordinator)) : T.newSessionTitle}</h3>${preset.reopen ? `<p class="hint" style="font-size:12.5px;margin:-2px 0 12px">${T.reopenHint}</p>` : ''}
       <label class="field"><span>${T.machine}</span><select name="host">${online.map(h => `<option value="${esc(h.id)}" ${h.id === hostId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></label>
       <div class="row2">
         <label class="field"><span>${T.role}</span><select name="role"><option value="worker" ${hasCoord ? 'selected' : ''}>${T.roleWorker}</option><option value="coordinator" ${hasCoord ? '' : 'selected'}>${T.roleCoordinator}</option><option value="solo">${T.roleSoloOption}</option></select></label>
@@ -2459,6 +2483,15 @@
     f('folder').addEventListener('change', noteFolder)
     f('sub').addEventListener('input', noteFolder)
     f('name').value = suggestName()
+    // Reopening a session: what it was opened with, and the last folder it worked in.
+    if (preset.reopen) {
+      f('role').value = preset.role
+      f('name').value = preset.name
+      sync()
+      const folders = hosts.get(f('host').value)?.info?.folders ?? []
+      const base = preset.folder ? folders.filter(x => preset.folder === x || preset.folder.startsWith(x.replace(/\/+$/, '') + '/')).sort((a, b) => b.length - a.length)[0] : null
+      if (base) { f('folder').value = base; f('sub').value = preset.folder.slice(base.replace(/\/+$/, '').length).replace(/^\/+/, ''); noteFolder() }
+    }
     sync()
     f('name').focus()
     const ok = d.el.querySelector('[data-ok]')
