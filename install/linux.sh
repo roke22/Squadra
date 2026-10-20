@@ -8,6 +8,8 @@
 # squadra-host, which joins the machine, installs the Squadra plugin, the
 # "squadra-host" command and a service that keeps it running.
 # Options are passed to squadra-host: --allow-home, --insecure, --no-service.
+# --allow-root: install and run it as root (sessions then have full control
+# of this machine, to change the operating system).
 set -eu
 
 # (All in a function: piped into bash, the whole script is read before anything runs.)
@@ -19,10 +21,12 @@ main() {
   fi
   shift 2
   SHA=""
+  ROOT_OK=""
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) SHA="${2:-}"; shift 2 ;;
+      --allow-root) ROOT_OK=1; shift ;;
       *) ARGS+=("$1"); shift ;;
     esac
   done
@@ -38,9 +42,13 @@ main() {
     fi
   }
 
-  if [ "$(id -u)" -eq 0 ]; then
-    echo "Run this as your own user, not as root (sessions run as the user who installs them)." >&2
+  if [ "$(id -u)" -eq 0 ] && [ -z "$ROOT_OK" ]; then
+    echo "This is root: sessions run as the user who installs them, so they would have full control of this machine." >&2
+    echo "Run it as your own user, or add --allow-root to the command if that is what you want (to let Claude change the system)." >&2
     exit 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    say "Installing as root: sessions will have full control of this machine"
   fi
 
   # 1. tmux (and curl, for what follows)

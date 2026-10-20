@@ -636,6 +636,7 @@
       runOn: os => os === 'windows' ? 'Run this in <b>PowerShell</b> on the machine:' : 'Run this in a terminal on the machine (as your user):',
       runWhat: 'It installs what is missing (tmux, Node.js 22, Claude Code), joins the machine with a single-use code, installs the Squadra plugin and the <code>squadra-host</code> command, and leaves it running in the background. Keep the command private until it is used.',
       windowsNote: 'On Windows, Squadra runs inside WSL (Ubuntu): if WSL isn\'t installed, the command tells you how.',
+      allowRoot: 'I\'ll run it as <b>root</b> (<code>--allow-root</code>): sessions get full control of the machine, to change the system. Otherwise run it as your own user.',
       allowHome: 'Also allow my whole home folder for sessions (<code>--allow-home</code>): to let Claude manage the computer. Sessions there reach all your files, and their permission prompts are answered only in their own terminal.',
       afterJoin: 'Then: run <code>claude</code> once on the machine and sign in, and choose here where sessions may be opened (the machine\'s <b>+ Folder</b>).',
       manualCmd: 'Already have tmux, Node.js 22 and Claude Code? Just squadra-host:',
@@ -883,6 +884,7 @@
       runOn: os => os === 'windows' ? 'Ejecuta esto en <b>PowerShell</b> en la máquina:' : 'Ejecuta esto en una terminal de la máquina (con tu usuario):',
       runWhat: 'Instala lo que falte (tmux, Node.js 22, Claude Code), da de alta la máquina con un código de un solo uso, instala el plugin de Squadra y el comando <code>squadra-host</code>, y la deja funcionando en segundo plano. Guarda el comando en privado hasta usarlo.',
       windowsNote: 'En Windows, Squadra funciona dentro de WSL (Ubuntu): si no tienes WSL, el comando te dice cómo instalarlo.',
+      allowRoot: 'Lo ejecutaré como <b>root</b> (<code>--allow-root</code>): las sesiones tendrán control total de la máquina, para modificar el sistema. Si no, ejecútalo con tu usuario.',
       allowHome: 'Permitir también mi carpeta personal entera para las sesiones (<code>--allow-home</code>): para que Claude administre el equipo. Las sesiones ahí acceden a todos tus ficheros, y sus permisos se aprueban solo en su propia terminal.',
       afterJoin: 'Después: ejecuta <code>claude</code> una vez en la máquina e inicia sesión, y elige aquí dónde se pueden abrir sesiones (<b>+ Carpeta</b> en la máquina).',
       manualCmd: '¿Ya tienes tmux, Node.js 22 y Claude Code? Solo squadra-host:',
@@ -2309,14 +2311,15 @@
         d.el.querySelector('[data-step="2"]').hidden = false
         // One command for the machine's system, with its copy button.
         const guess = /Mac/i.test(navigator.platform) ? 'macos' : /Win/i.test(navigator.platform) ? 'windows' : 'linux'
-        let os = guess, home = false
+        let os = guess, home = false, root = false
         const cmd = text => `<div class="cmdrow"><pre class="cmd">${esc(text)}</pre><button class="btn" data-copy>${T.copy}</button></div>`
         const insecure = /^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)
         const draw = () => {
           for (const b of d.el.querySelectorAll('[data-os]')) b.classList.toggle('on', b.dataset.os === os)
-          const extra = (home ? ' --allow-home' : '') + (insecure ? ' --insecure' : '')
+          const extra = (home ? ' --allow-home' : '') + (root && os !== 'macos' ? ' --allow-root' : '') + (insecure ? ' --insecure' : '')
           d.el.querySelector('.steps').innerHTML = `<p>${T.runOn(os)}</p>${cmd(String(r.install?.[os] ?? '') + extra)}
             <label class="check"><input type="checkbox" data-home ${home ? 'checked' : ''}> <span>${T.allowHome}</span></label>
+            ${os === 'macos' ? '' : `<label class="check"><input type="checkbox" data-root ${root ? 'checked' : ''}> <span>${T.allowRoot}</span></label>`}
             <p class="note">${T.runWhat}${os === 'windows' ? ` ${T.windowsNote}` : ''}</p>
             ${insecure ? `<p class="note" style="color:var(--err);font-size:13px">${esc(T.httpWarn)}</p>` : ''}
             <p class="note valid">${esc(T.codeValid(hhmm(r.expires_at)))}</p>
@@ -2325,7 +2328,10 @@
         }
         draw()
         d.el.querySelector('.os-pick').addEventListener('click', ev => { const b = ev.target.closest('[data-os]'); if (b) { os = b.dataset.os; draw() } })
-        d.el.querySelector('.steps').addEventListener('change', ev => { if (ev.target.matches('[data-home]')) { home = ev.target.checked; draw() } })
+        d.el.querySelector('.steps').addEventListener('change', ev => {
+          if (ev.target.matches('[data-home]')) { home = ev.target.checked; draw() }
+          if (ev.target.matches('[data-root]')) { root = ev.target.checked; draw() }
+        })
         hostListeners.add(listener)
         d.el.querySelector('.steps').addEventListener('click', async ev => {
           const b = ev.target.closest('[data-copy]')

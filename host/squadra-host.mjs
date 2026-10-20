@@ -1568,7 +1568,11 @@ const serviceEnv = () => {
 // after a restart with nothing else to do: a systemd user service on Linux
 // (also WSL with systemd), a launchd agent on macOS.
 
-const SYSTEMD_UNIT = join(process.env.XDG_CONFIG_HOME && isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : join(HOME, '.config'), 'systemd', 'user', 'squadra-host.service')
+// (Run as root — installed with --allow-root —: a system service, since root
+// rarely has a systemd user session.)
+const AS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0
+const SYSTEMD_UNIT = AS_ROOT ? '/etc/systemd/system/squadra-host.service' : join(process.env.XDG_CONFIG_HOME && isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : join(HOME, '.config'), 'systemd', 'user', 'squadra-host.service')
+const userFlag = AS_ROOT ? [] : ['--user']
 const LAUNCHD_PLIST = join(HOME, 'Library', 'LaunchAgents', 'com.squadra.host.plist')
 // System tools only from the system's own folders.
 const systemTool = name => ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].map(d => join(d, name)).find(f => { try { accessSync(f, FS.X_OK); return true } catch { return false } }) ?? null
@@ -1602,7 +1606,7 @@ Description=Squadra host
 After=network-online.target
 
 [Service]
-ExecStart=${sd(node)} ${sd(INSTALLED_SCRIPT)}
+${AS_ROOT ? `User=root\nEnvironment=${sdEnv(`HOME=${HOME}`)}\n` : ''}ExecStart=${sd(node)} ${sd(INSTALLED_SCRIPT)}
 Restart=on-failure
 RestartSec=5
 # (Stopping or restarting it leaves the sessions it opened running: tmux
@@ -1613,7 +1617,7 @@ RestartPreventExitStatus=2
 ${serviceEnv().map(([k, v]) => `Environment=${sdEnv(`${k}=${v}`)}`).join('\n')}
 
 [Install]
-WantedBy=default.target
+WantedBy=${AS_ROOT ? 'multi-user.target' : 'default.target'}
 ` }
 }
 
@@ -1637,13 +1641,18 @@ async function installService() {
   }
   const systemctl = systemTool('systemctl')
   if (!systemctl) return { ok: false, why: 'systemd was not found' }
-  try { await run(systemctl, ['--user', 'show-environment'], { timeout: 15_000 }) } catch { return { ok: false, why: 'there is no systemd user session here (on WSL, enable systemd in /etc/wsl.conf)' } }
+  if (!AS_ROOT) {
+    try { await run(systemctl, ['--user', 'show-environment'], { timeout: 15_000 }) } catch {
+      return { ok: false, why: `there is no systemd user session here: run "sudo loginctl enable-linger ${userInfo().username}" and log in as this user directly (ssh), not with su (on WSL, enable systemd in /etc/wsl.conf)` }
+    }
+  }
   write()
   try {
-    await run(systemctl, ['--user', 'daemon-reload'], { timeout: 30_000 })
-    await run(systemctl, ['--user', 'enable', 'squadra-host'], { timeout: 30_000 })
-    await run(systemctl, ['--user', 'restart', 'squadra-host'], { timeout: 30_000 })
+    await run(systemctl, [...userFlag, 'daemon-reload'], { timeout: 30_000 })
+    await run(systemctl, [...userFlag, 'enable', 'squadra-host'], { timeout: 30_000 })
+    await run(systemctl, [...userFlag, 'restart', 'squadra-host'], { timeout: 30_000 })
   } catch (err) { return { ok: false, why: `systemctl failed (${String(err.stderr || err.message).trim().split('\n')[0]})` } }
+  if (AS_ROOT) return { ok: true, how: `a system service (${f.path}); it starts with the machine` }
   // Running also while you are logged out (may need an administrator: optional).
   const loginctl = systemTool('loginctl')
   let linger = false
@@ -1659,9 +1668,9 @@ async function removeService() {
     return
   }
   const systemctl = systemTool('systemctl')
-  if (systemctl) await run(systemctl, ['--user', 'disable', '--now', 'squadra-host'], { timeout: 30_000 }).catch(() => {})
+  if (systemctl) await run(systemctl, [...userFlag, 'disable', '--now', 'squadra-host'], { timeout: 30_000 }).catch(() => {})
   rmSync(SYSTEMD_UNIT, { force: true })
-  if (systemctl) await run(systemctl, ['--user', 'daemon-reload'], { timeout: 30_000 }).catch(() => {})
+  if (systemctl) await run(systemctl, [...userFlag, 'daemon-reload'], { timeout: 30_000 }).catch(() => {})
 }
 
 async function service(action) {
@@ -1675,7 +1684,7 @@ async function service(action) {
 
 // The "squadra-host" command: a small launcher in ~/.local/bin (in the PATH
 // of most systems), so nobody has to type the path of this program.
-const LAUNCHER = join(HOME, '.local', 'bin', 'squadra-host')
+const LAUNCHER = typeof process.getuid === 'function' && process.getuid() === 0 ? '/usr/local/bin/squadra-host' : join(HOME, '.local', 'bin', 'squadra-host')
 const LAUNCHER_MARK = '# squadra-host launcher (written by squadra-host)'
 const launcherOnPath = () => String(process.env.PATH ?? '').split(':').some(d => d && resolve(d) === dirname(LAUNCHER))
 const cli = () => (existsSync(LAUNCHER) && launcherOnPath() ? 'squadra-host' : `node ${INSTALLED_SCRIPT}`)
