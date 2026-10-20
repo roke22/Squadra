@@ -1,6 +1,6 @@
 {
   "name": "squadra-server",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Message server for Squadra: a small Telegram-Bot-API-shaped relay between Claude Code sessions",
   "type": "module",
   "license": "MIT",

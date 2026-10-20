@@ -643,3 +643,16 @@ test('a machine added but never connected shows as pending and can be removed', 
   assert.ok((await call('api/hosts/remove', { host: r.result.id }, ADMIN)).ok)
   assert.equal(await find(), undefined)
 })
+
+test('the last text of a turn, arriving after the turn ended, does not mark the session as working', async () => {
+  const s = (await call('register', { name: 'idle1' }, ADMIN)).result.secret
+  const t = Date.now()
+  const state = async () => (await get('api/state', ADMIN)).result.sessions.find(x => x.name === 'idle1').activity.state
+  await call('observe', { events: [{ kind: 'prompt', ts: t - 3000, text: 'do it' }, { kind: 'stop', ts: t - 1000 }] }, s)
+  // Read from the transcript a moment later: written before the stop.
+  await call('observe', { events: [{ kind: 'text', ts: t - 1500, text: 'done' }] }, s)
+  assert.equal(await state(), 'idle')
+  // Text of a new turn does.
+  await call('observe', { events: [{ kind: 'text', ts: t, text: 'next' }] }, s)
+  assert.equal(await state(), 'working')
+})

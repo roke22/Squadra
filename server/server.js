@@ -877,6 +877,10 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
     const replied = Number.isInteger(reply) ? db.prepare('SELECT * FROM messages WHERE id = ?').get(reply) : null
     if (!replied || !canSeeMessage(from, replied)) throw bad('message to be replied not found')
   }
+  // A standalone session (role "solo") is outside every squad: it neither
+  // sends nor takes messages.
+  if (!system && roleOf(from) === 'solo') throw new ApiError(403, 'Forbidden: this is a standalone session: it does not message other sessions')
+  if (!system && !target.startsWith('#') && roleOf(target) === 'solo') throw new ApiError(403, `Forbidden: "${target}" is a standalone Claude Code session: it does not take messages from other sessions`)
   const recipients = recipientsOf(target, from)
   // (When it was last seen only for a session it is related to, as getChat.)
   const offline = recipients.filter(r => !isOnline(r)).map(r => ({
@@ -986,7 +990,10 @@ function applyEvent(name, ev) {
       if (ev.agent) break
       if (!a.tool || !ev.ref || a.tool.id === ev.ref) { a.tool = null; set('working') }
       break
-    case 'text': if (a.state !== 'waiting') set('working'); break
+    // (Claude's text is read from its transcript, so the last one of a turn
+    // can arrive after the turn ended: one written before that end doesn't
+    // make the session "working" again.)
+    case 'text': if (a.state !== 'waiting' && !(a.state === 'idle' && a.stopped_at && ev.ts <= a.stopped_at)) set('working'); break
     case 'usage':
       a.context_tokens = ev.context_tokens
       if (ev.model) a.model = ev.model
@@ -996,7 +1003,7 @@ function applyEvent(name, ev) {
       if (['permission_prompt', 'elicitation_dialog', 'agent_needs_input', 'elicitation_url_dialog'].includes(ev.type)) { a.waiting = ev.text; set('waiting') }
       else if (ev.type === 'idle_prompt') set('idle')
       break
-    case 'stop': a.tool = null; set('idle'); break
+    case 'stop': a.tool = null; a.stopped_at = ev.ts; set('idle'); break
     case 'compact': set('compacting'); break
     case 'compacted':
       // Fresh context: the size is unknown until the next model response.
@@ -1208,7 +1215,8 @@ const methods = {
     // not use up the budget of the session that holds the name.)
     if (lease && lease.instance !== instance && holdsName(name, lease)) throw nameInUse(name, lease)
     if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
-    const role = p.role === 'coordinator' ? 'coordinator' : p.role === 'worker' ? 'worker' : null
+    // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
+    const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null
     const coordinator = role === 'worker' && NAME_RE.test(String(p.coordinator ?? '')) ? String(p.coordinator) : null
     if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ? WHERE name = ?').run(role, coordinator, name)
     // An archived session that logs in again is active again.
@@ -1640,7 +1648,7 @@ function sessionView(name) {
     archived_at: row.archived_at ?? null,
     cleared_at: row.cleared_at ?? null,
     host_id: row.host_id ?? null, // the machine that opened it from the dashboard
-    opened_role: row.host_id && (row.opened_role === 'coordinator' || row.opened_role === 'worker') ? row.opened_role : null, // and as what
+    opened_role: row.host_id && ['coordinator', 'worker', 'solo'].includes(row.opened_role) ? row.opened_role : null, // and as what
     ...presenceOf(name),
     activity: { ...a, tool: a.tool ? { ...a.tool } : null },
   }
@@ -2070,7 +2078,7 @@ function sanitizeHostInfo(info) {
     // A terminal is shown by its session's name, which is its id (a machine
     // can't label one of its terminals as another machine's session).
     name: str(t?.id, 40),
-    role: t?.role === 'coordinator' || t?.role === 'worker' ? t.role : null,
+    role: ['coordinator', 'worker', 'solo'].includes(t?.role) ? t.role : null,
     coordinator: str(t?.coordinator, 40),
     folder: str(t?.folder, 500),
     compact_window: Number.isInteger(t?.compact_window) ? t.compact_window : null,
@@ -2234,7 +2242,7 @@ function openHostLink(ws, req, row) {
 function openViewerLink(ws, req) {
   // (Authenticated when the socket was accepted, with a one-time ticket.)
   const viewer = { ws, attached: new Set(), typed: new Set() }
-  ws.maxMessage = 256 * 1024
+  ws.maxMessage = 1024 * 1024 // (an image pasted into a terminal; text is at most 64 KB)
   const detachAll = () => {
     for (const key of viewer.attached) {
       const [host, term] = key.split('\0')
@@ -2285,6 +2293,12 @@ function openViewerLink(ws, req) {
         process.stderr.write(`squadra-server: dashboard (${req.socket.remoteAddress}) is typing in "${term}" on host ${host}\n`)
       }
       return link.ws.send(JSON.stringify({ t: 'in', term, data: m.data }))
+    }
+    // An image pasted into the terminal: to the machine, which saves it and
+    // pastes its path into Claude Code (a few a minute per terminal).
+    if (m.t === 'image' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(m.type) && typeof m.data === 'string' && m.data.length <= 800_000) {
+      if (!allow('paste-image', key, 20)) return ws.send(JSON.stringify({ t: 'notice', host, term, text: 'too many images pasted: wait a minute' }))
+      return link.ws.send(JSON.stringify({ t: 'image', term, type: m.type, data: m.data }))
     }
   }
   ws.onclose = () => detachAll()
@@ -2463,7 +2477,7 @@ async function openNow(id, name, spec, existing) {
   let created = false
   // The role it was opened with (the dashboard trusts that one, not whatever
   // the session claims later).
-  const openedRole = spec.role === 'coordinator' ? 'coordinator' : 'worker'
+  const openedRole = spec.role === 'coordinator' || spec.role === 'solo' ? spec.role : 'worker'
   if (!existing) {
     spec.identity = register(name, false).secret
     db.prepare('UPDATE identities SET host_id = ?, opened_role = ? WHERE name = ?').run(id, openedRole, name)

@@ -7,7 +7,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync, readdirSync } from 'node:fs'
 import { tmpdir, homedir, userInfo } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -255,6 +255,21 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   v.send({ t: 'in', host: hostId, term: 'w1', data: 'hello squadra\r' })
   await waitFor(() => v.text.includes('GOT:hello squadra'), { what: 'typed text echoed' })
 
+  // An image pasted in the dashboard: saved on the machine and its path
+  // pasted into the session (Claude Code attaches it). Anything that isn't
+  // an image is refused.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+  v.send({ t: 'image', host: hostId, term: 'w1', type: 'image/png', data: png.toString('base64') })
+  const pasteDir = join(hostDir, 'pasted')
+  await waitFor(() => existsSync(pasteDir) && readdirSync(pasteDir).length === 1, { what: 'image saved' })
+  const saved = join(pasteDir, readdirSync(pasteDir)[0])
+  assert.deepEqual(readFileSync(saved), png)
+  v.send({ t: 'in', host: hostId, term: 'w1', data: '\r' })
+  await waitFor(() => v.text.replace(/\s+/g, '').includes(`GOT:${saved}`), { what: 'image path pasted' })
+  v.send({ t: 'image', host: hostId, term: 'w1', type: 'image/png', data: Buffer.from('#!/bin/sh\necho not an image').toString('base64') })
+  await waitFor(() => v.msgs.some(m => m.t === 'notice' && /could not be used/.test(m.text)), { what: 'non-image refused' })
+  assert.equal(readdirSync(pasteDir).length, 1)
+
   // A second viewer gets the current screen too.
   const v2 = await viewer()
   await v2.open()
@@ -397,6 +412,13 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   const myHome = userInfo().homedir
   execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), '--allow-home', 'folders'], { env: hostEnv, stdio: 'ignore' })
   await waitFor(async () => (await shown()).home === myHome && (await shown()).folders?.includes(myHome), { what: 'home allowed' })
+  // Claude Code installed in the home folder (~/.local/bin, as its installer
+  // does) is still used: the home folder itself isn't a project folder.
+  const homeBin = join(myHome, '.sq-test-bin')
+  mkdirSync(homeBin, { recursive: true, mode: 0o755 })
+  writeFileSync(join(homeBin, 'claude'), readFileSync(fakeClaude), { mode: 0o755 })
+  const withHome = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...withHome, claude_command: join(homeBin, 'claude') }))
   const r = await dash('terminals/open', { host: hostId, spec: { name: 'hm1', role: 'worker', coordinator: 'boss', folder: myHome } })
   assert.ok(r.ok, r.description)
   const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'hm1', 'launch.json'), 'utf8'))
@@ -406,6 +428,8 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   const ssh = await dash('terminals/open', { host: hostId, spec: { name: 'hm2', role: 'worker', coordinator: 'boss', folder: join(myHome, '.ssh') } })
   assert.equal(ssh.ok, false)
   assert.ok((await dash('terminals/kill', { host: hostId, term: 'hm1' })).ok)
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(withHome))
+  rmSync(homeBin, { recursive: true, force: true })
   execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), '--no-allow-home', 'folders'], { env: hostEnv, stdio: 'ignore' })
   await waitFor(async () => !(await shown()).home && !(await shown()).folders?.includes(myHome), { what: 'home no longer allowed' })
 
@@ -418,6 +442,24 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   const unit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: hostEnv, encoding: 'utf8' })
   assert.match(unit, /^KillMode=process$/m)
   assert.match(unit, /^RestartPreventExitStatus=2$/m)
+})
+
+test('a standalone session starts plain Claude Code: no development channel, no permission relay, no coordinator', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const bad = await dash('terminals/open', { host: hostId, spec: { name: 'solo2', role: 'solo', coordinator: 'boss', folder: allowed } })
+  assert.equal(bad.ok, false)
+  assert.match(bad.description, /standalone session has no coordinator/)
+  const r = await dash('terminals/open', { host: hostId, spec: { name: 'solo1', role: 'solo', folder: allowed } })
+  assert.ok(r.ok, r.description)
+  const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'solo1', 'launch.json'), 'utf8'))
+  assert.equal(launch.role, 'solo')
+  assert.equal(launch.permission_relay, false)
+  const screen = await waitFor(() => {
+    const out = execFileSync('tmux', ['-L', SOCKET, 'capture-pane', '-p', '-t', '=sq-solo1:'], { encoding: 'utf8' })
+    return out.includes('ARGS:') ? out : null
+  }, { what: 'solo1 started' })
+  assert.ok(!screen.includes('--dangerously-load-development-channels'), screen)
+  await waitFor(async () => (await dash('hosts')).result.find(h => h.id === hostId)?.info?.terminals?.some(t => t.id === 'solo1' && t.role === 'solo'), { what: 'listed as solo' })
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'solo1' })).ok)
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
@@ -441,4 +483,20 @@ test('fourth audit: a settings.json that cannot be read means the strictest sett
   assert.equal(st.allow_input, false)
   assert.equal(st.permission_relay, false)
   assert.deepEqual(st.folders, [])
+})
+
+test('a settings.json from 0.0.2 gets the new defaults once (continuing a conversation allowed)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-host-mig-'))
+  const env = { ...process.env, SQUADRA_HOST_DIR: dir }
+  const run = () => execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'folders'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  // What 0.0.2 wrote at enrollment: its defaults, allow_resume false among them.
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ folders: [], max_sessions: 8, allow_input: true, allow_resume: false, claude_command: 'claude' }))
+  run()
+  const s = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+  assert.equal(s.allow_resume, undefined)
+  assert.equal(s.settings_version, 3)
+  // Turned off again by hand afterwards: that choice stays.
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ ...s, allow_resume: false }))
+  run()
+  assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).allow_resume, false)
 })

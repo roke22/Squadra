@@ -70,8 +70,9 @@
   .nav-item .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav-item .s { grid-column: 2 / 4; font-size: 12px; color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Role marker: a straight vertical bar, not part of the rounded button edge. */
-  .nav-item.coordinator, .nav-item.worker { position: relative; padding-left: 16px; }
-  .nav-item.coordinator::before, .nav-item.worker::before { content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px; width: 4px; border-radius: 1px; }
+  .nav-item.coordinator, .nav-item.worker, .nav-item.solo { position: relative; padding-left: 16px; }
+  .nav-item.solo::before { background: var(--info); }
+  .nav-item.coordinator::before, .nav-item.worker::before, .nav-item.solo::before { content: ""; position: absolute; left: 4px; top: 7px; bottom: 7px; width: 4px; border-radius: 1px; }
   .nav-item.coordinator::before { background: var(--coord); }
   .nav-item.worker::before { background: var(--worker); }
   .badge { font-size: 11px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: #fff; text-align: center; font-weight: 600; }
@@ -94,12 +95,36 @@
   .role-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
   .role-tag.coordinator { color: var(--coord); background: var(--coord-soft); }
   .role-tag.worker { color: var(--worker); background: var(--worker-soft); }
+  .role-tag.solo { color: var(--info); background: color-mix(in srgb, var(--info) 14%, var(--panel)); }
+  .pane.solo { border-top-color: var(--info); }
+  .pane.solo .pane-head { background: color-mix(in srgb, var(--info) 10%, var(--panel)); }
 
   /* --- mosaic ------------------------------------------------------------------ */
   /* Columns: as many fixed-minimum-width panes as fit the screen (laptop 2–3,
      ultrawide 4–6), unless the user picks a fixed number. */
   #mosaic { --pane-min: 460px; flex: 1; overflow: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--pane-min), 100%), 1fr)); gap: 14px; align-content: start; }
   #mosaic.fixed { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); }
+  /* Terminals need more room than chats: fewer, wider panes in "Auto". */
+  #mosaic.terms { --pane-min: 520px; }
+  #mosaic.leads .pane { height: max(var(--pane-h), min(calc(100vh - 120px), 720px)); }
+  .pane .pane-term { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #161513; }
+  .pane .pane-term .term-box { flex: 1; min-height: 0; padding: 4px 6px; position: relative; }
+  .pane .pane-term .term-box .xterm { height: 100%; }
+  .pane .pane-term .term-foot { font-size: 11.5px; padding: 3px 8px; }
+  .pane .pane-term .term-foot:empty { display: none; }
+  .pane .pane-term.term-focused { box-shadow: inset 0 0 0 2px var(--accent); }
+  .team { flex: none; max-height: 38%; overflow: auto; border-top: 1px solid var(--line); padding: 8px 10px; background: var(--panel); }
+  .team-sum { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .team-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .wchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 2px 4px 2px 8px; font-size: 12px; background: var(--panel-2); }
+  .wchip .wname { border: 0; background: none; padding: 0; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
+  .wchip .wst { color: var(--muted); }
+  .wchip.idle { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); background: color-mix(in srgb, var(--warn) 12%, var(--panel-2)); }
+  .wchip.waiting { border-color: var(--err); background: color-mix(in srgb, var(--err) 12%, var(--panel-2)); }
+  .wchip.offline { opacity: .6; }
+  .wchip .give { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; font-size: 11px; padding: 1px 7px; cursor: pointer; }
+  .wchip .give:hover { border-color: var(--accent); }
+  .team .addw { font-size: 12px; padding: 1px 8px; }
   .pane { height: var(--pane-h); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; border-top: 4px solid var(--idle); }
   .pane.coordinator { border-top-color: var(--coord); }
   .pane.worker { border-top-color: var(--worker); }
@@ -174,8 +199,8 @@
   .side-ver { padding: 0 14px 10px; }
   .login-card .foot { margin-top: 16px; }
   .prefs { display: inline-flex; align-items: center; gap: 6px; }
-  .theme-btn { border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0 6px; cursor: pointer; font-size: 11px; line-height: 18px; width: auto; margin: 0; color: var(--muted); }
-  .theme-btn:hover { background: var(--panel-2); }
+  .login-card .theme-btn, .theme-btn { border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0 6px; cursor: pointer; font-size: 11px; line-height: 18px; width: auto; margin: 0; color: var(--muted); font-weight: 500; }
+  .login-card .theme-btn:hover, .theme-btn:hover { background: var(--panel-2); }
   .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .login-card .lang button, .lang button { border: 0; background: none; padding: 1px 7px; cursor: pointer; color: var(--muted); font-size: 11px; width: auto; margin: 0; border-radius: 0; font-weight: 500; }
   .login-card .lang button.on, .lang button.on { background: var(--panel-2); color: var(--text); font-weight: 650; }
@@ -285,6 +310,7 @@
   .term-row .m { color: var(--muted); font-size: 12.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
   .term-row .acts { display: flex; gap: 6px; }
   .host-empty { padding: 12px 14px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+  .term-toast { position: absolute; top: 10px; right: 14px; z-index: 5; background: var(--accent); color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 6px; pointer-events: none; }
   .modal.wide { width: min(680px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
   .steps { margin: 0 0 12px; }
   .steps > p { margin: 0 0 6px; color: var(--text); }
@@ -450,6 +476,19 @@
       input: 'input',
       output: 'output',
       allSessions: 'All sessions',
+      leads: 'Coordinators',
+      leadsCount: n => `${n} coordinator${n === 1 ? '' : 's'}`,
+      leadsSub: (c, w) => `${c} coordinator${c === 1 ? '' : 's'} · ${w} worker${w === 1 ? '' : 's'}`,
+      leadsEmpty: 'No coordinators yet: open one with <b>+ New session</b> (Role: Coordinator).',
+      modeTerms: 'Terminals',
+      modeChats: 'Chats',
+      wWorking: d => `working ${d}`,
+      wIdle: d => `idle ${d}`,
+      wWaiting: 'waiting for permission',
+      wOffline: 'disconnected',
+      teamSummary: (t, wk, id, wa) => `${t} worker${t === 1 ? '' : 's'} · ${wk} working · ${id} idle${wa ? ` · ${wa} waiting for permission` : ''}`,
+      giveWork: 'Give work',
+      giveWorkTitle: (w, c) => `${w} is idle: talk to ${c} in its terminal`,
       activeOf: (a, t) => `${a} of ${t} active`,
       coordinators: 'Coordinators',
       squads: 'Squads',
@@ -472,6 +511,10 @@
       archivedCount: n => n ? `${n} session${n === 1 ? '' : 's'}` : 'None',
       roleCoordinator: 'coordinator',
       roleWorker: 'worker',
+      roleSolo: 'standalone',
+      roleSoloOption: 'Standalone session (no coordinator)',
+      soloHint: 'A normal Claude Code session, outside any squad: no Squadra instructions and no messages from other sessions. The dashboard still shows what it does.',
+      standalone: 'Standalone',
       columns: 'Columns',
       auto: 'Auto',
       archivedTitle: '🗄️ Archived sessions',
@@ -575,7 +618,7 @@
       chat: 'Chat',
       closeSession: 'Close session',
       closeSessionTitle: n => `Close ${n}`,
-      closeSessionText: (n, h) => `Ends the Claude Code session <b>${n}</b> on <b>${h}</b> (like closing its terminal). Its conversation stays in Claude's history and can be resumed with «Continue the last conversation».`,
+      closeSessionText: (n, h) => `Ends the Claude Code session <b>${n}</b> on <b>${h}</b> (like closing its terminal). Its conversation stays in Claude's history and can be picked up again with <code>/resume</code> in a new session in that folder.`,
       rename: 'Rename',
       renameTitle: 'Rename machine',
       disconnect: 'Remove',
@@ -598,6 +641,8 @@
       manualCmd: 'Already have tmux, Node.js 22 and Claude Code? Just squadra-host:',
       copy: 'Copy',
       copied: 'Copied ✓',
+      imageSent: 'Image sent to Claude ✓',
+      imageFailed: 'That image could not be pasted',
       codeValid: t => `Single-use code, valid until ${t}.`,
       waitingMachine: 'Waiting for the machine to connect…',
       machineJoined: n => `✓ <b>${n}</b> is connected.`,
@@ -616,12 +661,12 @@
       compactRec: '600K tokens — recommended for 1M-context models',
       compactK: k => `${k}K tokens`,
       compactHint: 'Never above the model\'s own window: on 200K models it stays at 200K.',
-      resume: 'Continue the last conversation in that folder (claude --continue)',
+      resumeHint: 'To pick up an earlier conversation, type <code>/resume</code> in the session\'s terminal once it opens.',
       open: 'Open',
       opening: 'Opening…',
       nameTaken: n => `A session named "${n}" already exists and is connected.`,
       openOnHost: n => `A session named "${n}" is already open on that machine (its terminal is still there): close it first, or choose another name.`,
-      termHint: h => `Typing goes straight to Claude on ${h}. On first start accept the development-channels prompt and, if asked, trust the folder and sign in with /login.`,
+      termHint: h => `Typing goes straight to Claude on ${h}. On first start accept the development-channels prompt and, if asked, trust the folder and sign in with /login. Selecting text copies it (hold Shift while dragging if it doesn't select); Ctrl+Shift+C copies too. Paste an image (Ctrl+V) to give it to Claude.`,
       readOnly: 'Watch only',
       redraw: 'Redraw',
       termEnded: 'The session ended on the machine.',
@@ -678,6 +723,19 @@
       input: 'entrada',
       output: 'salida',
       allSessions: 'Todas las sesiones',
+      leads: 'Coordinadores',
+      leadsCount: n => `${n} coordinador${n === 1 ? '' : 'es'}`,
+      leadsSub: (c, w) => `${c} coordinador${c === 1 ? '' : 'es'} · ${w} worker${w === 1 ? '' : 's'}`,
+      leadsEmpty: 'Todavía no hay coordinadores: abre uno con <b>+ Nueva sesión</b> (Rol: Coordinador).',
+      modeTerms: 'Terminales',
+      modeChats: 'Chats',
+      wWorking: d => `trabajando ${d}`,
+      wIdle: d => `parado ${d}`,
+      wWaiting: 'espera permiso',
+      wOffline: 'desconectado',
+      teamSummary: (t, wk, id, wa) => `${t} worker${t === 1 ? '' : 's'} · ${wk} trabajando · ${id} parado${id === 1 ? '' : 's'}${wa ? ` · ${wa} espera${wa === 1 ? '' : 'n'} permiso` : ''}`,
+      giveWork: 'Dar trabajo',
+      giveWorkTitle: (w, c) => `${w} está parado: habla con ${c} en su terminal`,
       activeOf: (a, t) => `${a} de ${t} activas`,
       coordinators: 'Coordinadores',
       squads: 'Escuadras',
@@ -700,6 +758,10 @@
       archivedCount: n => n ? `${n} ${n === 1 ? 'sesión' : 'sesiones'}` : 'Ninguna',
       roleCoordinator: 'coordinador',
       roleWorker: 'worker',
+      roleSolo: 'independiente',
+      roleSoloOption: 'Sesión independiente (sin coordinador)',
+      soloHint: 'Una sesión normal de Claude Code, fuera de cualquier escuadra: sin instrucciones de Squadra ni mensajes de otras sesiones. El panel sigue mostrando lo que hace.',
+      standalone: 'Independientes',
       columns: 'Columnas',
       auto: 'Auto',
       archivedTitle: '🗄️ Sesiones archivadas',
@@ -803,7 +865,7 @@
       chat: 'Chat',
       closeSession: 'Cerrar sesión',
       closeSessionTitle: n => `Cerrar ${n}`,
-      closeSessionText: (n, h) => `Termina la sesión de Claude Code <b>${n}</b> en <b>${h}</b> (como cerrar su terminal). Su conversación queda en el historial de Claude y se puede retomar con «Continuar la última conversación».`,
+      closeSessionText: (n, h) => `Termina la sesión de Claude Code <b>${n}</b> en <b>${h}</b> (como cerrar su terminal). Su conversación queda en el historial de Claude y se puede retomar con <code>/resume</code> en una sesión nueva en esa carpeta.`,
       rename: 'Renombrar',
       renameTitle: 'Renombrar máquina',
       disconnect: 'Eliminar',
@@ -826,6 +888,8 @@
       manualCmd: '¿Ya tienes tmux, Node.js 22 y Claude Code? Solo squadra-host:',
       copy: 'Copiar',
       copied: 'Copiado ✓',
+      imageSent: 'Imagen enviada a Claude ✓',
+      imageFailed: 'No se pudo pegar esa imagen',
       codeValid: t => `Código de un solo uso, válido hasta las ${t}.`,
       waitingMachine: 'Esperando a que la máquina se conecte…',
       machineJoined: n => `✓ <b>${n}</b> está conectada.`,
@@ -844,12 +908,12 @@
       compactRec: '600K tokens — recomendado para modelos de 1M de contexto',
       compactK: k => `${k}K tokens`,
       compactHint: 'Nunca por encima de la ventana del modelo: en modelos de 200K se queda en 200K.',
-      resume: 'Continuar la última conversación en esa carpeta (claude --continue)',
+      resumeHint: 'Para retomar una conversación anterior, escribe <code>/resume</code> en la terminal de la sesión cuando se abra.',
       open: 'Abrir',
       opening: 'Abriendo…',
       nameTaken: n => `Ya hay una sesión conectada con el nombre "${n}".`,
       openOnHost: n => `Ya hay una sesión abierta con el nombre "${n}" en esa máquina (su terminal sigue ahí): ciérrala primero o elige otro nombre.`,
-      termHint: h => `Lo que escribas va directo a Claude en ${h}. En el primer arranque acepta el aviso de channels de desarrollo y, si lo pide, confía en la carpeta e inicia sesión con /login.`,
+      termHint: h => `Lo que escribas va directo a Claude en ${h}. En el primer arranque acepta el aviso de channels de desarrollo y, si lo pide, confía en la carpeta e inicia sesión con /login. Al seleccionar texto se copia solo (mantén Mayús al arrastrar si no selecciona); Ctrl+Mayús+C también copia. Pega una imagen (Ctrl+V) para dársela a Claude.`,
       readOnly: 'Solo ver',
       redraw: 'Redibujar',
       termEnded: 'La sesión terminó en la máquina.',
@@ -874,6 +938,9 @@
   let token = store.get('squadraToken') ?? store.get('swarmToken')
   // 'auto' (fit the screen) or a fixed number of columns
   let cols = store.get('squadraCols') || store.get('swarmCols') || 'auto'
+  // The mosaic shows each session's live terminal (when it has one) or its chat.
+  let mosaicMode = store.get('squadraMosaicMode') === 'chats' ? 'chats' : 'terms'
+  let mosaicKey = null // what the panes on screen were built for
   const sessions = new Map()      // name -> session view (from server)
   const hosts = new Map()         // host id -> host view (machines running squadra-host)
   let groups = []                  // [{id, members}]
@@ -1029,15 +1096,17 @@
     const coords = list.filter(s => s.role === 'coordinator').sort(byPresence)
     const names = new Set(coords.map(c => c.name))
     return {
-      squads: coords.map(c => ({ coord: c, workers: list.filter(s => s.role !== 'coordinator' && s.coordinator === c.name).sort(byPresence) })),
-      orphans: list.filter(s => s.role !== 'coordinator' && !names.has(s.coordinator)).sort(byPresence),
+      squads: coords.map(c => ({ coord: c, workers: list.filter(s => s.role === 'worker' && s.coordinator === c.name).sort(byPresence) })),
+      orphans: list.filter(s => s.role !== 'coordinator' && s.role !== 'solo' && !(s.role === 'worker' && names.has(s.coordinator))).sort(byPresence),
+      // Standalone sessions: each on its own, outside every squad.
+      solos: list.filter(s => s.role === 'solo').sort(byPresence),
     }
   }
 
   function sortedSessions({ archived = false } = {}) {
     const list = [...sessions.values()].filter(s => !s.deleted && !!s.archived_at === archived)
-    const { squads, orphans } = squadsOf(list)
-    return [...squads.flatMap(q => [q.coord, ...q.workers]), ...orphans]
+    const { squads, orphans, solos } = squadsOf(list)
+    return [...squads.flatMap(q => [q.coord, ...q.workers]), ...orphans, ...solos]
   }
 
   // Which squads are unfolded in the sidebar (remembered per browser).
@@ -1414,6 +1483,8 @@
     const list = sortedSessions()
     const online = list.filter(s => s.online).length
     let html = `<button class="nav-item ${route.view === 'mosaic' && !route.squad ? 'sel' : ''}" data-go="#/"><span>▦</span><span class="n">${T.allSessions}</span><span class="badge" hidden></span><span class="s">${T.activeOf(online, list.length)}</span></button>`
+    const leadsN = list.filter(s => s.role === 'coordinator').length
+    html += `<button class="nav-item ${route.view === 'leads' ? 'sel' : ''}" data-go="#/c"><span>🧭</span><span class="n">${T.leads}</span><span class="badge" hidden></span><span class="s">${T.leadsCount(leadsN)}</span></button>`
     const item = s => {
       const st = status(s)
       const n = unread.get(s.name) ?? 0
@@ -1421,11 +1492,13 @@
       return `<button class="nav-item ${s.role ?? ''} ${route.view === 'session' && route.name === s.name ? 'sel' : ''}" data-go="#/s/${encodeURIComponent(s.name)}" title="${esc(st.text)}">
         <span class="dot ${st.dot}"></span><span class="n">${esc(s.name)}</span>${badge}<span class="s">${esc(st.text)}</span></button>`
     }
-    const { squads, orphans } = squadsOf(list)
+    const { squads, orphans, solos } = squadsOf(list)
     if (squads.length) html += `<div class="nav-label">${T.squads}</div>`
     for (const { coord, workers } of squads) {
       const here = route.view === 'session' && workers.some(w => w.name === route.name)
-      const open = here || (Object.hasOwn(squadOpen, coord.name) && squadOpen[coord.name] === true)
+      // (Opened when you go to one of its workers — see route() —, and then
+      // folded or unfolded as you like.)
+      const open = Object.hasOwn(squadOpen, coord.name) && squadOpen[coord.name] === true
       const on = workers.filter(w => w.online).length
       // Folded: the count chip also carries what needs attention inside.
       const waiting = workers.some(w => status(w).waiting)
@@ -1438,6 +1511,7 @@
       </div>`
     }
     if (orphans.length) html += `<div class="nav-label">${squads.length ? T.noCoordinator : T.workers}</div>${orphans.map(item).join('')}`
+    if (solos.length) html += `<div class="nav-label">${T.standalone}</div>${solos.map(item).join('')}`
     const archivedCount = sortedSessions({ archived: true }).length
     html += `<div class="nav-sep"></div><button class="nav-item ${route.view === 'archived' ? 'sel' : ''}" data-go="#/archived"><span>🗄️</span><span class="n">${T.archived}</span><span class="badge" style="background:var(--idle)" ${archivedCount ? '' : 'hidden'}>${archivedCount}</span><span class="s">${T.archivedCount(archivedCount)}</span></button>`
     setHtml($('nav'), html)
@@ -1508,15 +1582,22 @@
   function currentRoute() {
     if (location.hash === '#/archived') return { view: 'archived' }
     if (location.hash === '#/hosts') return { view: 'hosts' }
+    if (location.hash === '#/c') return { view: 'leads' }
     const q = location.hash.match(/^#\/q\/(.+)$/)
     if (q) return ROUTE_NAME.test(dec(q[1])) ? { view: 'mosaic', squad: dec(q[1]) } : { view: 'mosaic' }
     const h = location.hash.match(/^#\/h\/(.+)$/)
     if (h) return ROUTE_ID.test(dec(h[1])) ? { view: 'hosts', host: dec(h[1]) } : { view: 'hosts' }
     const t = location.hash.match(/^#\/t\/([^/]+)\/(.+)$/)
     if (t) return ROUTE_ID.test(dec(t[1])) && ROUTE_NAME.test(dec(t[2])) ? { view: 'terminal', host: dec(t[1]), term: dec(t[2]) } : { view: 'hosts' }
+    // A session: its live terminal when it has one (opened on a machine
+    // from here), else its chat; ".../chat" always the chat.
+    const sc = location.hash.match(/^#\/s\/([^/]+)\/chat$/)
+    if (sc) return ROUTE_NAME.test(dec(sc[1])) ? { view: 'session', name: dec(sc[1]), chat: true } : { view: 'mosaic' }
     const m = location.hash.match(/^#\/s\/(.+)$/)
     return m && ROUTE_NAME.test(dec(m[1])) ? { view: 'session', name: dec(m[1]) } : { view: 'mosaic' }
   }
+  // The terminal a session view shows (null: its chat).
+  const sessionTerm = r => (r.view === 'session' && !r.chat ? terminalOf(r.name) : null)
 
   // The Squadra session behind a machine's terminal: only one that machine
   // opened (a machine could list any name; it can't make it its own).
@@ -1526,13 +1607,22 @@
   }
 
   function roleTag(role) {
-    return role ? `<span class="role-tag ${role}">${role === 'coordinator' ? T.roleCoordinator : T.roleWorker}</span>` : ''
+    return role ? `<span class="role-tag ${role}">${role === 'coordinator' ? T.roleCoordinator : role === 'solo' ? T.roleSolo : T.roleWorker}</span>` : ''
   }
 
   function renderTop() {
     const r = currentRoute()
+    if (r.view === 'leads') {
+      const cs = sortedSessions().filter(s => s.role === 'coordinator')
+      const ws = sortedSessions().filter(s => s.role !== 'coordinator' && cs.some(c => c.name === s.coordinator))
+      setHtml($('topTitle'), `🧭 ${T.leads}`)
+      $('topSub').textContent = T.leadsSub(cs.length, ws.length)
+      setHtml($('topRight'), `<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '1', '2', '3', '4'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`)
+      return
+    }
     if (r.view === 'mosaic') {
-      const colsSeg = `<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`
+      const modeSeg = `<span class="seg" id="modeSeg">${['terms', 'chats'].map(m => `<button data-mode="${m}" class="${m === mosaicMode ? 'on' : ''}">${m === 'terms' ? T.modeTerms : T.modeChats}</button>`).join('')}</span>`
+      const colsSeg = `${modeSeg}<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`
       if (r.squad) {
         const c = sessions.get(r.squad)
         const ws = sortedSessions().filter(s => s.role !== 'coordinator' && s.coordinator === r.squad)
@@ -1543,7 +1633,7 @@
       }
       setHtml($('topTitle'), T.allSessions)
       $('topSub').textContent = ''
-      setHtml($('topRight'), `<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`)
+      setHtml($('topRight'), colsSeg)
     } else if (r.view === 'hosts') {
       const h = r.host && hosts.get(r.host)
       setHtml($('topTitle'), h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines)
@@ -1572,7 +1662,16 @@
       $('topSub').textContent = [a.cwd, a.context_tokens ? T.context(kfmt(a.context_tokens)) + (a.context_pct != null ? ` (${T.contextPct(a.context_pct)})` : '') : '', s?.role === 'worker' && s.coordinator ? T.coordinatorOf(s.coordinator) : ''].filter(Boolean).join(' · ')
       const acts = []
       const where = terminalOf(r.name)
-      if (where) acts.push(`<button class="btn" data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
+      if (where && !r.chat) {
+        // Its terminal on screen: the chat a click away, and the terminal's own actions.
+        acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}/chat">${T.chat}</button>`)
+        acts.push(`<button class="btn" data-tact="redraw">${T.redraw}</button>`)
+        acts.push(`<button class="btn danger" data-tact="kill">${T.closeSession}</button>`)
+        acts.push(`<button class="btn" data-go="${s?.archived_at ? '#/archived' : '#/'}">${s?.archived_at ? T.backArchived : T.backAll}</button>`)
+        setHtml($('topRight'), acts.join(''))
+        return
+      }
+      if (where) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
       if (s) {
         acts.push(`<button class="btn" data-act="clear" data-s="${esc(s.name)}">${T.clearChat}</button>`)
         if (!s.online) acts.push(s.archived_at
@@ -1588,6 +1687,8 @@
   $('topRight').addEventListener('click', e => {
     const c = e.target.closest('[data-c]')
     if (c) { cols = c.dataset.c; store.set('squadraCols', cols); applyCols(); renderTop() }
+    const md = e.target.closest('[data-mode]')
+    if (md) { mosaicMode = md.dataset.mode === 'chats' ? 'chats' : 'terms'; store.set('squadraMosaicMode', mosaicMode); buildMosaic(); renderTop() }
     const go = e.target.closest('[data-go]')
     if (go) location.hash = go.dataset.go
     const act = e.target.closest('[data-act]')
@@ -1599,8 +1700,9 @@
     const tact = e.target.closest('[data-tact]')
     if (tact) {
       const r = currentRoute()
+      const st = sessionTerm(r)
       if (tact.dataset.tact === 'redraw') termView?.refresh()
-      if (tact.dataset.tact === 'kill') hostAction('kill', r.host, r.term)
+      if (tact.dataset.tact === 'kill') hostAction('kill', r.host ?? st?.host.id, r.term ?? r.name)
     }
   })
 
@@ -1638,7 +1740,7 @@
     if (!el) { el = document.createElement('div'); squadRows.set(key, el) }
     if (!coord) {
       el.className = 'squad-row orphans'
-      el.innerHTML = `<span class="n">${T.noCoordinator}</span>`
+      el.innerHTML = `<span class="n">${key === 'solos' ? T.standalone : T.noCoordinator}</span>`
       return el
     }
     const on = workers.filter(w => w.online).length
@@ -1652,17 +1754,25 @@
 
   function buildMosaic() {
     const box = $('mosaic')
+    const r = currentRoute()
+    // The coordinators view: each coordinator's terminal and its team.
+    const leads = r.view === 'leads'
+    const key = `${leads ? 'leads' : r.squad ? `q:${r.squad}` : 'all'}:${mosaicMode}`
+    if (mosaicKey !== key) { clearMosaic(); mosaicKey = key }
+    box.classList.toggle('terms', leads || mosaicMode === 'terms')
+    box.classList.toggle('leads', leads)
     applyCols()
-    const squad = currentRoute().squad
+    const squad = r.squad
     const all = sortedSessions()
-    const list = squad ? all.filter(s => s.name === squad || (s.role !== 'coordinator' && s.coordinator === squad)) : all
+    const list = leads ? all.filter(s => s.role === 'coordinator') : squad ? all.filter(s => s.name === squad || (s.role !== 'coordinator' && s.coordinator === squad)) : all
     // The order on screen: in the full mosaic, each squad under its heading row.
     const order = []
-    if (squad) order.push(...list.map(s => ({ s })))
+    if (squad || leads) order.push(...list.map(s => ({ s })))
     else {
-      const { squads, orphans } = squadsOf(all)
+      const { squads, orphans, solos } = squadsOf(all)
       for (const q of squads) order.push({ row: squadRow(`q:${q.coord.name}`, q.coord, q.workers) }, { s: q.coord }, ...q.workers.map(s => ({ s })))
       if (orphans.length) order.push(...(squads.length ? [{ row: squadRow('orphans') }] : []), ...orphans.map(s => ({ s })))
+      if (solos.length) order.push({ row: squadRow('solos') }, ...solos.map(s => ({ s })))
     }
     const rowsUsed = new Set(order.filter(o => o.row).map(o => o.row))
     for (const [k, el] of squadRows) if (!rowsUsed.has(el)) { el.remove(); squadRows.delete(k) }
@@ -1671,13 +1781,13 @@
     for (const [name, p] of mosaicPanes) if (!visible.has(name)) { p.view.destroy(); p.pane.remove(); mosaicPanes.delete(name) }
     if (!list.length) {
       const arch = sortedSessions({ archived: true }).length
-      box.innerHTML = `<div class="mosaic-empty">${squad ? esc(T.squadEmpty(squad)) : T.mosaicEmpty(arch)}</div>`
+      box.innerHTML = `<div class="mosaic-empty">${leads ? T.leadsEmpty : squad ? esc(T.squadEmpty(squad)) : T.mosaicEmpty(arch)}</div>`
       squadRows.clear()
       return
     }
     box.querySelector('.mosaic-empty')?.remove()
     // Moving a node in the DOM resets its scroll: remember where each chat was.
-    const scroll = new Map([...mosaicPanes].map(([n, p]) => [n, { bottom: p.view.atBottom(), top: p.view.scrollEl.scrollTop }]))
+    const scroll = new Map([...mosaicPanes].filter(([, p]) => p.kind === 'chat').map(([n, p]) => [n, { bottom: p.view.atBottom(), top: p.view.scrollEl.scrollTop }]))
     let prev = null
     for (const { s, row } of order) {
       if (row) {
@@ -1687,16 +1797,30 @@
         continue
       }
       let p = mosaicPanes.get(s.name)
+      // Its live terminal (sessions opened on a machine from here), or its chat.
+      const term = leads || mosaicMode === 'terms' ? terminalOf(s.name) : null
+      const kind = term ? 'term' : 'chat'
+      if (p && p.kind !== kind) { p.view.destroy(); p.pane.remove(); mosaicPanes.delete(s.name); p = null }
       if (!p) {
         const pane = document.createElement('section')
         pane.innerHTML = `<div class="pane-head"></div>`
-        const view = new ChatView(s.name)
-        pane.appendChild(view.el)
-        p = { pane, view }
+        let view
+        if (term) {
+          const body = document.createElement('div')
+          body.className = 'pane-term'
+          pane.appendChild(body)
+          view = new TermView(term.host.id, s.name, body, { compact: true })
+        } else {
+          view = new ChatView(s.name)
+          pane.appendChild(view.el)
+        }
+        if (leads) { const team = document.createElement('div'); team.className = 'team'; pane.appendChild(team) }
+        p = { pane, view, kind }
         mosaicPanes.set(s.name, p)
       }
       p.pane.className = paneClass(s)
       setHtml(p.pane.querySelector('.pane-head'), paneHead(s))
+      if (leads) setHtml(p.pane.querySelector('.team'), teamStrip(s))
       // Only move panes that are out of order.
       const expected = prev ? prev.nextSibling : box.firstChild
       if (expected !== p.pane) box.insertBefore(p.pane, expected)
@@ -1717,6 +1841,8 @@
   }
 
   $('mosaic').addEventListener('click', e => {
+    const gw = e.target.closest('[data-givework]')
+    if (gw) return giveWork(gw.dataset.givework)
     const aw = e.target.closest('[data-addworker]')
     if (aw) return addWorkerTo(aw.dataset.addworker)
     const m = e.target.closest('[data-menu]')
@@ -1866,16 +1992,53 @@
   function clearMosaic() {
     for (const p of mosaicPanes.values()) p.view.destroy()
     mosaicPanes.clear()
+    mosaicKey = null
     $('mosaic').innerHTML = ''
+  }
+
+  // A worker's state in a coordinator's team: what it is doing, and for how long.
+  function workerState(w) {
+    const a = w.activity ?? {}
+    if (!w.online) return { k: 'offline', dot: '', text: T.wOffline }
+    if (a.state === 'waiting') return { k: 'waiting', dot: 'err pulse', text: T.wWaiting }
+    if (a.state === 'compacting') return { k: 'working', dot: 'info pulse', text: T.compacting }
+    if (a.state === 'tool' || a.state === 'working') return { k: 'working', dot: 'ok pulse', text: T.wWorking(dur(now() - ((a.state === 'tool' ? a.tool?.since : a.since) ?? now()))), since: a.since }
+    return { k: 'idle', dot: 'ok', text: T.wIdle(a.since ? dur(now() - a.since) : '—'), since: a.since ?? now() }
+  }
+  // A coordinator's team: who waits for a permission, who is idle (longest
+  // first: ready for more work), who works, who is gone.
+  function teamStrip(c) {
+    const ws = sortedSessions().filter(s => s.role !== 'coordinator' && s.coordinator === c.name).map(w => ({ w, st: workerState(w) }))
+    const rank = { waiting: 0, idle: 1, working: 2, offline: 3 }
+    ws.sort((a, b) => (rank[a.st.k] - rank[b.st.k]) || ((a.st.since ?? 0) - (b.st.since ?? 0)) || COLLATOR.compare(a.w.name, b.w.name))
+    const n = k => ws.filter(x => x.st.k === k).length
+    const chips = ws.map(({ w, st }) => `<span class="wchip ${st.k}"><button class="wname" data-go="#/s/${encodeURIComponent(w.name)}"><span class="dot ${st.dot}"></span>${esc(w.name)}</button><span class="wst">${esc(st.text)}</span>${st.k === 'idle' ? `<button class="give" data-givework="${esc(c.name)}" title="${esc(T.giveWorkTitle(w.name, c.name))}">${T.giveWork}</button>` : ''}</span>`).join('')
+    return `<div class="team-sum">${ws.length ? esc(T.teamSummary(ws.length, n('working'), n('idle'), n('waiting'))) : T.noWorkers}</div>
+      <div class="team-list">${chips}<button class="btn addw" data-addworker="${esc(c.name)}" title="${esc(T.addWorkerTo(c.name))}">${T.addWorker}</button></div>`
+  }
+  function refreshLeads() {
+    if (currentRoute().view !== 'leads') return
+    for (const [name, p] of mosaicPanes) { const s = sessions.get(name); const el = p.pane.querySelector('.team'); if (s && el) setHtml(el, teamStrip(s)) }
+  }
+  // "Give work": straight to the coordinator's terminal, ready to type (nothing typed for you).
+  function giveWork(coord) {
+    const p = mosaicPanes.get(coord)
+    if (p?.kind === 'term' && p.view.x) { p.pane.scrollIntoView?.({ block: 'nearest' }); p.view.x.focus() }
+    else location.hash = `#/s/${encodeURIComponent(coord)}`
   }
 
   function route() {
     const r = currentRoute()
     closeMenu()
+    // Going to a worker unfolds its squad in the sidebar, so it shows where you are.
+    const c = r.view === 'session' && sessions.get(r.name)?.role === 'worker' ? sessions.get(r.name).coordinator : null
+    if (c && squadOpen[c] !== true) { squadOpen[c] = true; store.set('squadraSquads', JSON.stringify(squadOpen)) }
     $('archived').hidden = r.view !== 'archived'
     $('hosts').hidden = r.view !== 'hosts'
-    $('terminal').hidden = r.view !== 'terminal'
-    if (r.view !== 'terminal' && termView) { termView.destroy(); termView = null; $('terminal').innerHTML = '' }
+    const st = sessionTerm(r)
+    const termMode = r.view === 'terminal' || !!st
+    $('terminal').hidden = !termMode
+    if (!termMode && termView) { termView.destroy(); termView = null; $('terminal').innerHTML = '' }
     if (r.view === 'hosts' || r.view === 'terminal') {
       if (sessionView) { sessionView.destroy(); sessionView = null; $('session').innerHTML = '' }
       clearMosaic()
@@ -1886,7 +2049,7 @@
         termView?.destroy()
         termView = new TermView(r.host, r.term, $('terminal'))
       }
-    } else if (r.view === 'mosaic') {
+    } else if (r.view === 'mosaic' || r.view === 'leads') {
       if (sessionView) { sessionView.destroy(); sessionView = null; $('session').innerHTML = '' }
       $('session').hidden = true
       $('mosaic').hidden = false
@@ -1897,6 +2060,17 @@
       $('session').hidden = true
       $('mosaic').hidden = true
       renderArchived()
+    } else if (st) {
+      // The session's live terminal, as in Machines: watch it and type to it.
+      if (sessionView) { sessionView.destroy(); sessionView = null; $('session').innerHTML = '' }
+      clearMosaic()
+      $('mosaic').hidden = true
+      $('session').hidden = true
+      if (!termView || termView.host !== st.host.id || termView.term !== r.name) {
+        termView?.destroy()
+        termView = new TermView(st.host.id, r.name, $('terminal'))
+      }
+      unread.delete(r.name)
     } else {
       clearMosaic()
       $('mosaic').hidden = true
@@ -2201,7 +2375,7 @@
     const d = dialog(`<h3>${preset.coordinator ? esc(T.addWorkerTo(preset.coordinator)) : T.newSessionTitle}</h3>
       <label class="field"><span>${T.machine}</span><select name="host">${online.map(h => `<option value="${esc(h.id)}" ${h.id === hostId ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></label>
       <div class="row2">
-        <label class="field"><span>${T.role}</span><select name="role"><option value="worker" ${hasCoord ? 'selected' : ''}>${T.roleWorker}</option><option value="coordinator" ${hasCoord ? '' : 'selected'}>${T.roleCoordinator}</option></select></label>
+        <label class="field"><span>${T.role}</span><select name="role"><option value="worker" ${hasCoord ? 'selected' : ''}>${T.roleWorker}</option><option value="coordinator" ${hasCoord ? '' : 'selected'}>${T.roleCoordinator}</option><option value="solo">${T.roleSoloOption}</option></select></label>
         <label class="field"><span>${T.sessionName}</span><input type="text" name="name" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off"></label>
       </div>
       <label class="field" data-only="worker"><span>${T.coordinatorName}</span><select name="coordinator">${coordOptions()}</select></label>
@@ -2214,12 +2388,13 @@
         <option value="">${T.compactDefault}</option>
         ${[300, 400, 500, 700, 800].map(k => `<option value="${k * 1000}">${T.compactK(k)}</option>`).join('')}
       </select><span class="hint">${T.compactHint}</span></label>
-      <label class="check"><input type="checkbox" name="resume"> <span>${T.resume}</span></label>
+      <p class="hint" style="font-size:12px;color:var(--muted);margin:0 0 8px">${T.resumeHint}</p>
       <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
       <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.open}</button></div>`, { wide: true })
     const f = name => d.el.querySelector(`[name=${name}]`)
     const suggestName = () => {
       if (f('role').value === 'coordinator') return sessions.has('coord') && sessions.get('coord').online ? '' : 'coord'
+      if (f('role').value === 'solo') { for (let i = 1; ; i++) if (!sessions.has(`claude${i}`) && !terminalOf(`claude${i}`)) return `claude${i}` }
       for (let i = 1; ; i++) if (!sessions.get(`worker${i}`)?.online && !terminalOf(`worker${i}`)) return `worker${i}`
     }
     // A coordinator that wasn't opened from this dashboard is only a name a
@@ -2259,8 +2434,14 @@
       else folderHint.innerHTML = h?.info?.home && f('folder').value === h.info.home && !f('sub').value.trim() ? `⚠ ${T.homeSession}` : ''
     }
     folderHint.addEventListener('click', e => { if (e.target.closest('[data-addf]')) addFolderDialog(f('host').value, folder => { shownFolders = null; syncFolders(); if (folder) f('folder').value = folder; noteFolder(); renderHosts(currentRoute().host) }) })
+    const soloHint = document.createElement('p')
+    soloHint.className = 'hint'
+    soloHint.style.cssText = 'font-size:12px;color:var(--muted);margin:-4px 0 10px'
+    soloHint.textContent = T.soloHint
+    d.el.querySelector('.row2').after(soloHint)
     const sync = () => {
       d.el.querySelector('[data-only=worker]').hidden = f('role').value !== 'worker'
+      soloHint.hidden = f('role').value !== 'solo'
       syncFolders()
     }
     const onHost = h => { if (h.id === f('host').value) syncFolders() }
@@ -2285,7 +2466,6 @@
         name: f('name').value.trim(),
         role: f('role').value,
         folder: sub ? `${base.replace(/\/+$/, '')}/${sub}` : base,
-        resume: f('resume').checked,
       }
       if (spec.role === 'worker') {
         // A worker's coordinator is always chosen, never assumed: a session
@@ -2367,10 +2547,14 @@
 
   let termView = null
   class TermView {
-    constructor(host, term, root) {
+    // compact: a pane of a mosaic (no long hint underneath, never focused by
+    // itself); root gets "term-focused" while typing goes to this terminal.
+    constructor(host, term, root, { compact = false } = {}) {
       this.host = host
       this.term = term
       this.dead = false
+      this.compact = compact
+      this.root = root
       root.innerHTML = `<div class="term-box"><div class="term-over">${T.termLoading}</div></div><div class="term-foot"></div>`
       this.box = root.querySelector('.term-box')
       this.over = root.querySelector('.term-over')
@@ -2382,14 +2566,55 @@
     renderFoot() {
       const h = hosts.get(this.host)
       const ro = h?.info?.allow_input === false
-      this.foot.innerHTML = (ro ? `<span class="ro">👁 ${T.readOnly}</span><span>${esc(T.typingOff)}</span>` : `<span>${esc(T.termHint(h?.name ?? this.host))}</span>`) +
+      this.foot.innerHTML = (ro ? `<span class="ro">👁 ${T.readOnly}</span><span>${esc(T.typingOff)}</span>` : this.compact ? '' : `<span>${esc(T.termHint(h?.name ?? this.host))}</span>`) +
         (this.notice ? `<span class="ro">⚠ ${T.machineSays}: ${esc(this.notice)}</span>` : '')
+    }
+
+    // A pasted image, at most the size Claude uses (1568 px on its long side)
+    // and small enough to send: PNG, or WebP/JPEG, smaller if needed.
+    async pasteImage(file) {
+      if (hosts.get(this.host)?.info?.allow_input === false) return this.toast(T.typingOff)
+      try {
+        const bmp = await createImageBitmap(file)
+        let scale = Math.min(1, 1568 / Math.max(bmp.width, bmp.height))
+        let data = null, type = null
+        for (let i = 0; i < 6 && !data; i++, scale *= 0.75) {
+          const c = document.createElement('canvas')
+          c.width = Math.max(1, Math.round(bmp.width * scale)); c.height = Math.max(1, Math.round(bmp.height * scale))
+          c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+          for (const [t, q] of [['image/png'], ['image/webp', 0.9], ['image/jpeg', 0.85]]) {
+            const blob = await new Promise(r => c.toBlob(r, t, q))
+            if (!blob || blob.type !== t || blob.size > 580_000) continue
+            const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = rej; fr.readAsDataURL(blob) })
+            data = url.slice(url.indexOf(',') + 1); type = t
+            break
+          }
+        }
+        bmp.close?.()
+        if (!data) throw new Error('too large')
+        termLink.send({ t: 'image', host: this.host, term: this.term, type, data })
+        this.toast(T.imageSent)
+        this.x.focus()
+      } catch { this.toast(T.imageFailed) }
+    }
+
+    // A short note over the terminal ("Copied").
+    toast(text) {
+      this.box.querySelector('.term-toast')?.remove()
+      const t = document.createElement('div')
+      t.className = 'term-toast'
+      t.textContent = text
+      this.box.appendChild(t)
+      setTimeout(() => t.remove(), 1200)
     }
 
     start() {
       const dark = { background: '#161513', foreground: '#ecebe7', cursor: '#e0855f', selectionBackground: '#4a4740' }
       this.x = new window.Terminal({
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13.5, cursorBlink: true, scrollback: 5000, theme: dark, allowProposedApi: false,
+        // (On macOS, Option+drag selects even when the program uses the mouse;
+        // Shift+drag does everywhere.)
+        macOptionClickForcesSelection: true,
         // Links printed by the program (OSC 8): only http(s), after a confirmation, in a new tab.
         // Only plain http(s) links, shown as they are (no user:password@, no
         // control or direction characters that could make it read otherwise).
@@ -2404,6 +2629,42 @@
       this.x.loadAddon(this.fit)
       this.x.open(this.box)
       this.fitNow()
+      // Copying, as in usual terminals: what is selected is copied by itself;
+      // Ctrl+Shift+C (Cmd+C on macOS) copies too, and so does Ctrl+C while
+      // something is selected (without a selection it still goes to Claude).
+      const copy = async () => {
+        const text = this.x.getSelection()
+        if (!text) return false
+        try { await navigator.clipboard.writeText(text) } catch {
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0'
+          document.body.appendChild(ta)
+          ta.select()
+          try { document.execCommand('copy') } catch {}
+          ta.remove()
+          this.x.focus()
+        }
+        this.toast(T.copied)
+        return true
+      }
+      let selTimer = null
+      this.x.onSelectionChange(() => {
+        clearTimeout(selTimer)
+        if (this.x.hasSelection()) selTimer = setTimeout(() => { void copy() }, 250)
+      })
+      this.x.attachCustomKeyEventHandler(e => {
+        // Ctrl+V pastes (text or an image) instead of sending ^V to Claude,
+        // whose own image paste reads the machine's clipboard, not this one.
+        if (e.type === 'keydown' && e.code === 'KeyV' && e.ctrlKey && !e.altKey && !e.metaKey) return false
+        if (e.type !== 'keydown' || e.code !== 'KeyC' || !this.x.hasSelection()) return true
+        if ((e.ctrlKey && !e.altKey) || (e.metaKey && !e.ctrlKey)) {
+          e.preventDefault()
+          void copy().then(() => this.x.clearSelection())
+          return false
+        }
+        return true
+      })
       // What xterm.js answers by itself to a program's queries (device
       // attributes, cursor position, modes, focus) isn't sent: tmux already
       // answers them, and every dashboard watching would type them in again.
@@ -2419,7 +2680,11 @@
       // Pasted text can't carry escape sequences (they could end bracketed
       // paste and run what follows): control and bidi characters are dropped.
       this.box.addEventListener('paste', e => {
+        // An image (a screenshot): sent to the machine, which hands it to
+        // Claude Code. (Claude Code can't read this browser's clipboard.)
         const text = e.clipboardData?.getData('text') ?? ''
+        const image = text ? null : [...(e.clipboardData?.items ?? [])].find(i => i.kind === 'file' && /^image\//.test(i.type))?.getAsFile()
+        if (image) { e.preventDefault(); e.stopPropagation(); void this.pasteImage(image); return }
         const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u115f\u1160\u17b4\u17b5\u2065\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}\u180b-\u180f\ufe00-\ufe0f\u{e0100}-\u{e01ef}\p{Cf}]/gu, '')
         if (clean !== text) { e.preventDefault(); e.stopPropagation(); this.x.paste(clean) }
       }, true)
@@ -2432,7 +2697,10 @@
       this.ro.observe(this.box)
       // Not when the page was opened straight on this terminal (e.g. from a
       // link): typing goes to a machine only after the user chose it here.
-      if (navigatedInApp) this.x.focus()
+      // (Nor a mosaic's pane: there it is clicked first.)
+      if (navigatedInApp && !this.compact) this.x.focus()
+      this.x.textarea?.addEventListener('focus', () => this.root.classList.add('term-focused'))
+      this.x.textarea?.addEventListener('blur', () => this.root.classList.remove('term-focused'))
       termLink.add(this)
     }
 
@@ -2471,9 +2739,11 @@
 
   // A machine that comes back: re-attach the terminal on screen.
   hostListeners.add(h => {
-    if (termView && termView.host === h.id) {
-      termView.renderFoot()
-      if (h.online && !termView.over.hidden && termView.over.textContent === T.termHostDown) termView.attach()
+    const terms = [termView, ...[...mosaicPanes.values()].filter(p => p.kind === 'term').map(p => p.view)]
+    for (const v of terms) {
+      if (!v || v.host !== h.id) continue
+      v.renderFoot()
+      if (h.online && !v.over.hidden && v.over.textContent === T.termHostDown) v.attach()
     }
   })
 
@@ -2501,7 +2771,14 @@
       const r = currentRoute()
       if (r.view === 'hosts') { if (r.host && data.removed && data.id === r.host) { location.hash = '#/hosts'; return } renderHosts(r.host); soon(renderTop) }
       if (r.view === 'terminal' || r.view === 'session') soon(renderTop)
-      if (r.view === 'mosaic') for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) setHtml(p.pane.querySelector('.pane-head'), paneHead(s)) }
+      // A session's terminal opened or ended: its view switches between terminal and chat.
+      if (r.view === 'session' && !!sessionTerm(r) !== (!!termView && !$('terminal').hidden)) soon(route)
+      if (r.view === 'mosaic' || r.view === 'leads') {
+        for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) setHtml(p.pane.querySelector('.pane-head'), paneHead(s)) }
+        // A session whose terminal opened or ended: its pane switches between terminal and chat.
+        const terms = r.view === 'leads' || mosaicMode === 'terms'
+        if ([...mosaicPanes].some(([name, p]) => (terms && !!terminalOf(name)) !== (p.kind === 'term'))) soon(buildMosaic)
+      }
       soon(renderNav)
       return
     }
@@ -2509,9 +2786,9 @@
       const prev = sessions.get(data.name)
       if (data.deleted) { sessions.delete(data.name); unread.delete(data.name) } else sessions.set(data.name, data)
       const r = currentRoute()
-      if (r.view === 'mosaic') {
+      if (r.view === 'mosaic' || r.view === 'leads') {
         if (!prev || data.deleted || !!prev.archived_at !== !!data.archived_at || prev.role !== data.role || prev.coordinator !== data.coordinator) buildMosaic()
-        else { const p = mosaicPanes.get(data.name); if (p) { p.pane.className = paneClass(data); setHtml(p.pane.querySelector('.pane-head'), paneHead(data)) } soon(refreshSquadRows) }
+        else { const p = mosaicPanes.get(data.name); if (p) { p.pane.className = paneClass(data); setHtml(p.pane.querySelector('.pane-head'), paneHead(data)) } soon(refreshSquadRows); soon(refreshLeads) }
       }
       if (r.view === 'archived') renderArchived()
       if (r.view === 'session' && r.name === data.name && data.deleted) { location.hash = '#/'; return }
@@ -2641,7 +2918,8 @@
     renderAlerts()
     refreshSquadRows()
     const r = currentRoute()
-    if (r.view === 'mosaic') for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) p.pane.querySelector('.pane-head .dot').className = `dot ${status(s).dot}` }
+    if (r.view === 'mosaic' || r.view === 'leads') for (const [name, p] of mosaicPanes) { const s = sessions.get(name); if (s) p.pane.querySelector('.pane-head .dot').className = `dot ${status(s).dot}` }
+    refreshLeads()
   }, 1000)
 
   // ---------------------------------------------------------------------------

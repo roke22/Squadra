@@ -79,7 +79,7 @@ class Plugin {
     // written by squadra-host), never from environment variables.
     if (name && launch) {
       mkdirSync(this.stateDir, { recursive: true })
-      const role = extraEnv.SQUADRA_ROLE === 'coordinator' ? 'coordinator' : 'worker'
+      const role = ['coordinator', 'solo'].includes(extraEnv.SQUADRA_ROLE) ? extraEnv.SQUADRA_ROLE : 'worker'
       writeFileSync(join(this.stateDir, 'launch.json'), JSON.stringify({
         name, role,
         coordinator: role === 'worker' ? (extraEnv.SQUADRA_COORDINATOR || 'coord') : null,
@@ -1221,4 +1221,40 @@ test('eighth audit: masking in a permission prompt never hides a command silentl
   const { maskOutgoing } = await import(join(ROOT, 'plugins/squadra/observe.js'))
   for (const t of ['API_KEY=3f2a9c1e-8b7d-4e2f-9a1c-5d6e7f8a9b0c', 'password: "Xy9-Qw8-Er7-Ty6"', 'password=Hunter22.prod'])
     assert.ok(maskOutgoing(t).masked >= 1, t)
+})
+
+test('a worker opened from the dashboard trusts the coordinator it was opened for, even if an older one had that name', async () => {
+  const c1 = (await api('register', { name: 'cpin1' }, SERVER_TOKEN)).result
+  // The worker's state still remembers an earlier session called cpin1.
+  const cfg = mkdtempSync(join(tmpdir(), 'squadra-cfg-wpin-'))
+  const dir = join(cfg, 'channels', 'squadra', 'wpin1')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'coordinator-pin.json'), JSON.stringify({ name: 'cpin1', identity: 'an-earlier-cpin1', created_at: 1 }))
+  writeFileSync(join(dir, 'allow-pins.json'), JSON.stringify({ cpin1: 'i:an-earlier-cpin1' }))
+  // Opened from the dashboard (launch.json) as cpin1's worker.
+  const w = new Plugin('wpin1', { SQUADRA_COORDINATOR: 'cpin1', SQUADRA_ASSUME_CHANNEL: '1' }, { configDir: cfg })
+  await w.init()
+  await w.waitConnected()
+  await api('sendMessage', { chat_id: 'wpin1', text: 'your first task' }, c1.secret)
+  await w.waitChannel(p => p.content === 'your first task', 'message from the coordinator it was opened for')
+  assert.equal(w.channel(p => p.meta.kind === 'squadra_notice' && /not the coordinator/.test(p.content)).length, 0)
+  // And the one it has now is the one pinned.
+  const pin = JSON.parse(readFileSync(join(dir, 'coordinator-pin.json'), 'utf8'))
+  assert.notEqual(pin.identity, 'an-earlier-cpin1')
+})
+
+test('a standalone session (solo) is plain Claude Code: no Squadra instructions or tools, no messages, but the dashboard sees it', async () => {
+  const p = new Plugin('solo1', { SQUADRA_ROLE: 'solo', SQUADRA_ASSUME_CHANNEL: '1' })
+  const init = await p.init()
+  assert.equal(init.instructions, '')
+  assert.deepEqual((await p.request('tools/list', {})).result.tools, [])
+  await p.waitConnected()
+  const st = await waitFor(async () => (await dash('/api/state')).result.sessions.find(x => x.name === 'solo1' && x.online), { what: 'solo1 online' })
+  assert.equal(st.role, 'solo')
+  assert.equal(st.coordinator, null)
+  // Outside every squad: nobody messages it, and it messages nobody.
+  const other = (await api('register', { name: 'solo1peer' }, SERVER_TOKEN)).result.secret
+  const to = await api('sendMessage', { chat_id: 'solo1', text: 'do this' }, other)
+  assert.equal(to.ok, false)
+  assert.match(to.description, /standalone/)
 })

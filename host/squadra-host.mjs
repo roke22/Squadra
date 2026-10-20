@@ -25,13 +25,14 @@
  */
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
 import { homedir, hostname, platform, arch, userInfo, tmpdir } from 'node:os'
 import { join, resolve, sep, isAbsolute, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 
-const VERSION = '0.0.3'
+const VERSION = '0.0.4'
 const run = promisify(execFile)
 
 const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')
@@ -389,15 +390,24 @@ function trustedChain(p, { dir = false } = {}) {
 }
 const untrustedFolder = dir => trustedChain(dir, { dir: true }).why ?? null
 
+// The folders where sessions are opened, for "never a program or PATH
+// folder from there" (a repository could bring its own). Not the home
+// folder itself (allowed with --allow-home): what is installed in it
+// (~/.local/bin, nvm's node, Claude Code) is the user's own. Project
+// folders inside it, allowed on their own, still count.
+function sessionRoots() {
+  let folders = []
+  try { folders = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')).folders ?? [] } catch {}
+  return (Array.isArray(folders) ? folders : []).filter(f => typeof f === 'string' && isAbsolute(f)).map(realOr).filter(r => !isHome(r))
+}
+
 // A program this machine runs: the path given (as written) is what runs,
 // and nothing on the way to it can be changed by anyone else.
 function untrustedExecutable(p) {
   const { real, why } = trustedChain(p)
   if (why) return why
   try { if (!statSync(real).isFile()) return 'it is not a file' } catch { return 'the program cannot be checked' }
-  let folders = []
-  try { folders = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')).folders ?? [] } catch {}
-  if (Array.isArray(folders) && folders.some(f => typeof f === 'string' && isAbsolute(f) && within(real, realOr(f)))) return 'it is inside a folder where sessions are opened'
+  if (sessionRoots().some(r => within(real, r))) return 'it is inside a folder where sessions are opened'
   return null
 }
 // The PATH given to Claude Code and the sessions: only absolute folders that
@@ -458,9 +468,7 @@ function computeTrustedPath() {
   return [...dirs, ...(realNode ? moved : [])].join(':') || '/usr/bin:/bin'
 }
 function computeTrustedFolders() {
-  let folders = []
-  try { folders = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')).folders ?? [] } catch {}
-  const roots = Array.isArray(folders) ? folders.filter(f => typeof f === 'string' && isAbsolute(f)).map(realOr) : []
+  const roots = sessionRoots()
   // (As written: nothing on the way to each one can be changed by others.)
   const seen = new Set()
   return String(process.env.PATH ?? '').split(':').filter(d => {
@@ -566,7 +574,8 @@ export function validateSpec(spec, settings, current) {
   const name = String(spec.name ?? '')
   if (!NAME_RE.test(name)) throw new Error('name must match [A-Za-z0-9_-]{1,32}')
   const role = spec.role
-  if (role !== 'coordinator' && role !== 'worker') throw new Error('role must be coordinator or worker')
+  // (solo: a plain Claude Code session, outside any squad.)
+  if (role !== 'coordinator' && role !== 'worker' && role !== 'solo') throw new Error('role must be coordinator, worker or solo')
   let coordinator = null
   if (role === 'worker') {
     coordinator = spec.coordinator == null || spec.coordinator === '' ? 'coord' : String(spec.coordinator)
@@ -577,7 +586,7 @@ export function validateSpec(spec, settings, current) {
       throw new Error(`this machine only accepts these coordinators: ${settings.coordinators.join(', ')}`)
     }
   } else if (spec.coordinator != null && spec.coordinator !== '') {
-    throw new Error('a coordinator has no coordinator')
+    throw new Error(`a ${role === 'solo' ? 'standalone session' : 'coordinator'} has no coordinator`)
   }
   let compact = null
   if (spec.compact_window != null && spec.compact_window !== '') {
@@ -786,6 +795,33 @@ function ensurePrivateDir(dir) {
   if (!st.isDirectory() || st.isSymbolicLink()) throw new Error(`${dir} is not a plain folder`)
   if (typeof process.getuid === 'function' && st.uid !== process.getuid()) throw new Error(`${dir} belongs to another user`)
 }
+// Images pasted in the dashboard's terminal: saved here (kept a day), and
+// their path pasted into Claude Code, which attaches an image file whose
+// path is pasted (as when one is dragged into a terminal).
+const PASTE_DIR = join(CONFIG_DIR, 'pasted')
+const IMAGE_TYPES = {
+  'image/png': ['png', b => b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG'],
+  'image/jpeg': ['jpg', b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  'image/gif': ['gif', b => b.toString('latin1', 0, 4) === 'GIF8'],
+  'image/webp': ['webp', b => b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP'],
+}
+function savePastedImage(term, type, data) {
+  const kind = typeof type === 'string' && Object.hasOwn(IMAGE_TYPES, type) ? IMAGE_TYPES[type] : null
+  if (!kind || typeof data !== 'string' || data.length > 800_000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) return null
+  const buf = Buffer.from(data, 'base64')
+  if (buf.length < 12 || buf.length > 600_000 || !kind[1](buf)) return null
+  ensurePrivateDir(PASTE_DIR)
+  try {
+    for (const f of readdirSync(PASTE_DIR)) {
+      const p = join(PASTE_DIR, f)
+      try { const st = lstatSync(p); if (st.isFile() && Date.now() - st.mtimeMs > 86_400_000) rmSync(p, { force: true }) } catch {}
+    }
+  } catch {}
+  const file = join(PASTE_DIR, `${term}-${Date.now()}-${randomBytes(4).toString('hex')}.${kind[0]}`)
+  writeFileSync(file, buf, { mode: 0o600, flag: 'wx' })
+  return file
+}
+
 function writePrivate(dir, file, data) {
   ensurePrivateDir(dir)
   const tmp = join(dir, `.${file}.${process.pid}.${Date.now()}`)
@@ -846,7 +882,7 @@ async function openTerminalNow(spec) {
   const dir = pluginStateDir(s.name)
   // (A session in the home folder reaches everything of this user: its
   // permission prompts are answered only in its own terminal.)
-  const relay = settings.permission_relay && !s.home
+  const relay = settings.permission_relay && !s.home && s.role !== 'solo'
   writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, ...(relay ? {} : { permission_relay: false }) })
   // If anything below fails, no ticket (launch.json) is left for a later start.
   try { return await startSession(s, settings, claude, dir) } catch (err) {
@@ -860,7 +896,7 @@ async function startSession(s, settings, claude, dir) {
   const tname = PREFIX + s.name
   const env = { SQUADRA_NAME: s.name }
   if (s.compact_window) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(s.compact_window)
-  if (!settings.permission_relay || s.home) env.SQUADRA_PERMISSION_RELAY = 'off'
+  if (!settings.permission_relay || s.home || s.role === 'solo') env.SQUADRA_PERMISSION_RELAY = 'off'
   // Fixed command. Two or more arguments make tmux exec it directly, no shell.
   // "env -u TMUX" hides the tmux server from the session: its tools can't
   // simply run "tmux send-keys" into another session. (They run as the same
@@ -869,7 +905,9 @@ async function startSession(s, settings, claude, dir) {
   // server started with (it outlives restarts of this program).
   const cfg = process.env.CLAUDE_CONFIG_DIR
   if (cfg && isAbsolute(cfg)) env.CLAUDE_CONFIG_DIR = cfg
-  const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, '--dangerously-load-development-channels', 'plugin:squadra@squadra']
+  // (A standalone session takes no messages: no development channel, and so
+  // no dialog about it at every start. The plugin still reports its activity.)
+  const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, ...(s.role === 'solo' ? [] : ['--dangerously-load-development-channels', 'plugin:squadra@squadra'])]
   if (s.resume) argv.push('--continue')
   const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window })
   await tmux([
@@ -885,10 +923,16 @@ async function startSession(s, settings, claude, dir) {
   // The folder could have been swapped (e.g. for a symlink) between the check
   // and the start: make sure the session really is where it was allowed.
   // If that can't be checked, the session is closed too.
-  let where = null
-  try { where = realOr((await tmux(['display-message', '-p', '-t', `=${tname}:`, '#{pane_current_path}'])).stdout.replace(/\r?\n$/, '')) } catch {}
-  let whereId = null
-  try { const st = statSync(where); whereId = `${st.dev}:${st.ino}` } catch {}
+  // (Right after the start, until the command has really begun, tmux
+  // reports its own folder: asked again for a few seconds.)
+  let where = null, whereId = null
+  for (let i = 0; i < 30; i++) {
+    where = null; whereId = null
+    try { where = realOr((await tmux(['display-message', '-p', '-t', `=${tname}:`, '#{pane_current_path}'])).stdout.replace(/\r?\n$/, '')) } catch {}
+    try { const st = statSync(where); whereId = `${st.dev}:${st.ino}` } catch {}
+    if (where === s.folder && whereId === s.folderId) break
+    await new Promise(r => setTimeout(r, 100))
+  }
   if (where !== s.folder || whereId !== s.folderId) {
     await tmux(['kill-session', '-t', `=${tname}`]).catch(() => {})
     rmSync(join(dir, 'launch.json'), { force: true }) // no ticket left for a later start
@@ -1234,6 +1278,15 @@ async function connect(creds) {
       if (!loadSettings().allow_input) return send({ t: 'notice', term: id, text: 'typing from the dashboard is turned off on this machine (allow_input: false)' })
       if (typeof m.data === 'string' && m.data.length <= 64 * 1024) v.input(m.data)
     }
+    if (m.t === 'image') {
+      if (!loadSettings().allow_input) return send({ t: 'notice', term: id, text: 'typing from the dashboard is turned off on this machine (allow_input: false)' })
+      let file = null
+      try { file = savePastedImage(id, m.type, m.data) } catch (err) { log(`pasted image for "${id}": ${err.message}`) }
+      if (!file) return send({ t: 'notice', term: id, text: 'the pasted image could not be used (PNG, JPEG, GIF or WebP, up to 600 KB)' })
+      // Pasted as tmux pastes (bracketed when the program asked for it), so
+      // Claude Code sees a paste and attaches the image.
+      await tmux(['set-buffer', '-b', 'squadra-image', file, ';', 'paste-buffer', '-p', '-d', '-b', 'squadra-image', '-t', `=${PREFIX}${id}:`]).catch(err => log(`pasting an image into "${id}": ${err.message}`))
+    }
   }
 
   setInterval(() => { if (ws?.readyState === 1) void pushInfo().catch(() => {}) }, 3000).unref()
@@ -1389,7 +1442,7 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure })
   // No folder is allowed until the user says which (folders add): enrolling
   // from wherever the script was downloaded must not open that place up.
-  if (!existsSync(SETTINGS_FILE)) writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS })
+  if (!existsSync(SETTINGS_FILE)) writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS, settings_version: SETTINGS_VERSION })
   // Keep a copy of this program next to its settings, for the service.
   const self = fileURLToPath(import.meta.url)
   if (resolve(self) !== resolve(INSTALLED_SCRIPT)) { try { copyFileSync(self, INSTALLED_SCRIPT) } catch {} }
@@ -1686,6 +1739,19 @@ async function update() {
   try { installLauncher() } catch {}
 }
 
+// settings.json written by an older version: what were only its defaults
+// then become today's (once; "settings_version" says it was done). Up to
+// 0.0.2 every file was written with "allow_resume": false, the old default.
+const SETTINGS_VERSION = 3
+function migrateSettings() {
+  let raw
+  try { raw = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) } catch { return }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Number.isInteger(raw.settings_version)) return
+  if (raw.allow_resume === false) { delete raw.allow_resume; log('settings.json: continuing the last conversation is now allowed (the new default; set "allow_resume": false to turn it off)') }
+  raw.settings_version = SETTINGS_VERSION
+  try { writeJson(SETTINGS_FILE, raw) } catch {}
+}
+
 // --allow-home / --no-allow-home: the home folder itself as a place for
 // sessions (kept in settings.json, so the service keeps it too).
 function setAllowHome(on) {
@@ -1703,6 +1769,7 @@ async function main() {
   const argv = process.argv.slice(2)
   if (['-h', '--help', 'help'].includes(argv[0])) return process.stdout.write(USAGE)
   if (['-v', '--version', 'version'].includes(argv[0])) return process.stdout.write(`squadra-host ${VERSION}\n`)
+  migrateSettings()
   const flags = new Set(argv.filter(a => a.startsWith('--')))
   const [cmd = 'run', ...rest] = argv.filter(a => !a.startsWith('--'))
   const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service']

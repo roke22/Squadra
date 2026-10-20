@@ -432,7 +432,7 @@ function readApproved(name) {
   try {
     const a = JSON.parse(readFileSync(join(stateDirFor(name), 'access.json'), 'utf8'))
     const ap = a?.approved
-    if (ap && (ap.role === 'coordinator' || ap.role === 'worker')) {
+    if (ap && (ap.role === 'coordinator' || ap.role === 'worker' || ap.role === 'solo')) {
       return {
         role: ap.role,
         coordinator: ap.role === 'worker' && NAME_RE.test(String(ap.coordinator)) ? ap.coordinator : null,
@@ -470,7 +470,7 @@ function readLaunch(name) {
     const age = Date.now() - statSync(file).mtimeMs
     if (age > LAUNCH_MAX_AGE_MS || age < -60_000) return null // too old, or dated in the future
     const l = JSON.parse(readFileSync(file, 'utf8'))
-    if (l?.name !== name || (l.role !== 'coordinator' && l.role !== 'worker')) return null
+    if (l?.name !== name || (l.role !== 'coordinator' && l.role !== 'worker' && l.role !== 'solo')) return null
     return {
       role: l.role,
       coordinator: l.role === 'worker' && NAME_RE.test(String(l.coordinator)) ? l.coordinator : null,
@@ -583,6 +583,17 @@ function pruneExpired(a) {
 // random identity), taken from its first message or its pairing request. A
 // name deleted and registered again — by anyone with the join token — is a
 // different session: its messages are dropped until the user re-allows it.
+function forgetCoordinatorPin(s, coordinator) {
+  try {
+    const pin = JSON.parse(readFileSync(s.coordinatorPinFile, 'utf8'))
+    if (pin?.name === coordinator) rmSync(s.coordinatorPinFile, { force: true })
+  } catch {}
+  const pins = readAllowPins(s)
+  if (Object.hasOwn(pins, coordinator)) {
+    delete pins[coordinator]
+    try { writePrivateFile(s.allowPinsFile, JSON.stringify(pins, null, 2) + '\n') } catch {}
+  }
+}
 function readAllowPins(s) {
   try {
     const p = JSON.parse(readFileSync(s.allowPinsFile, 'utf8'))
@@ -1052,6 +1063,7 @@ const INSTRUCTIONS = [
 function parseRole(role) {
   const r = String(role ?? '').toLowerCase()
   if (COORDINATOR_WORDS.has(r)) return 'coordinator'
+  if (r === 'solo') return 'solo'
   if (r === 'worker' || r === '') return 'worker'
   throw new Error(`unknown role "${role}": use "coordinator" or "worker"`)
 }
@@ -1074,7 +1086,7 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
   if (coordinator && !NAME_RE.test(coordinator)) throw new Error(`invalid coordinator name "${coordinator}"`)
   if (coordinator === name) throw new Error('a worker cannot have the same name as its coordinator')
 
-  const launch = channelLaunchStatus()
+  const launch = role === 'solo' ? { ok: true } : channelLaunchStatus()
   if (launch.ok === false) {
     throw new Error(`this session was not started with the Squadra channel enabled, so it could not receive messages.\n${LAUNCH_HINT}`)
   }
@@ -1126,6 +1138,12 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
   const seeds = [...seedAllow]
   if (coordinator && !seeds.includes(coordinator)) seeds.push(coordinator)
   const s = newSession({ name, role, coordinator, staticAccess, seedAllow: seeds })
+  // A worker opened from the dashboard (launch.json) for this coordinator:
+  // the user picked it there, so the coordinator with that name now is the
+  // one to trust. A pin left by an earlier session with that name (deleted
+  // and registered again, a machine added again) is forgotten, and the one
+  // it has now is pinned at first contact.
+  if (approved && role === 'worker' && coordinator) forgetCoordinatorPin(s, coordinator)
   s.confirmedApprovers = confirmedApprovers
   s.relayOff = relayOff
   s.approverPins = new Map() // approver -> created_at when confirmed (see verifiedApprovers)
@@ -1167,9 +1185,11 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
   prepareAccess(s)
   writeApproved(s)
   void pinApprovers(s)
-  s.timers.push(setInterval(() => syncGroups(s), 5000))
-  if (!s.staticAccess) s.timers.push(setInterval(() => checkApprovals(s), 5000))
-  syncGroups(s)
+  if (role !== 'solo') {
+    s.timers.push(setInterval(() => syncGroups(s), 5000))
+    if (!s.staticAccess) s.timers.push(setInterval(() => checkApprovals(s), 5000))
+    syncGroups(s)
+  }
   void pollLoop(s)
   if (role === 'worker') void checkCoordinator(s)
   s.observer = createObserver({
@@ -1204,6 +1224,7 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
     }).catch(err => log(`intro to ${coordinator} failed: ${err.message}`))
   }
 
+  if (role === 'solo') return `Connected to Squadra as "${name}", a standalone session (outside any squad): the dashboard shows what it does.`
   const lines = [
     `Connected to Squadra as "${name}", role ${role === 'coordinator' ? 'COORDINATOR' : 'WORKER'} (server ${SERVER_URL}).`,
     role === 'coordinator'
@@ -1221,6 +1242,7 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
 // who it is in Squadra, the rules, and the latest messages it received, which
 // is where its current task lives.
 function recoveryContext(s) {
+  if (s.role === 'solo') return '' // (a plain Claude Code session: nothing of Squadra to restore)
   const who = s.role === 'coordinator'
     ? `You are connected to Squadra as "${s.name}", role COORDINATOR.`
     : `You are connected to Squadra as "${s.name}", role WORKER; your coordinator is "${s.coordinator}".`
@@ -1602,13 +1624,13 @@ async function handleRequest(msg) {
           },
         },
         serverInfo: { name: 'squadra', version: VERSION },
-        instructions: INSTRUCTIONS + autoLoginInstructions(),
+        instructions: (SOLO = startsSolo()) ? '' : INSTRUCTIONS + autoLoginInstructions(),
       })
     }
     case 'ping':
       return respond({})
     case 'tools/list':
-      return respond({ tools: TOOLS })
+      return respond({ tools: SOLO ? [] : TOOLS })
     case 'tools/call': {
       const name = params?.name
       try {
@@ -1624,6 +1646,16 @@ async function handleRequest(msg) {
 }
 
 let autoLoginDone = false
+
+// A standalone session ("solo", opened from the dashboard outside any squad):
+// a plain Claude Code session. No Squadra instructions and no tools; the
+// plugin only logs in, so the dashboard sees what it does.
+function startsSolo() {
+  const name = process.env.SQUADRA_NAME
+  if (!name || !NAME_RE.test(name)) return false
+  return (readLaunch(name) ?? readApproved(name))?.role === 'solo'
+}
+let SOLO = false
 
 // Sessions opened with SQUADRA_NAME set (for example from the dashboard, by
 // squadra-host) log in on their own: tell Claude its role from the start.
@@ -1703,7 +1735,7 @@ rl.on('line', line => {
 // - nobody at all with SQUADRA_PERMISSION_RELAY=off (set by squadra-host on
 //   machines that don't allow remote control).
 function permissionApprovers(s) {
-  if (RELAY_OFF || s.relayOff) return []
+  if (RELAY_OFF || s.relayOff || s.role === 'solo') return []
   const access = loadAccess(s)
   if (access.dmPolicy === 'disabled') return [] // no messages at all: no prompts either
   const allowed = new Set(access.allowFrom)
@@ -2126,6 +2158,7 @@ async function checkCoordinator(s, { fresh = false } = {}) {
 
 async function handleInbound(s, msg, { edited = false } = {}) {
   if (!active(s)) return
+  if (s.role === 'solo') return // outside any squad: no messages (the server refuses them too)
   // An edited permission request is never taken: what was asked can't change.
   if (edited && /^\s*🔐 Permission/.test(String(msg.text ?? ''))) { log(`ignored an edited permission request from ${msg.from?.id}`); return }
   if (s.role === 'worker' && String(msg.from?.id) === s.coordinator) {
