@@ -438,10 +438,14 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: hostEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { second = err }
   assert.ok(second, 'a second squadra-host must not run')
   assert.match(second.stderr, /already running/)
-  // The service leaves the sessions running when it stops or restarts.
+  // The service leaves the sessions running when it stops or restarts
+  // (systemd on Linux, launchd on macOS).
   const unit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: hostEnv, encoding: 'utf8' })
-  assert.match(unit, /^KillMode=process$/m)
-  assert.match(unit, /^RestartPreventExitStatus=2$/m)
+  if (process.platform === 'darwin') assert.match(unit, /<key>AbandonProcessGroup<\/key><true\/>/)
+  else {
+    assert.match(unit, /^KillMode=process$/m)
+    assert.match(unit, /^RestartPreventExitStatus=2$/m)
+  }
 })
 
 test('a standalone session starts plain Claude Code: no development channel, no permission relay, no coordinator', { skip: !hasTmux && 'tmux not installed' }, async () => {

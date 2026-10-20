@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1070,7 +1070,9 @@ test('observation: a long config path (typical on macOS) moves the socket to a p
   await w.init()
   await w.tool('login', { role: 'worker', name: 'longpath1', coordinator: 'nadie' })
   const { socketDirFor, isPrivateDir } = await import(join(ROOT, 'plugins/squadra/paths.js'))
-  const dir = socketDirFor(join(deep, 'channels', 'squadra', 'run'))
+  // (The plugin works with the config folder's real path: on macOS
+  // /var/folders is /private/var/folders.)
+  const dir = socketDirFor(join(realpathSync(deep), 'channels', 'squadra', 'run'))
   assert.match(dir, /^\/tmp\/squadra-/)
   await waitFor(() => existsSync(dir), { what: 'socket folder' })
   assert.ok(isPrivateDir(dir), 'socket folder is private')

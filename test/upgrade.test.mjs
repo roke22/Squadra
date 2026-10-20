@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +18,9 @@ let oldServerDir = null
 try {
   oldServerDir = mkdtempSync(join(tmpdir(), 'squadra-old-'))
   execFileSync('sh', ['-c', `git -C "${ROOT}" archive v0.0.1 server | tar -x -C "${oldServerDir}"`], { stdio: 'ignore' })
+  // (Without the tag — a shallow clone, as in CI — nothing is extracted; macOS's
+  // tar doesn't fail on the empty input.)
+  if (!existsSync(join(oldServerDir, 'server', 'server.js'))) oldServerDir = null
 } catch { oldServerDir = null }
 
 async function run(script, dataDir, port) {
