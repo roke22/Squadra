@@ -9,9 +9,13 @@
   "license": "MIT",
   "keywords": [
     "squadra",
-    "coordinator",
+    "claude-code",
     "multi-agent",
+    "agents",
+    "coordinator",
+    "orchestration",
     "channel",
+    "dashboard",
     "mcp"
   ],
   "homepage": "https://github.com/roke22/Squadra",

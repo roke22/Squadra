@@ -1,18 +1,18 @@
 {
   "name": "squadra",
-  "description": "Squadra: a coordinator agent that runs squads of Claude Code agents through a self-hosted Squadra server.",
+  "description": "Squadra: multi-agent Claude Code. A coordinator agent runs squads of Claude Code agents on any machine, approves their safe actions and only asks you what matters. Live web dashboard and web terminal, self-hosted server with zero dependencies.",
   "owner": {
     "name": "Jose J. Anton",
     "url": "https://github.com/roke22"
   },
   "metadata": {
-    "description": "Squadra: coordinate several Claude Code sessions through channels"
+    "description": "Multi-agent Claude Code: a coordinator agent runs squads of Claude Code sessions across machines, with a live dashboard."
   },
   "plugins": [
     {
       "name": "squadra",
       "source": "./plugins/squadra",
-      "description": "Channel that lets Claude Code sessions message each other through a Squadra server, with one session acting as coordinator.",
+      "description": "Channel that lets Claude Code sessions message each other through your self-hosted Squadra server, with one session acting as coordinator of the others. Includes pairing, allowlists and access policy (/squadra:access) and reports activity to the Squadra dashboard.",
       "version": "0.0.4"
     }
   ]

@@ -9,7 +9,7 @@
   <a href="https://github.com/roke22/Squadra/actions/workflows/test.yml"><img src="https://github.com/roke22/Squadra/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" alt="Node.js 22+">
-  <img src="https://img.shields.io/badge/dependencies-0-success" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/server%20dependencies-0-success" alt="Server has zero dependencies">
   <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="GitHub stars"></a>
 </p>
 
@@ -23,6 +23,15 @@ A web dashboard shows the whole squad live, like a wall of terminals: what each 
 
 Squadra is **multi-agent orchestration for Claude Code**: parallel Claude Code sessions on one machine or many, coordinated by another Claude Code session, with a self-hosted web dashboard and web terminal to run and watch them from any browser. It is open source (MIT), a single Node.js server with no dependencies, and installs as a Claude Code plugin.
 
+## Quick start
+
+```bash
+git clone https://github.com/roke22/Squadra.git squadra && cd squadra
+node server/server.js          # dashboard at http://127.0.0.1:7787
+```
+
+Sign in with the server token it prints, open **Machines → + Add machine** and run the one command it shows on each computer where agents should work. That's it: the details, Docker and HTTPS are in [steps 1 and 2](#1-install-the-dashboard) below.
+
 ![Squadra dashboard: two squads side by side, each coordinator with its workers](docs/screenshots/mosaic-squads.jpg)
 
 ## What you can do with it
@@ -33,19 +42,41 @@ Squadra is **multi-agent orchestration for Claude Code**: parallel Claude Code s
 - **Keep watch from anywhere:** every agent live in your browser, and a "Needs you" bar for whoever is waiting for an answer.
 - **Use all your computers and accounts:** each agent runs on any machine you add, with that machine's Claude Code login.
 
+## How it works
+
+```
+                    you
+                     │  talk in its terminal
+             ┌───────┴────────┐
+             │  coordinator   │  plans, delegates, approves, reports
+             └───────┬────────┘
+                     │  messages through squadra-server
+      ┌──────────────┼──────────────┬──────────────┐
+ ┌────┴─────┐   ┌────┴─────┐   ┌────┴─────┐   ┌────┴─────┐
+ │ worker 1 │   │ worker 2 │   │ worker 3 │   │ worker N │   each one a Claude Code
+ └──────────┘   └──────────┘   └──────────┘   └──────────┘   session, on any machine
+```
+
+- **The coordinator** is a Claude Code session with the coordinator role. It turns your request into tasks, assigns them to workers, answers their questions, approves harmless actions and escalates only what is critical.
+- **Workers** are Claude Code sessions with the worker role, each in its own project folder. They decide technical details themselves and report when they start, finish, get blocked or need a decision.
+- **`squadra-server`** relays messages between agents and serves the dashboard. Agents connect *out* to it, so their machines open no ports.
+- **The `squadra` plugin** delivers each message into the agent's session, even while it is idle, through Claude Code [Channels](https://code.claude.com/docs/en/channels), and reports what the agent is doing to the dashboard.
+
+Every agent is a normal interactive `claude` in a terminal, so you can step in and type into any of them at any time.
+
 ## Squadra vs Claude Code Agent Teams and subagents
 
 Claude Code already has [subagents](https://code.claude.com/docs/en/sub-agents) and experimental Agent Teams. Squadra is for when those stop being enough:
 
 | | Subagents | Agent Teams | Squadra |
 |---|---|---|---|
-| Agents run on | the same session | the same machine | **any machine you add**, each with its own Claude Code login |
-| Watch them | in one terminal | one terminal each | **one live web dashboard** with every agent, from any browser |
-| Unattended work | you approve each prompt | you approve each prompt | **the coordinator approves safe actions**, you only get the critical ones |
-| Open and reopen sessions | manually | manually | **from the dashboard**, with a web terminal into each agent |
-| Several repositories at once | no | the lead's directory | **one worker per repository**, on the machine that has it |
+| Agents run on | the same session | the same machine | any machine you add, each with its own Claude Code login |
+| Watch them | in one terminal | one terminal each | one live web dashboard with every agent, from any browser |
+| Unattended work | you approve each prompt | you approve each prompt | the coordinator approves safe actions, you only get the critical ones |
+| Open and reopen sessions | manually | manually | from the dashboard, with a web terminal into each agent |
+| Several repositories at once | no | the lead's directory | one worker per repository, on the machine that has it |
 
-Squadra does not replace Claude Code: every agent is a normal interactive `claude`, so you can step in and type into any of them at any time.
+Squadra adds to Claude Code rather than replacing it: subagents and Agent Teams still work inside each session.
 
 ## What you need
 
@@ -89,6 +120,8 @@ Then, still in the dashboard:
 2. **+ New session**: open a **coordinator**, then its **workers**. Each one opens in a live terminal in your browser. The first time, accept Claude Code's prompts (for the development channel, choose *"I am using this for local development"*).
 3. **Talk to the coordinator** in its terminal and tell it what you want done.
 
+![A squad in the dashboard: the coordinator and its workers, each in a live web terminal](docs/screenshots/squad-view.jpg)
+
 ## Good tips
 
 - **Use HTTPS** (a domain, step 1) when other computers connect to your dashboard, and keep the server token to yourself: it's the key to the dashboard.
@@ -101,6 +134,29 @@ Then, still in the dashboard:
 ## Updating
 
 Update the dashboard (`git pull` and start it again, or rebuild the Docker image), then run `squadra-host update` on each computer. The dashboard tells you which ones are out of date.
+
+## FAQ
+
+**What does the coordinator approve on its own, and what does it ask me?**
+It approves what has no side effects: reading files, searching, running tests and local builds. Anything destructive, irreversible or with effects outside the machine (deleting data, force pushes, deploying, publishing, spending money, credentials) it asks you first, as do product decisions and anything about security or costs. Workers decide technical details themselves. The rules live in the plugin's instructions and in your coordinator's `CLAUDE.md`, so you can tighten them.
+
+**Does it work with my Claude plan?**
+Yes, with any claude.ai plan that includes Claude Code (Pro, Max, Team, Enterprise) or with an Anthropic Console API key. Each agent is a normal Claude Code session on its machine, with that machine's login, so it counts against that account like any other session.
+
+**What does the "add machine" command install?**
+What is missing among tmux, Node.js 22 and Claude Code, then `squadra-host`: a small Node program that connects the machine to your server, installs the `squadra` plugin and stays running as a user service. The script is [install/linux.sh](install/linux.sh) (and [macos.sh](install/macos.sh), [windows.bat](install/windows.bat)); it is read in full before anything runs.
+
+**What leaves my machines?**
+Only what goes to **your** Squadra server: messages between agents, presence, and what you choose to show in the dashboard (`--observe off|activity|full`). Recognisable secrets are masked, and files from credentials folders are never sent. Nothing goes to any other service. Details in the [plugin README](plugins/squadra/README.md).
+
+**Do I need to open ports on the machines where agents run?**
+No. Agents connect out to the server. Only the server needs to be reachable, and with a domain it gets its own HTTPS certificate.
+
+**Is it a replacement for Agent Teams or subagents?**
+No, it works alongside them: those run inside one session on one machine; Squadra coordinates whole sessions across machines and lets the squad keep going without you watching.
+
+**Why the "development channel" flag?**
+Channels are the Claude Code feature that delivers messages into a session. Until the plugin is in Anthropic's directory, Claude Code asks you to confirm loading a channel plugin the first time. Choose *"I am using this for local development"*.
 
 ## Learn more
 
