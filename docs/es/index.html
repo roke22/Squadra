@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squadra: Claude Code multiagente con un coordinador y un panel en directo</title>
+<meta name="description" content="Squadra dirige escuadras de agentes de Claude Code en cualquiera de tus equipos. Un agente coordinador reparte el trabajo, aprueba las acciones seguras y solo te pregunta lo importante. Panel web en directo, terminal web, servidor Node autoalojado sin dependencias. Código abierto, MIT.">
+<link rel="canonical" href="https://roke22.github.io/Squadra/es/">
+<link rel="alternate" hreflang="en" href="https://roke22.github.io/Squadra/">
+<link rel="alternate" hreflang="es" href="https://roke22.github.io/Squadra/es/">
+<link rel="alternate" hreflang="x-default" href="https://roke22.github.io/Squadra/">
+<link rel="icon" href="../squadra-logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Squadra: Claude Code multiagente con un coordinador y un panel en directo">
+<meta property="og:description" content="Un agente coordinador dirige escuadras de agentes de Claude Code en cualquiera de tus equipos: reparte el trabajo, aprueba las acciones seguras y solo te pregunta lo importante.">
+<meta property="og:url" content="https://roke22.github.io/Squadra/es/">
+<meta property="og:locale" content="es_ES">
+<meta property="og:image" content="https://roke22.github.io/Squadra/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Squadra: Claude Code multiagente con un coordinador y un panel en directo">
+<meta name="twitter:description" content="Escuadras de agentes de Claude Code en cualquier equipo, un coordinador que las dirige sin vigilancia y un panel web en directo. Código abierto, MIT.">
+<meta name="twitter:image" content="https://roke22.github.io/Squadra/social-preview.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Squadra",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows (WSL)",
+  "description": "Un agente coordinador que dirige escuadras de agentes de Claude Code en cualquier equipo, con un panel web en directo y terminal web. Servidor Node.js autoalojado sin dependencias.",
+  "url": "https://roke22.github.io/Squadra/es/",
+  "inLanguage": "es",
+  "codeRepository": "https://github.com/roke22/Squadra",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "author": {"@type": "Person", "name": "Jose J. Anton", "url": "https://github.com/roke22"}
+}
+</script>
+<style>
+:root{--accent:#C15F3C;--ink:#1F1E1C;--muted:#5d5955;--bg:#FBF7F3;--card:#fff;--line:#eadfd7}
+@media (prefers-color-scheme:dark){:root{--ink:#f3efe9;--muted:#b3aca4;--bg:#17150f;--card:#221f19;--line:#3a342c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header{padding:56px 0 24px;text-align:center}
+header img.logo{width:88px;height:88px}
+h1{font-size:clamp(28px,5vw,46px);line-height:1.15;margin:16px 0 12px;letter-spacing:-.5px}
+.lead{font-size:clamp(18px,2.4vw,22px);color:var(--muted);max-width:760px;margin:0 auto 28px}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:600;text-decoration:none;border:2px solid var(--accent)}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.ghost{color:var(--accent)}
+.shot{display:block;width:100%;border-radius:14px;border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.12);margin:40px 0}
+h2{font-size:clamp(24px,3.4vw,32px);margin:56px 0 18px;letter-spacing:-.3px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px}
+.card h3{margin:0 0 6px;font-size:19px}
+.card p{margin:0;color:var(--muted)}
+pre{background:#1F1E1C;color:#f3efe9;padding:18px 20px;border-radius:12px;overflow:auto;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:16px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600}
+td strong{color:var(--accent)}
+.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:18px 0 0}
+footer{color:var(--muted);text-align:center;padding:56px 0 40px;font-size:15px}
+@media (max-width:640px){table{display:block;overflow-x:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <img class="logo" src="../squadra-logo.svg" alt="Squadra logo" onerror="this.style.display='none'">
+  <h1>Claude Code multiagente,<br>con un coordinador y un panel en directo</h1>
+  <p class="lead">Squadra dirige <strong>escuadras de agentes de Claude Code</strong> en cualquiera de tus equipos. Un agente coordinador reparte el trabajo, aprueba las acciones seguras y solo te pregunta lo importante. Tú lo ves todo en directo en el navegador.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/roke22/Squadra/blob/main/README-es.md#1-instala-el-panel">Empezar en GitHub</a>
+    <a class="btn ghost" href="https://github.com/roke22/Squadra/blob/main/docs/referencia.md">Leer la referencia</a>
+    <a class="btn ghost" href="../">In English</a>
+  </div>
+  <div class="badges">
+    <a href="https://github.com/roke22/Squadra/releases"><img src="https://img.shields.io/github/v/release/roke22/Squadra?label=release&color=C15F3C" alt="Latest release"></a>
+    <a href="https://github.com/roke22/Squadra/actions/workflows/test.yml"><img src="https://github.com/roke22/Squadra/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+    <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
+    <img src="https://img.shields.io/badge/dependencies-0-success" alt="Zero dependencies">
+    <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="Stars"></a>
+  </div>
+</header>
+
+<img class="shot" src="../screenshots/mosaic-squads.jpg" alt="Panel de Squadra: dos escuadras lado a lado, cada coordinador con sus workers" width="1436" height="800">
+
+<h2>Qué puedes hacer con él</h2>
+<div class="grid">
+  <div class="card"><h3>Una funcionalidad en varios repositorios a la vez</h3><p>Backend, web y app móvil, cada uno con su worker, coordinados entre sí.</p></div>
+  <div class="card"><h3>Partir un trabajo grande en paralelo</h3><p>Una migración, una refactorización o más tests: un worker de Claude Code por módulo, todos a la vez.</p></div>
+  <div class="card"><h3>Dejarlo trabajando solo</h3><p>Los workers deciden los detalles técnicos; el coordinador aprueba sus acciones seguras y solo te escala lo crítico.</p></div>
+  <div class="card"><h3>Vigilarlo desde cualquier sitio</h3><p>Todos los agentes en directo en tu navegador, una terminal web a cada uno y una barra «Te necesitan» con quien espera.</p></div>
+  <div class="card"><h3>Usar todos tus equipos y cuentas</h3><p>Cada agente funciona en cualquier máquina que añadas, con la sesión de Claude Code de esa máquina. Los agentes conectan hacia fuera; sin abrir puertos.</p></div>
+  <div class="card"><h3>Autoalojado, sin dependencias</h3><p>Un servidor Node.js, o una imagen Docker. HTTPS automático cuando le das un dominio. Licencia MIT.</p></div>
+</div>
+
+<h2>Comparado con lo que trae Claude Code</h2>
+<table>
+<tr><th></th><th>Subagentes de Claude Code</th><th>Agent Teams de Claude Code</th><th>Squadra</th></tr>
+<tr><td>Los agentes corren en</td><td>la misma sesión</td><td>el mismo equipo</td><td><strong>cualquier equipo que añadas</strong>, cada uno con su sesión</td></tr>
+<tr><td>Verlos</td><td>una terminal</td><td>una terminal por agente</td><td><strong>un panel web en directo</strong>, desde cualquier navegador</td></tr>
+<tr><td>Trabajo desatendido</td><td>apruebas cada aviso</td><td>apruebas cada aviso</td><td><strong>el coordinador aprueba las acciones seguras</strong></td></tr>
+<tr><td>Abrir y reabrir sesiones</td><td>a mano</td><td>a mano</td><td><strong>desde el panel</strong>, con terminal web</td></tr>
+<tr><td>Varios repositorios</td><td>no</td><td>el directorio del lead</td><td><strong>un worker por repositorio</strong>, donde esté</td></tr>
+</table>
+<p>Squadra no sustituye a Claude Code: cada agente es un <code>claude</code> interactivo normal, así que puedes entrar y escribir en cualquiera en cualquier momento.</p>
+
+<h2>Instalación en dos pasos</h2>
+<pre><code>git clone https://github.com/roke22/Squadra.git squadra &amp;&amp; cd squadra
+node server/server.js        # panel en http://127.0.0.1:7787</code></pre>
+<p>Después abre <strong>Máquinas → Añadir máquina</strong> en el panel y ejecuta el comando que te muestra en cada equipo donde quieras agentes. Las instrucciones completas, Docker y HTTPS están en el <a href="https://github.com/roke22/Squadra/blob/main/README-es.md">README en español</a>.</p>
+
+<img class="shot" src="../screenshots/squad-view.jpg" alt="Una escuadra: el coordinador y sus workers, cada uno en una terminal en directo" width="1436" height="800">
+
+<h2>Qué necesitas</h2>
+<ul>
+  <li>Una cuenta de <a href="https://claude.com/product/claude-code">Claude Code</a>: un plan de claude.ai (Pro, Max, Team o Enterprise) o una clave de API de Anthropic Console.</li>
+  <li>Un equipo para el panel con <a href="https://nodejs.org">Node.js 22</a> o Docker. Puede ser el mismo donde trabajan tus agentes.</li>
+</ul>
+
+<footer>
+  <p><a href="https://github.com/roke22/Squadra">GitHub</a> · <a href="https://github.com/roke22/Squadra/releases">Releases</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · <a href="https://github.com/roke22/Squadra/issues">Issues</a></p>
+  <p>Squadra es código abierto con licencia MIT, de <a href="https://github.com/roke22">Jose J. Anton</a>. Claude y Claude Code son marcas de Anthropic; Squadra es un proyecto independiente.</p>
+</footer>
+</div>
+</body>
+</html>
