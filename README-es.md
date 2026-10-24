@@ -1,16 +1,27 @@
 <p align="center"><img src="branding/squadra-logo.svg" width="96" alt="Logo de Squadra"></p>
 
-<h1 align="center">Squadra</h1>
+<h1 align="center">Squadra: Claude Code multiagente con un coordinador y un panel en directo</h1>
 
 <p align="center"><b>Un agente coordinador que dirige escuadras de agentes de Claude Code: rápido, desatendido y a la vista en directo.</b></p>
 
-<p align="center"><a href="README.md">Read in English</a> · v0.0.4</p>
+<p align="center">
+  <a href="https://github.com/roke22/Squadra/releases"><img src="https://img.shields.io/github/v/release/roke22/Squadra?label=release&color=C15F3C" alt="Última versión"></a>
+  <a href="https://github.com/roke22/Squadra/actions/workflows/test.yml"><img src="https://github.com/roke22/Squadra/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="Licencia MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" alt="Node.js 22+">
+  <img src="https://img.shields.io/badge/dependencies-0-success" alt="Sin dependencias">
+  <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="Estrellas en GitHub"></a>
+</p>
+
+<p align="center"><a href="README.md">Read in English</a> · <a href="https://roke22.github.io/Squadra/">Web</a> · <a href="docs/referencia.md">Referencia</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a></p>
 
 ---
 
 Squadra le da a [Claude Code](https://claude.com/product/claude-code) un **coordinador**: le dices lo que quieres y él reparte el trabajo entre una escuadra de **workers** (otras sesiones de Claude Code), sigue cómo avanzan, aprueba sus acciones seguras y solo vuelve a ti para las decisiones importantes.
 
 Un panel web muestra toda la escuadra en directo, como una pared de terminales: qué hace cada agente, qué dice Claude y quién te está esperando. Desde ahí también añades tus equipos y abres sesiones nuevas en ellos.
+
+Squadra es **orquestación multiagente para Claude Code**: varias sesiones de Claude Code en paralelo, en un equipo o en varios, coordinadas por otra sesión de Claude Code, con un panel web autoalojado y una terminal web para lanzarlas y vigilarlas desde cualquier navegador. Es código abierto (MIT), un único servidor Node.js sin dependencias, y se instala como plugin de Claude Code.
 
 ![Panel de Squadra: dos escuadras lado a lado, cada coordinador con sus workers](docs/screenshots/mosaic-squads.jpg)
 
@@ -21,6 +32,20 @@ Un panel web muestra toda la escuadra en directo, como una pared de terminales: 
 - **Dejarlo trabajando solo:** los workers deciden los detalles técnicos y el coordinador aprueba sus acciones seguras, así la escuadra sigue mientras no estás.
 - **Vigilarlo desde cualquier sitio:** todos los agentes en directo en tu navegador, y una barra «Te necesitan» con quien espera una respuesta.
 - **Usar todos tus equipos y cuentas:** cada agente funciona en cualquier máquina que añadas, con la sesión de Claude Code de esa máquina.
+
+## Squadra frente a los Agent Teams y subagentes de Claude Code
+
+Claude Code ya tiene [subagentes](https://code.claude.com/docs/en/sub-agents) y los Agent Teams experimentales. Squadra es para cuando se quedan cortos:
+
+| | Subagentes | Agent Teams | Squadra |
+|---|---|---|---|
+| Los agentes corren en | la misma sesión | el mismo equipo | **cualquier equipo que añadas**, cada uno con su sesión de Claude Code |
+| Verlos | en una terminal | una terminal por agente | **un panel web en directo** con todos los agentes, desde cualquier navegador |
+| Trabajo desatendido | apruebas cada aviso | apruebas cada aviso | **el coordinador aprueba las acciones seguras**, a ti solo te llegan las críticas |
+| Abrir y reabrir sesiones | a mano | a mano | **desde el panel**, con una terminal web a cada agente |
+| Varios repositorios a la vez | no | el directorio del lead | **un worker por repositorio**, en el equipo que lo tiene |
+
+Squadra no sustituye a Claude Code: cada agente es un `claude` interactivo normal, así que puedes entrar y escribir en cualquiera de ellos en cualquier momento.
 
 ## Qué necesitas
 
@@ -81,6 +106,10 @@ Actualiza el panel (`git pull` y arráncalo de nuevo, o reconstruye la imagen de
 
 - [docs/referencia.md](docs/referencia.md): configurar agentes a mano sin el panel, todas las opciones del servidor y cómo funciona todo por dentro.
 - [PLAN.md](PLAN.md): la guía técnica completa.
+
+## Contribuir
+
+Los errores y las ideas van a [Issues](https://github.com/roke22/Squadra/issues); las preguntas y lo que hayas montado con Squadra, a [Discussions](https://github.com/roke22/Squadra/discussions). En [CONTRIBUTING.md](CONTRIBUTING.md) está cómo ejecutar los tests y enviar un pull request. Si Squadra te resulta útil, una ⭐ en GitHub ayuda a que lo encuentre más gente.
 
 ## Licencia
 

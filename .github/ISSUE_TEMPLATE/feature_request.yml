@@ -1,0 +1,16 @@
+name: Feature request
+description: Something you would like Squadra to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the solution. What is slow, manual or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How could Squadra help
+      description: Optional. If you have an idea of how it should work, describe it here.

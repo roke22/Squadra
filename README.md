@@ -1,16 +1,27 @@
 <p align="center"><img src="branding/squadra-logo.svg" width="96" alt="Squadra logo"></p>
 
-<h1 align="center">Squadra</h1>
+<h1 align="center">Squadra: multi-agent Claude Code with a coordinator and a live dashboard</h1>
 
 <p align="center"><b>A coordinator agent that runs squads of Claude Code agents — fast, unattended, and visible live.</b></p>
 
-<p align="center"><a href="README-es.md">Leer en español</a> · v0.0.4</p>
+<p align="center">
+  <a href="https://github.com/roke22/Squadra/releases"><img src="https://img.shields.io/github/v/release/roke22/Squadra?label=release&color=C15F3C" alt="Latest release"></a>
+  <a href="https://github.com/roke22/Squadra/actions/workflows/test.yml"><img src="https://github.com/roke22/Squadra/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" alt="Node.js 22+">
+  <img src="https://img.shields.io/badge/dependencies-0-success" alt="Zero dependencies">
+  <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="GitHub stars"></a>
+</p>
+
+<p align="center"><a href="README-es.md">Leer en español</a> · <a href="https://roke22.github.io/Squadra/">Website</a> · <a href="docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a></p>
 
 ---
 
 Squadra gives [Claude Code](https://claude.com/product/claude-code) a **coordinator**: you tell it what you want, and it splits the work among a squad of **workers** (other Claude Code sessions), follows their progress, approves their safe actions and only comes back to you for the decisions that matter.
 
 A web dashboard shows the whole squad live, like a wall of terminals: what each agent is doing, what Claude is saying, and who is waiting for you. From there you also add your computers and open new sessions on them.
+
+Squadra is **multi-agent orchestration for Claude Code**: parallel Claude Code sessions on one machine or many, coordinated by another Claude Code session, with a self-hosted web dashboard and web terminal to run and watch them from any browser. It is open source (MIT), a single Node.js server with no dependencies, and installs as a Claude Code plugin.
 
 ![Squadra dashboard: two squads side by side, each coordinator with its workers](docs/screenshots/mosaic-squads.jpg)
 
@@ -21,6 +32,20 @@ A web dashboard shows the whole squad live, like a wall of terminals: what each 
 - **Leave it working unattended:** workers decide the technical details and the coordinator approves their safe actions, so the squad keeps going while you are away.
 - **Keep watch from anywhere:** every agent live in your browser, and a "Needs you" bar for whoever is waiting for an answer.
 - **Use all your computers and accounts:** each agent runs on any machine you add, with that machine's Claude Code login.
+
+## Squadra vs Claude Code Agent Teams and subagents
+
+Claude Code already has [subagents](https://code.claude.com/docs/en/sub-agents) and experimental Agent Teams. Squadra is for when those stop being enough:
+
+| | Subagents | Agent Teams | Squadra |
+|---|---|---|---|
+| Agents run on | the same session | the same machine | **any machine you add**, each with its own Claude Code login |
+| Watch them | in one terminal | one terminal each | **one live web dashboard** with every agent, from any browser |
+| Unattended work | you approve each prompt | you approve each prompt | **the coordinator approves safe actions**, you only get the critical ones |
+| Open and reopen sessions | manually | manually | **from the dashboard**, with a web terminal into each agent |
+| Several repositories at once | no | the lead's directory | **one worker per repository**, on the machine that has it |
+
+Squadra does not replace Claude Code: every agent is a normal interactive `claude`, so you can step in and type into any of them at any time.
 
 ## What you need
 
@@ -81,6 +106,10 @@ Update the dashboard (`git pull` and start it again, or rebuild the Docker image
 
 - [docs/reference.md](docs/reference.md): setting agents up by hand without the dashboard, every server option, and how it all works.
 - [PLAN.md](PLAN.md): the full technical guide (Spanish).
+
+## Contributing
+
+Bugs and ideas go to [Issues](https://github.com/roke22/Squadra/issues); questions and show-and-tell to [Discussions](https://github.com/roke22/Squadra/discussions). See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the tests and send a pull request. If Squadra is useful to you, a ⭐ on GitHub helps other people find it.
 
 ## License
 

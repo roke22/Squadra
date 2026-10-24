@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in Squadra does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: Relevant lines from squadra-server, squadra-host or the Claude Code session. Remove tokens.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Squadra version
+      placeholder: v0.0.4 (git describe --tags)
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How do you run the server
+      options: [node server/server.js, Docker, other]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Ubuntu 24.04, Node 22.13, Claude Code 2.1.x, macOS agents

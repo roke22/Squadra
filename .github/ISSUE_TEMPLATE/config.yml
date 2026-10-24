@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and show-and-tell
+    url: https://github.com/roke22/Squadra/discussions
+    about: Ask how to set something up, or show what you built with your squad.

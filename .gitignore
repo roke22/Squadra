@@ -5,3 +5,6 @@ data/
 
 # Local notes, never committed
 *.local.md
+
+# Claude Code local config and secrets (not .claude-plugin, which is the marketplace manifest)
+.claude/
