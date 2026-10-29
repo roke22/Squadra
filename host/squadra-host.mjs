@@ -153,6 +153,7 @@ function writeJson(file, data, mode = 0o600) {
 //   permission_relay  whether a session's coordinator may answer its permission
 //                     prompts from another session (default: same as allow_input)
 //   coordinators      if set, the only coordinator names a worker may be given
+//                     (and a coordinator here may be linked with)
 //   claude_command    the Claude Code executable
 // Each warning about settings.json once (until the file changes), not on
 // every message.
@@ -575,7 +576,7 @@ function insideAllowed(real, folders) {
 // The only thing a server can ask for. Anything unexpected is refused.
 export function validateSpec(spec, settings, current) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('invalid request')
-  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume', 'identity', 'persona'])
+  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume', 'identity', 'persona', 'links'])
   for (const k of Object.keys(spec)) if (!allowed.has(k)) throw new Error(`unknown field "${plain(k).slice(0, 40)}"`)
   const name = String(spec.name ?? '')
   if (!NAME_RE.test(name)) throw new Error('name must match [A-Za-z0-9_-]{1,32}')
@@ -610,13 +611,34 @@ export function validateSpec(spec, settings, current) {
   // Only the id of a skill or agent listed for that folder: the machine looks
   // it up again when the session opens (see personas below).
   if (spec.persona != null && spec.persona !== '' && !(typeof spec.persona === 'string' && PERSONA_RE.test(spec.persona))) throw new Error('invalid persona')
+  // A coordinator's links: coordinators of other squads it may talk with.
+  const links = spec.links == null ? [] : checkLinks(spec.links, name, role, settings)
   const real = checkFolder(spec.folder, settings)
   if (current.some(t => t.name === name)) throw new Error(`a session named "${name}" is already open on this machine`)
   if (current.length >= settings.max_sessions) throw new Error(`this machine allows at most ${settings.max_sessions} sessions`)
   // Which folder exactly (device and inode), to check after the start that
   // the session is in this one and not in another put at the same path.
   const id = statSync(real)
-  return { name, role, coordinator, folder: real, folderId: `${id.dev}:${id.ino}`, compact_window: compact, resume: spec.resume === true, identity: spec.identity ?? null, persona: spec.persona || null, home: isHome(real) }
+  return { name, role, coordinator, folder: real, folderId: `${id.dev}:${id.ino}`, compact_window: compact, resume: spec.resume === true, identity: spec.identity ?? null, persona: spec.persona || null, links, home: isHome(real) }
+}
+
+// The coordinators of other squads a coordinator is linked with (each one
+// can give it work, as its user could): names only, and only the ones this
+// machine accepts as coordinators when it pins them ("coordinators").
+const LINKS_MAX = 20
+export function checkLinks(links, name, role, settings) {
+  if (!Array.isArray(links) || links.length > LINKS_MAX) throw new Error(`links must be a list of at most ${LINKS_MAX} session names`)
+  if (links.length && role !== 'coordinator') throw new Error('only a coordinator is linked with other squads')
+  const out = []
+  for (const l of links) {
+    if (typeof l !== 'string' || !NAME_RE.test(l)) throw new Error('invalid name in links')
+    if (l === name) throw new Error('a coordinator is not linked with itself')
+    if (settings.coordinators.length && !settings.coordinators.includes(l)) {
+      throw new Error(`this machine only accepts these coordinators: ${settings.coordinators.join(', ')} (not "${l}")`)
+    }
+    if (!out.includes(l)) out.push(l)
+  }
+  return out
 }
 
 // A folder the server names (to open a session there, or to list its
@@ -1036,6 +1058,9 @@ async function openTerminalNow(spec) {
   // (The plugin tells the session's squad which persona it follows.)
   const persona = s.personaInfo ? { kind: s.personaInfo.kind, name: s.personaInfo.name, description: s.personaInfo.description } : null
   writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, ...(relay ? {} : { permission_relay: false }), ...(persona ? { persona } : {}) })
+  // (Its links, kept while it runs: the dashboard can change them, see "links".)
+  if (s.role === 'coordinator') writePrivate(dir, 'links.json', { name: s.name, coordinators: s.links })
+  else rmSync(join(dir, 'links.json'), { force: true })
   // If anything below fails, no ticket (launch.json) is left for a later start.
   try { return await startSession(s, settings, claude, dir) } catch (err) {
     rmSync(join(dir, 'launch.json'), { force: true })
@@ -1108,12 +1133,27 @@ async function startSession(s, settings, claude, dir) {
   return { id: s.name, name: s.name }
 }
 
+// The links of a coordinator running on this machine, changed from the
+// dashboard: its plugin reads links.json again (only a session this machine
+// started does).
+async function setLinks(name, coordinators) {
+  if (!NAME_RE.test(String(name))) throw new Error('invalid session')
+  const t = (await listTerminals()).find(x => x.id === name)
+  if (!t) throw new Error('no such session on this machine')
+  if (t.role !== 'coordinator') throw new Error('only a coordinator is linked with other squads')
+  const links = checkLinks(coordinators, name, 'coordinator', loadSettings())
+  writePrivate(pluginStateDir(name), 'links.json', { name, coordinators: links })
+  log(`links of "${plain(name)}": ${links.map(plain).join(', ') || '(none)'}`)
+  return { name, links }
+}
+
 async function killTerminal(id) {
   if (!NAME_RE.test(String(id))) throw new Error('invalid session')
   const list = await listTerminals()
   if (!list.some(t => t.id === id)) throw new Error('no such session on this machine')
   await tmux(['kill-session', '-t', `=${PREFIX}${id}`]) // "=": exactly this name, never a prefix match
   try { rmSync(join(pluginStateDir(id), 'launch.json'), { force: true }) } catch {} // if it never got to use it
+  try { rmSync(join(pluginStateDir(id), 'links.json'), { force: true }) } catch {}
   log(`closed "${id}"`)
   return true
 }
@@ -1376,6 +1416,8 @@ async function connect(creds) {
     async kill(m) { const r = await killTerminal(m.term); await pushInfo(); return r },
     // The skills and agents a session opened in this folder could follow.
     async personas(m) { return { personas: listPersonas(checkFolder(m.folder, loadSettings())).map(personaView) } },
+    // The dashboard linked or unlinked a coordinator running here.
+    async links(m) { return setLinks(m.name, m.coordinators) },
     // The dashboard adds or removes an allowed folder: the same checks as
     // here, unless this machine keeps its folders to itself.
     async folders(m) {
@@ -1571,6 +1613,7 @@ Settings: ${SETTINGS_FILE}
   permission_relay        whether a worker's coordinator may answer its permission prompts
                           from another session (default: same as allow_input)
   coordinators            if set, the only coordinator names workers here may be given
+                          (and coordinators here may be linked with)
   claude_command          the Claude Code executable (default "claude")
 `
 

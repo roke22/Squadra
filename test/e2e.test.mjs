@@ -1143,6 +1143,105 @@ test('server: squad templates are saved, listed, replaced and deleted', async ()
   assert.equal((await post('templates/delete', { name: 'Marketing team' })).ok, false)
 })
 
+test('server: links between squads: only coordinators, shown to each other, and a cap on what two coordinators send each other', async () => {
+  const post = (path, body) => fetch(`${URL_}/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVER_TOKEN}` }, body: JSON.stringify(body) }).then(r => r.json())
+  const reg = async (name, role) => {
+    const secret = (await api('register', { name }, SERVER_TOKEN)).result.secret
+    await api('claimSession', { instance: `inst-${name}-0001`, role, ...(role === 'worker' ? { coordinator: 'lsa' } : {}) }, secret)
+    // (A connected session acts only with its instance id.)
+    return (method, params) => api(method, params, secret, `inst-${name}-0001`)
+  }
+  const a = await reg('lsa', 'coordinator')
+  const b = await reg('lsb', 'coordinator')
+  await reg('lsw', 'worker')
+  // Not linked yet: neither sees whether the other is connected.
+  assert.equal((await a('getChat', { chat_id: 'lsb' })).result.presence_hidden, true)
+  for (const [body, re] of [
+    [{ a: 'lsa', b: 'lsw' }, /"lsw" is not a coordinator/],
+    [{ a: 'lsa', b: 'lsa' }, /not linked with itself/],
+    [{ a: 'lsa', b: 'bad name' }, /two session names/],
+  ]) {
+    const r = await post('links/add', body)
+    assert.equal(r.ok, false, JSON.stringify(body))
+    assert.match(r.description, re)
+  }
+  const r = await post('links/add', { a: 'lsb', b: 'lsa' })
+  assert.ok(r.ok, r.description)
+  assert.deepEqual([r.result.a, r.result.b, r.result.warnings], ['lsa', 'lsb', []])
+  assert.match((await post('links/add', { a: 'lsa', b: 'lsb' })).description, /already linked/)
+  assert.deepEqual((await dash('/api/state')).result.links.map(l => [l.a, l.b]), [['lsa', 'lsb']])
+  // Linked: each one sees the other.
+  const chat = (await a('getChat', { chat_id: 'lsb' })).result
+  assert.equal(chat.presence_hidden, undefined)
+  assert.equal(chat.online, true)
+  // Two coordinators can't keep each other going forever.
+  for (let i = 0; i < 60; i++) {
+    const m = await (i % 2 ? b : a)('sendMessage', { chat_id: i % 2 ? 'lsa' : 'lsb', text: `turn ${i}` })
+    assert.ok(m.ok, `message ${i}: ${m.description}`)
+  }
+  const over = await a('sendMessage', { chat_id: 'lsb', text: 'one more' })
+  assert.equal(over.error_code, 429)
+  assert.equal(over.parameters.reason, 'coordinators_limit')
+  assert.match(over.description, /"lsa" and "lsb" \(two coordinators\) have sent each other 60 messages in the last hour.*Tell the user/)
+  // A worker of theirs is not held back by it.
+  assert.ok((await a('sendMessage', { chat_id: 'lsw', text: 'task' })).ok)
+  // Unlinked; and a deleted coordinator takes its links with it.
+  assert.ok((await post('links/delete', { a: 'lsa', b: 'lsb' })).ok)
+  assert.equal((await post('links/delete', { a: 'lsa', b: 'lsb' })).ok, false)
+  assert.ok((await post('links/add', { a: 'lsa', b: 'lsb' })).ok)
+  await b('releaseSession', { instance: 'inst-lsb-0001', reason: 'logout' })
+  assert.ok((await post('delete', { session: 'lsb' })).ok)
+  assert.deepEqual((await dash('/api/state')).result.links, [])
+})
+
+test('linked coordinators: two squads message each other, the plugin marks it, and the links the machine sets follow the dashboard', async () => {
+  // A coordinator the machine started (launch.json), with the links the
+  // dashboard set (links.json, kept by the machine).
+  const ca = new Plugin('lpa', { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' })
+  const linksFile = join(ca.stateDir, 'links.json')
+  writeFileSync(linksFile, JSON.stringify({ name: 'lpa', coordinators: ['lpb', 'lpa', 'bad name'] }))
+  await ca.init()
+  await ca.waitConnected()
+  // A coordinator logged in by hand: a links.json there is not its user's
+  // word (only the machine's, for a session it started); access.json is.
+  const cb = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await cb.init()
+  await cb.tool('login', { role: 'coordinator', name: 'lpb' })
+  const bState = join(cb.configDir, 'channels', 'squadra', 'lpb')
+  writeFileSync(join(bState, 'links.json'), JSON.stringify({ name: 'lpb', coordinators: ['intruder'] }))
+  assert.match(await cb.tool('status', {}), /Linked coordinators \(other squads\): \(none\)/)
+  // Not linked: what it sends is not delivered as a message.
+  await ca.tool('reply', { chat_id: 'lpb', text: 'before the link' })
+  await sleep(800)
+  assert.equal(cb.channel(p => p.content === 'before the link').length, 0)
+  await assert.rejects(cb.tool('reply', { chat_id: 'lpa', text: 'x' }), /not allowlisted/)
+  const acc = JSON.parse(readFileSync(join(bState, 'access.json'), 'utf8'))
+  acc.linkedCoordinators = ['lpa']
+  writeFileSync(join(bState, 'access.json'), JSON.stringify(acc, null, 2))
+  assert.match(await cb.tool('status', {}), /Linked coordinators \(other squads\): lpa\n/)
+  assert.match(await ca.tool('status', {}), /Linked coordinators \(other squads\): lpb\n/)
+
+  await ca.tool('reply', { chat_id: 'lpb', text: 'Can your squad write the landing copy?' })
+  const ask = await cb.waitChannel(p => p.content === 'Can your squad write the landing copy?', 'request from the other squad')
+  assert.equal(ask.meta.linked, 'true')
+  await cb.tool('reply', { chat_id: 'lpa', text: 'Done: copy in docs/landing.md' })
+  const done = await ca.waitChannel(p => p.content === 'Done: copy in docs/landing.md', 'result')
+  assert.equal(done.meta.linked, 'true')
+  assert.match(await cb.tool('ping', {}), /lpa \(linked coordinator\): ALIVE/)
+  // After a compaction it still knows who it is linked with, and the rule.
+  const ctx = JSON.parse(await runHookOut(ca, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.match(ctx, /LINKED COORDINATORS/)
+  assert.match(ctx, /Linked coordinators \(other squads\): lpb\./)
+
+  // The dashboard unlinks them: the machine rewrites links.json and Claude is told.
+  writeFileSync(linksFile, JSON.stringify({ name: 'lpa', coordinators: [] }))
+  const notice = await ca.waitChannel(p => p.meta?.kind === 'squadra_notice' && p.content.includes('No longer linked: lpb'), 'unlinked notice', 12000)
+  assert.match(notice.content, /Linked coordinators: \(none\)/)
+  await assert.rejects(ca.tool('reply', { chat_id: 'lpb', text: 'x' }), /not allowlisted/)
+  ca.close()
+  cb.close()
+})
+
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
   const wk = new Plugin('auto1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'worker', SQUADRA_COORDINATOR: 'boss9' })
   const r = await wk.init()

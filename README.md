@@ -42,6 +42,7 @@ Sign in with the server token it prints, open **Machines → + Add machine** and
 - **Keep watch from anywhere:** every agent live in your browser, and a "Needs you" bar for whoever is waiting for an answer.
 - **Use all your computers and accounts:** each agent runs on any machine you add, with that machine's Claude Code login.
 - **Build teams with your own skills:** give each agent a skill or agent from its project (design, marketing, HR, code review…) as its persona, and save the whole squad as a template to open it again in one click.
+- **Link squads:** link the coordinators of two squads (design and marketing, say) so they share work, each handing what it takes on to its own workers.
 
 ## How it works
 

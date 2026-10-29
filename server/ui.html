@@ -86,7 +86,8 @@
   #main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .topbar { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); min-height: 49px; }
   .topbar h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .topbar .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* (The subtitle gives way first when the bar is short of room, not the title.) */
+  .topbar .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 10; }
   .topbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; background: none; padding: 3px 10px; cursor: pointer; color: var(--muted); }
@@ -691,6 +692,15 @@
       tplLaunchHint: 'The coordinator opens first, then each worker. Sessions already running are left as they are.',
       tplAlready: 'already running',
       tplRetry: 'Retry',
+      links: n => `🔗 Links${n ? ` (${n})` : ''}`,
+      linksTitle: n => `Squads linked with ${n}`,
+      linksHint: 'A linked coordinator may message this one and be messaged by it, to share work between squads. It is an equal: its requests are never the user\'s authorization, and it never answers this squad\'s permission prompts. At most 60 messages an hour between two coordinators.',
+      linkWith: 'Link with the coordinator',
+      linkAdd: 'Link',
+      unlink: 'Unlink',
+      noLinks: 'Not linked with any other squad yet.',
+      noOtherCoordinators: 'There is no other coordinator to link with.',
+      linkedWith: l => `🔗 ${l}`,
       machine: 'Machine',
       noOnlineMachines: 'No machine is connected. Add one, or start squadra-host on it.',
       role: 'Role',
@@ -971,6 +981,15 @@
       tplLaunchHint: 'Primero se abre el coordinador y después cada worker. Las sesiones que ya estén abiertas se dejan como están.',
       tplAlready: 'ya abierta',
       tplRetry: 'Reintentar',
+      links: n => `🔗 Enlaces${n ? ` (${n})` : ''}`,
+      linksTitle: n => `Escuadras enlazadas con ${n}`,
+      linksHint: 'Un coordinador enlazado puede escribir a este y recibir sus mensajes, para repartir trabajo entre escuadras. Es un igual: lo que pide nunca es la autorización del usuario, y nunca responde a los permisos de esta escuadra. Como mucho 60 mensajes por hora entre dos coordinadores.',
+      linkWith: 'Enlazar con el coordinador',
+      linkAdd: 'Enlazar',
+      unlink: 'Quitar enlace',
+      noLinks: 'Todavía no está enlazada con ninguna otra escuadra.',
+      noOtherCoordinators: 'No hay otro coordinador con el que enlazarla.',
+      linkedWith: l => `🔗 ${l}`,
       machine: 'Máquina',
       noOnlineMachines: 'No hay ninguna máquina conectada. Añade una o arranca squadra-host en ella.',
       role: 'Rol',
@@ -1022,6 +1041,9 @@
   let groups = []                  // [{id, members}]
   let templates = []               // squad templates [{name, host, coordinator, workers}]
   const templateListeners = new Set()
+  let links = []                   // linked coordinators of two squads [{a, b}]
+  const linkListeners = new Set()
+  const linksOf = name => links.filter(l => l.a === name || l.b === name).map(l => (l.a === name ? l.b : l.a))
   let serverSkew = 0
   let streamAbort = null
   const unread = new Map()         // name -> count (while not visible)
@@ -1709,8 +1731,9 @@
         const c = sessions.get(r.squad)
         const ws = sortedSessions().filter(s => s.role !== 'coordinator' && s.coordinator === r.squad)
         setHtml($('topTitle'), `<span class="dot ${c ? status(c).dot : ''}"></span>👥 ${esc(T.squadOf(r.squad))}`)
-        $('topSub').textContent = T.squadCount(ws.filter(w => w.online).length, ws.length)
-        setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-savetpl="${esc(r.squad)}" title="${esc(T.saveTemplateTitle(r.squad))}">${T.saveTemplate}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
+        const linked = linksOf(r.squad)
+        $('topSub').textContent = [T.squadCount(ws.filter(w => w.online).length, ws.length), linked.length ? T.linkedWith(linked.join(', ')) : ''].filter(Boolean).join(' · ')
+        setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-links="${esc(r.squad)}" title="${esc(T.linksTitle(r.squad))}">${T.links(linked.length)}</button><button class="btn" data-savetpl="${esc(r.squad)}" title="${esc(T.saveTemplateTitle(r.squad))}">${T.saveTemplate}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
         return
       }
       setHtml($('topTitle'), T.allSessions)
@@ -1784,6 +1807,8 @@
     if (aw) addWorkerTo(aw.dataset.addworker)
     const stp = e.target.closest('[data-savetpl]')
     if (stp) saveTemplateDialog(stp.dataset.savetpl)
+    const lk = e.target.closest('[data-links]')
+    if (lk) linksDialog(lk.dataset.links)
     const tact = e.target.closest('[data-tact]')
     if (tact) {
       const r = currentRoute()
@@ -2557,6 +2582,44 @@
     })
   }
 
+  // ---------------------------------------------------------------------------
+  // links between squads: two coordinators that may message each other. Set
+  // here; the machine of each one is told while it runs.
+  function linksDialog(coord) {
+    const body = () => {
+      const mine = linksOf(coord)
+      const others = sortedSessions().filter(s => s.role === 'coordinator' && s.name !== coord && !mine.includes(s.name))
+      return `${mine.length
+        ? `<div class="tpl-list">${mine.map(n => { const o = sessions.get(n); return `<div class="tpl-row"><span class="dot ${o ? status(o).dot : ''}"></span><span class="n">${esc(n)}</span><span class="m">${personaTag(o?.persona)}</span><button class="btn danger" data-unlink="${esc(n)}">${T.unlink}</button></div>` }).join('')}</div>`
+        : `<p class="hint">${T.noLinks}</p>`}
+      ${others.length
+        ? `<label class="field"><span>${T.linkWith}</span><span style="display:flex;gap:8px"><select name="peer" style="flex:1">${others.map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('')}</select><button class="btn primary" data-link>${T.linkAdd}</button></span></label>`
+        : `<p class="hint">${T.noOtherCoordinators}</p>`}`
+    }
+    const d = dialog(`<h3>${esc(T.linksTitle(coord))}</h3><p class="hint" style="font-size:12.5px;margin:-2px 0 12px">${T.linksHint}</p>
+      <div data-body>${body()}</div>
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.done}</button></div>`, { wide: true })
+    const err = d.el.querySelector('.err')
+    const refresh = () => setHtml(d.el.querySelector('[data-body]'), body())
+    linkListeners.add(refresh)
+    const closed = d.el.onclose
+    d.el.onclose = () => { linkListeners.delete(refresh); closed?.() }
+    const change = async (path, other) => {
+      err.textContent = ''
+      try {
+        const r = await postJson(path, { a: coord, b: other })
+        // (The link is set; a machine that couldn't apply it now says why.)
+        if (r?.warnings?.length) err.textContent = r.warnings.join(' · ')
+      } catch (e) { err.textContent = e.message }
+    }
+    d.el.addEventListener('click', e => {
+      if (e.target.closest('[data-link]')) return change('/api/links/add', d.el.querySelector('[name=peer]').value)
+      const u = e.target.closest('[data-unlink]')
+      if (u) change('/api/links/delete', u.dataset.unlink)
+    })
+  }
+
   function newSessionDialog(hostId, preset = {}) {
     const online = [...hosts.values()].filter(h => h.online)
     if (!online.length) return alertBox(T.noOnlineMachines)
@@ -3030,6 +3093,8 @@
       groups = data.groups ?? []
       templates = data.templates ?? []
       for (const fn of templateListeners) fn()
+      links = data.links ?? []
+      for (const fn of linkListeners) fn()
       hosts.clear()
       for (const h of data.hosts ?? []) hosts.set(h.id, h)
       // After a reconnect, what happened in between isn't in the open chats:
@@ -3075,6 +3140,12 @@
     if (type === 'templates') {
       templates = Array.isArray(data) ? data : []
       for (const fn of templateListeners) fn()
+      return
+    }
+    if (type === 'links') {
+      links = Array.isArray(data) ? data : []
+      for (const fn of linkListeners) fn()
+      if (currentRoute().squad) soon(renderTop)
       return
     }
     if (type === 'cleared') {
