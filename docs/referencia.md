@@ -33,7 +33,7 @@ Un panel web muestra toda la escuadra a la vez, como una pared de terminales: qu
 ```
 
 - **El coordinador** es una sesión de Claude Code con el rol de coordinador. Convierte tu petición en tareas, las asigna a los workers, responde sus preguntas, aprueba las acciones inofensivas y solo te consulta lo crítico (decisiones de producto, cambios destructivos, seguridad, costes).
-- **Los workers** son sesiones de Claude Code con el rol de worker, cada una en la carpeta de su proyecto. Deciden por sí mismos los detalles técnicos e informan al empezar, al terminar, si se bloquean o si necesitan una decisión.
+- **Los workers** son sesiones de Claude Code con el rol de worker, cada una en la carpeta de su proyecto. Deciden por sí mismos los detalles técnicos, y cada tarea termina con un informe final: hecho, bloqueado, fallido o una pregunta.
 - **`squadra-server`** (Node, sin dependencias) reparte los mensajes entre agentes, sabe quién está vivo y sirve el panel en directo. Los agentes se conectan *hacia* él, así que sus máquinas no abren puertos.
 - **El plugin `squadra`** para Claude Code entrega cada mensaje directamente en la sesión del agente, aunque esté parada, mediante los [Channels](https://code.claude.com/docs/en/channels) de Claude Code, e informa al panel de lo que hace el agente.
 
@@ -61,7 +61,7 @@ Cada agente es un `claude` interactivo normal en un terminal, así que puedes in
 ## Qué ofrece
 
 - **Coordinador y workers.**
-  - El coordinador delega con `reply`; los workers informan al empezar, al terminar, si se bloquean o si necesitan una decisión.
+  - El coordinador delega con `reply`; cada tarea termina con el informe final del worker (mira *Informes de tareas* más abajo).
   - El coordinador solo responde cuando tiene algo que decir, así que nunca se forman bucles de acuses de recibo.
 - **Cada decisión en su sitio.** Los workers deciden los detalles técnicos y preguntan lo de producto o lo destructivo; el coordinador responde o te lo pregunta a ti.
 - **Permisos retransmitidos.** La petición de permiso de un worker llega también al coordinador, que aprueba lo inofensivo y te pregunta el resto. Vale la primera respuesta, así que también puedes contestar en el terminal del worker.
@@ -347,6 +347,16 @@ Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaz
 - **Añadir:** **+ Escuadra** abre un coordinador (con el nombre y el objetivo de la escuadra); **+ Agente** en una tarjeta, un worker para ella.
 - **Cambiar:** ⋯ de un agente → *Cambiar persona o escuadra*. Las dos se fijan al arrancar la sesión (su system prompt, su coordinador), así que la sesión se cierra y se vuelve a abrir en la misma carpeta, continuando su conversación si la máquina lo permite.
 - **Cerrar y borrar:** el ⋯ de un agente cierra su terminal o lo borra cuando está desconectado; el ⋯ de una escuadra cierra todos sus terminales, o borra la escuadra entera cuando ninguno está conectado.
+
+### Informes de tareas
+
+Cada mensaje de un coordinador a su worker es una tarea, y cada tarea termina con el **informe final** del worker: `reply` con `report` en `done`, `blocked`, `failed` o `question`, en tres líneas como mucho. No depende de lo que decidan el worker o el coordinador:
+
+- **Empezar no necesita mensaje:** cuando una tarea arranca el turno del worker, el plugin le pone 👀. Una reacción no despierta a nadie, así que no gasta tokens.
+- **Terminar sin el informe no es posible:** un hook `Stop` impide que el turno acabe y le dice a Claude que lo envíe antes. Nadie puede dispensarlo, ni siquiera el coordinador ("avísame solo si algo va mal" no cuenta).
+- **Si aun así termina sin él** (ya se le pidió una vez, o algo falló), el coordinador recibe un aviso automático: *"w1 ended its turn without a final report on your task #123"*.
+- **Información que no necesita respuesta:** el coordinador la envía con `fyi: true`, y no se espera informe.
+- El coordinador ve en `ping` si cada worker está **BUSY** (ocupado) o **free** (libre), y el panel marca en el chat cada informe (✓ hecho, ⛔ bloqueado, ✗ fallido, ? pregunta) y cada mensaje informativo.
 
 ### Empezar de cero en cada tarea nueva
 

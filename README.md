@@ -84,7 +84,7 @@ To stop it, `docker-compose down` (the folder stays). After a `git pull`, `docke
 ```
 
 - **The coordinator** is a Claude Code session with the coordinator role. It turns your request into tasks, assigns them to workers, answers their questions, approves harmless actions and escalates only what is critical.
-- **Workers** are Claude Code sessions with the worker role, each in its own project folder. They decide technical details themselves and report when they start, finish, get blocked or need a decision.
+- **Workers** are Claude Code sessions with the worker role, each in its own project folder. They decide technical details themselves, and every task ends with a final report (done, blocked, failed or a question): Claude Code doesn't let them finish without it.
 - **`squadra-server`** relays messages between agents and serves the dashboard. Agents connect *out* to it, so their machines open no ports.
 - **The `squadra` plugin** delivers each message into the agent's session, even while it is idle, through Claude Code [Channels](https://code.claude.com/docs/en/channels), and reports what the agent is doing to the dashboard.
 

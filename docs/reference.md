@@ -33,7 +33,7 @@ A web dashboard shows the whole squad at once, like a wall of terminals: what ea
 ```
 
 - **The coordinator** is a Claude Code session with the coordinator role. It turns your request into tasks, assigns them to workers, answers their questions, approves harmless actions, and escalates only what is critical (product decisions, destructive changes, security, costs).
-- **Workers** are Claude Code sessions with the worker role, each in its own project folder. They take decisions on technical details themselves and report when they start, finish, get blocked or need a decision.
+- **Workers** are Claude Code sessions with the worker role, each in its own project folder. They take decisions on technical details themselves, and every task ends with a final report: done, blocked, failed or a question.
 - **`squadra-server`** (Node, no dependencies) relays messages between agents, knows who is alive, and serves the live dashboard. Agents connect *out* to it, so their machines open no ports.
 - **The `squadra` plugin** for Claude Code delivers each message straight into the agent's session — even while it is idle — through Claude Code [Channels](https://code.claude.com/docs/en/channels), and reports what the agent is doing to the dashboard.
 
@@ -61,7 +61,7 @@ Every agent is a normal interactive `claude` running in a terminal, so you can s
 ## Features
 
 - **Coordinator and workers.**
-  - The coordinator delegates with `reply`; workers report when they start, finish, get blocked, or need a decision.
+  - The coordinator delegates with `reply`; each task ends with the worker's final report (see *Task reports* below).
   - The coordinator only answers when it has something to say, so the two sides never loop on acknowledgements.
 - **Decisions where they belong.** Workers decide technical details themselves and ask about product or destructive choices; the coordinator answers or asks you.
 - **Permission relay.** A worker's permission prompt also goes to the coordinator, which approves harmless actions and asks you about the rest. The first answer wins, so you can still answer in the worker's terminal.
@@ -347,6 +347,16 @@ Each squad works on its own, but two can share work: **link** their coordinators
 - **Add:** **+ Squad** opens a coordinator (with the squad's name and goal); **+ Agent** on a card, a worker for it.
 - **Change:** an agent's ⋯ → *Change persona or squad*. Both are fixed when a session starts (its system prompt, its coordinator), so the session is closed and opened again in the same folder, continuing its conversation if the machine allows it.
 - **Close and delete:** an agent's ⋯ closes its terminal or deletes it once disconnected; a squad's ⋯ closes all its terminals, or deletes the whole squad once none is connected.
+
+### Task reports
+
+Every message from a coordinator to its worker is a task, and every task ends with the worker's **final report**: `reply` with `report` set to `done`, `blocked`, `failed` or `question`, in up to three lines. It doesn't depend on what the worker or the coordinator decide:
+
+- **Starting needs no message:** when a task starts the worker's turn, the plugin puts 👀 on it. A reaction wakes nobody, so it costs no tokens.
+- **Finishing without the report isn't possible:** a `Stop` hook keeps the turn from ending and tells Claude to send it first. Nobody can waive it, not even the coordinator ("only tell me if something goes wrong" doesn't count).
+- **If it still ends without one** (asked once already, or something went wrong), the coordinator gets an automatic notice: *"w1 ended its turn without a final report on your task #123"*.
+- **Information that needs no answer:** the coordinator sends it with `fyi: true`, and no report is expected.
+- The coordinator sees in `ping` whether each worker is **BUSY** or **free**, and the dashboard marks each report (✓ done, ⛔ blocked, ✗ failed, ? question) and each fyi message in the chat.
 
 ### Fresh start for new tasks
 
