@@ -537,6 +537,45 @@ test('personas: the machine lists a folder\'s skills and agents, and opens a ses
   }
 })
 
+test('links between squads: a coordinator opens with the ones the dashboard set, and they change while it runs', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const linksOf = name => JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', name, 'links.json'), 'utf8'))
+  // What the page sends is ignored: the server's links are the ones that count.
+  for (const name of ['lk1', 'lk2']) {
+    const r = await dash('terminals/open', { host: hostId, spec: { name, role: 'coordinator', folder: allowed, links: ['evil'] } })
+    assert.ok(r.ok, r.description)
+    assert.deepEqual(linksOf(name), { name, coordinators: [] })
+  }
+  await waitFor(async () => (await dash('hosts')).result.find(h => h.id === hostId)?.info?.terminals?.filter(t => t.id.startsWith('lk')).length === 2, { what: 'both listed' })
+  const l = await dash('links/add', { a: 'lk1', b: 'lk2' })
+  assert.ok(l.ok, l.description)
+  assert.deepEqual(l.result.warnings, [])
+  assert.deepEqual(linksOf('lk1'), { name: 'lk1', coordinators: ['lk2'] })
+  assert.deepEqual(linksOf('lk2'), { name: 'lk2', coordinators: ['lk1'] })
+  assert.equal(lstatSync(join(claudeDir, 'channels', 'squadra', 'lk1', 'links.json')).mode & 0o777, 0o600)
+  // Opened again: with its links.
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'lk1' })).ok)
+  assert.ok(!existsSync(join(claudeDir, 'channels', 'squadra', 'lk1', 'links.json')))
+  assert.ok((await dash('terminals/open', { host: hostId, spec: { name: 'lk1', role: 'coordinator', folder: allowed } })).ok)
+  assert.deepEqual(linksOf('lk1'), { name: 'lk1', coordinators: ['lk2'] })
+  // A machine that pins its coordinators accepts links only with those.
+  const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, coordinators: ['lk1'] }))
+  const u = await dash('links/delete', { a: 'lk1', b: 'lk2' })
+  assert.ok(u.ok, u.description)
+  assert.deepEqual(linksOf('lk1'), { name: 'lk1', coordinators: [] })
+  const again = await dash('links/add', { a: 'lk1', b: 'lk2' })
+  assert.ok(again.ok, again.description)
+  assert.equal(again.result.warnings.length, 1)
+  assert.match(again.result.warnings[0], /^lk1: this machine only accepts these coordinators: lk1 \(not "lk2"\)/)
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'lk1' })).ok)
+  const refused = await dash('terminals/open', { host: hostId, spec: { name: 'lk1', role: 'coordinator', folder: allowed } })
+  assert.equal(refused.ok, false)
+  assert.match(refused.description, /only accepts these coordinators/)
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+  assert.ok((await dash('links/delete', { a: 'lk1', b: 'lk2' })).ok)
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'lk2' })).ok)
+})
+
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const r = await dash('hosts/remove', { host: hostId })
   assert.ok(r.ok, r.description)

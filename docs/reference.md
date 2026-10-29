@@ -91,6 +91,7 @@ Every agent is a normal interactive `claude` running in a terminal, so you can s
   - The machine only accepts a session *spec* (name, role, an allowed folder, the auto-compact window, a persona's id), never a command; its limits live on the machine.
   - **Personas:** each session can follow a skill or agent from its project or from `~/.claude`, picked from a list; it stays in its system prompt for the whole session, and its coordinator knows which one each worker follows.
   - **Squad templates:** save a squad (coordinator and workers, with their folders and personas) and open it again in one go.
+  - **Linked squads:** link two coordinators so their squads share work: each one asks the other and hands what it takes on to its own workers.
   - Sessions are only opened by you, never by Claude: a coordinator that needs more workers asks you.
 
 ## Gallery
@@ -252,6 +253,7 @@ Then, in each terminal:
 | `/squadra:status` | Who you are, pending pairings, which sessions are alive |
 | `/squadra:logout` | Leave |
 | `/squadra:access pair <code>` | Approve a worker, in the coordinator's terminal |
+| `/squadra:access link <name>` | Link this coordinator with another squad's (run it in both) |
 
 The first time a worker joins, the coordinator shows a pairing request; approve it with `/squadra:access pair <code>`. After that, the same name needs no new pairing.
 
@@ -298,7 +300,7 @@ The machine's rules live in `~/.config/squadra-host/settings.json`. The dashboar
 | `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch (terminals are read-only) |
 | `allow_resume` | Whether a session may continue the last conversation in its folder (`true`) |
 | `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default; never for sessions in the home folder). For sessions squadra-host opens; for sessions started by hand on the machine, put `SQUADRA_PERMISSION_RELAY=off` in the plugin `.env` |
-| `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given |
+| `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given, and that coordinators it opens may be linked with |
 | `claude_command` | The Claude Code executable (`claude`, looked up on the absolute entries of the `PATH`) |
 
 The machine connects over HTTPS only: plain `http` is accepted just for `localhost`, or with `--insecure` at enrollment on a trusted private network. **Remove** (on a disconnected machine's card, or in its ⋯ menu) revokes its credential and takes it off the list; a machine that was added but never connected shows as *Waiting to connect* and can be removed the same way. **Updating:** update the server, then run `squadra-host update` on each machine (the dashboard says which ones are older); restart the sessions it opened to use the new plugin. Update the plugin on machines you set up by hand too (`claude plugin marketplace update squadra && claude plugin update squadra@squadra`). **From 0.0.2:** machines have no `squadra-host update` yet: add each one again with «+ Add machine» and remove its old entry. **From 0.0.1:** the same, and also: with `SQUADRA_STATE_DIR`, move each session's files into `<dir>/<name>/`; scripts that set `SQUADRA_ROLE`/`SQUADRA_COORDINATOR` need a launch.json or one `/squadra:login`; restart every session. The first start of a 0.0.2 or later server cleans the data an older version stored once (it says how far it got in the log).
@@ -317,6 +319,16 @@ You pick it from the list, never type it, and the dashboard only sends its id: t
 - Only files that really are inside the project (or `~/.claude`) and belong to you are read, up to 256 KB: a skill that is a link elsewhere is not listed. Like `CLAUDE.md`, a persona from a project you didn't write is text Claude will follow: open projects you trust.
 
 A **squad template** saves a squad to open it again in one go. In a squad's view (👥), **💾 Template** saves its coordinator and workers with the folder, persona and auto-compact each one was opened with. **🖥️ Machines → Templates** lists them: **Open squad** picks a machine and opens the coordinator first, then each worker (sessions already running are left as they are). Each session is opened like any other, and its machine checks it against its own rules.
+
+### Linked squads
+
+Each squad works on its own, but two can share work: **link** their coordinators and each one may message the other. The design squad's coordinator asks marketing for the landing copy; marketing's coordinator hands it to one of its workers and sends back the result.
+
+- **From the dashboard:** in a squad's view (👥), **🔗 Links** lists the coordinators it is linked with, and links or unlinks another one. The machine running each coordinator is told at once, and a coordinator opened later starts with its links. A machine whose `coordinators` setting pins names only accepts links with those.
+- **Sessions you logged in by hand:** run `/squadra:access link <other-coordinator>` in each of the two terminals (`unlink` to undo).
+- **What the coordinators are told:** a message from a linked coordinator arrives marked `linked="true"`. It comes from an equal, never from you: the coordinator takes on what fits its squad, gives it to its workers and answers with one result, and asks you here before anything critical. It never answers the other squad's permission prompts nor sends it its workers'. Workers only ever talk to their own coordinator.
+- `status` and `ping` list a coordinator's linked coordinators and whether they are connected; it is told when a link is added or removed while it runs.
+- **No endless conversations:** two coordinators can send each other at most 60 messages an hour; after that the server refuses more and the coordinator tells you.
 
 ## Tips: getting the most out of it
 

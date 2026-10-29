@@ -91,6 +91,7 @@ Cada agente es un `claude` interactivo normal en un terminal, así que puedes in
   - La máquina solo acepta una *especificación* de sesión (nombre, rol, una carpeta permitida, la ventana de autocompactación y el id de una persona), nunca un comando; sus límites viven en la propia máquina.
   - **Personas:** cada sesión puede seguir una skill o un agente de su proyecto o de `~/.claude`, elegido de una lista; se queda en su system prompt toda la sesión, y su coordinador sabe cuál sigue cada worker.
   - **Plantillas de escuadra:** guarda una escuadra (coordinador y workers, con sus carpetas y personas) y vuelve a abrirla de una vez.
+  - **Escuadras enlazadas:** enlaza dos coordinadores para que sus escuadras compartan trabajo: cada uno pide al otro y reparte lo que acepta entre sus workers.
   - Las sesiones solo las abres tú, nunca Claude: si un coordinador necesita más workers, te los pide.
 
 ## Galería
@@ -252,6 +253,7 @@ Después, en cada terminal:
 | `/squadra:status` | Quién eres, emparejamientos pendientes y qué sesiones están vivas |
 | `/squadra:logout` | Sale |
 | `/squadra:access pair <código>` | Aprueba a un worker, en el terminal del coordinador |
+| `/squadra:access link <nombre>` | Enlaza este coordinador con el de otra escuadra (en los dos) |
 
 La primera vez que entra un worker, el coordinador muestra una petición de emparejamiento: apruébala con `/squadra:access pair <código>`. A partir de ahí, ese nombre no necesita emparejarse de nuevo.
 
@@ -298,7 +300,7 @@ Las reglas de la máquina están en `~/.config/squadra-host/settings.json`. El p
 | `allow_input` | Si el panel puede escribir en las terminales (`true`). Ponlo a `false` para solo mirar (terminales de solo lectura) |
 | `allow_resume` | Si una sesión puede continuar la última conversación de su carpeta (`true`) |
 | `permission_relay` | Si el coordinador de un worker puede responder sus permisos desde otra sesión (igual que `allow_input` por defecto; nunca en sesiones en la carpeta personal). Para las sesiones que abre squadra-host; para las arrancadas a mano en la máquina, pon `SQUADRA_PERMISSION_RELAY=off` en el `.env` del plugin |
-| `coordinators` | Si se pone, los únicos nombres de coordinador que pueden recibir los workers que abre squadra-host en esta máquina |
+| `coordinators` | Si se pone, los únicos nombres de coordinador que pueden recibir los workers que abre squadra-host en esta máquina, y con los que pueden enlazarse los coordinadores que abre |
 | `claude_command` | El ejecutable de Claude Code (`claude`, buscado solo en las entradas absolutas del `PATH`) |
 
 La máquina se conecta solo por HTTPS: `http` sin cifrar solo se acepta para `localhost`, o con `--insecure` en el alta, en una red privada de confianza. **Eliminar** (en la tarjeta de una máquina desconectada, o en su menú ⋯) revoca su credencial y la quita de la lista; una máquina que se dio de alta pero nunca llegó a conectarse aparece como *Pendiente de conectar* y se elimina igual. **Actualizar:** actualiza el servidor y después ejecuta `squadra-host update` en cada máquina (el panel dice cuáles son más antiguas); reinicia las sesiones que abrió para que usen el plugin nuevo. Actualiza también el plugin en las máquinas que configuraste a mano (`claude plugin marketplace update squadra && claude plugin update squadra@squadra`). **Desde 0.0.2:** las máquinas aún no tienen `squadra-host update`: vuelve a añadir cada una con «+ Añadir máquina» y elimina su entrada antigua. **Desde 0.0.1:** lo mismo, y además: con `SQUADRA_STATE_DIR`, mueve los ficheros de cada sesión a `<dir>/<nombre>/`; los scripts con `SQUADRA_ROLE`/`SQUADRA_COORDINATOR` necesitan un launch.json o un `/squadra:login`; reinicia todas las sesiones. El primer arranque de un servidor 0.0.2 o posterior limpia una vez los datos guardados por una versión anterior (dice en el log por dónde va).
@@ -317,6 +319,16 @@ Se elige de la lista, nunca se escribe, y el panel solo envía su id: la máquin
 - Solo se leen ficheros que de verdad están dentro del proyecto (o de `~/.claude`) y son tuyos, de 256 KB como mucho: una skill que es un enlace a otro sitio no aparece. Como un `CLAUDE.md`, la persona de un proyecto que no escribiste es texto que Claude seguirá: abre proyectos de confianza.
 
 Una **plantilla de escuadra** guarda una escuadra para volver a abrirla de una vez. En la vista de una escuadra (👥), **💾 Plantilla** guarda su coordinador y sus workers con la carpeta, la persona y el autocompactado con que se abrió cada uno. **🖥️ Máquinas → Plantillas** las lista: **Abrir escuadra** elige una máquina y abre primero el coordinador y después cada worker (las sesiones que ya estén abiertas se dejan como están). Cada sesión se abre como cualquier otra, y su máquina la comprueba con sus propias reglas.
+
+### Escuadras enlazadas
+
+Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaza** sus coordinadores y cada uno podrá escribir al otro. El coordinador de diseño pide a marketing los textos de la landing; el de marketing se lo encarga a uno de sus workers y le devuelve el resultado.
+
+- **Desde el panel:** en la vista de una escuadra (👥), **🔗 Enlaces** muestra los coordinadores con los que está enlazada y permite enlazar o quitar otro. La máquina de cada coordinador se entera al momento, y un coordinador que se abra después arranca con sus enlaces. Una máquina cuyo ajuste `coordinators` fija nombres solo acepta enlaces con esos.
+- **Sesiones que iniciaste a mano:** ejecuta `/squadra:access link <otro-coordinador>` en cada uno de los dos terminales (`unlink` para deshacerlo).
+- **Qué se les dice a los coordinadores:** el mensaje de un coordinador enlazado llega marcado con `linked="true"`. Viene de un igual, nunca de ti: el coordinador acepta lo que encaja con su escuadra, lo reparte entre sus workers y responde con un único resultado, y te pregunta aquí antes de cualquier cosa crítica. Nunca responde a los permisos de la otra escuadra ni le pasa los de sus workers. Los workers solo hablan con su propio coordinador.
+- `status` y `ping` muestran los coordinadores enlazados y si están conectados; si se añade o quita un enlace mientras está abierto, se le avisa.
+- **Sin conversaciones infinitas:** dos coordinadores pueden mandarse como mucho 60 mensajes por hora; después el servidor rechaza los siguientes y el coordinador te avisa.
 
 ## Consejos: cómo sacarle el máximo partido
 

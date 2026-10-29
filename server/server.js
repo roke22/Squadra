@@ -383,6 +383,13 @@ db.exec(`
     spec TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  -- Two coordinators (of two squads) that work with each other: a < b.
+  CREATE TABLE IF NOT EXISTS squad_links (
+    a TEXT NOT NULL,
+    b TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (a, b)
+  );
 `)
 
 // Indexes for the per-session message lookups (presence, relations, files):
@@ -577,9 +584,12 @@ function related(name, id) {
   if (!ident) return false
   const since = Math.max(identityCreatedAt(name), ident.created_at)
   const wrote = (a, b) => db.prepare('SELECT 1 FROM messages WHERE from_name = ? AND target = ? AND system = 0 AND auto = 0 AND created_at >= ? LIMIT 1').get(a, b, since)
-  return !!((wrote(name, id) && wrote(id, name)) ||
+  return !!((wrote(name, id) && wrote(id, name)) || linked(name, id) ||
     db.prepare('SELECT 1 FROM group_members a JOIN group_members b ON a.group_id = b.group_id WHERE a.name = ? AND b.name = ? LIMIT 1').get(name, id))
 }
+const linkKey = (x, y) => (x < y ? [x, y] : [y, x])
+const linked = (x, y) => !!db.prepare('SELECT 1 FROM squad_links WHERE a = ? AND b = ?').get(...linkKey(x, y))
+const linksOf = name => db.prepare('SELECT a, b FROM squad_links WHERE a = ? OR b = ? ORDER BY a, b').all(name, name).map(r => (r.a === name ? r.b : r.a))
 function closeGroup(id) {
   if (!GROUP_RE.test(String(id))) return // only groups have a history to delete
   db.prepare('DELETE FROM groups WHERE id = ?').run(id)
@@ -885,6 +895,7 @@ const cleanText = t => {
   return contextPass(out, false)
 }
 
+const COORDINATOR_PAIR_MAX = 60
 function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = false, auto = false }) {
   if (text != null && typeof text !== 'string') throw bad('text must be a string')
   // (Far too long is refused before the cleaning, which costs the whole text.)
@@ -904,6 +915,12 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
   // sends nor takes messages.
   if (!system && roleOf(from) === 'solo') throw new ApiError(403, 'Forbidden: this is a standalone session: it does not message other sessions')
   if (!system && !target.startsWith('#') && roleOf(target) === 'solo') throw new ApiError(403, `Forbidden: "${target}" is a standalone Claude Code session: it does not take messages from other sessions`)
+  // Two coordinators can keep each other busy forever (each message wakes the
+  // other): at most so many an hour between the two, then the user decides.
+  if (!system && !auto && !target.startsWith('#') && roleOf(from) === 'coordinator' && roleOf(target) === 'coordinator' &&
+    !allow('coordinators', linkKey(from, target).join('\0'), COORDINATOR_PAIR_MAX, 3600_000)) {
+    throw new ApiError(429, `Too Many Requests: "${from}" and "${target}" (two coordinators) have sent each other ${COORDINATOR_PAIR_MAX} messages in the last hour; no more for now, so two sessions can't keep each other going. Tell the user`, { parameters: { reason: 'coordinators_limit', retry_after: 3600 } })
+  }
   const recipients = recipientsOf(target, from)
   // (When it was last seen only for a session it is related to, as getChat.)
   const offline = recipients.filter(r => !isOnline(r)).map(r => ({
@@ -1796,6 +1813,7 @@ const dashboard = {
       hosts: listHosts(),
       groups: allGroups(),
       templates: listTemplates(),
+      links: listLinks(),
     }
   },
   events(q) {
@@ -1849,6 +1867,10 @@ function deleteSession(name, { requireOffline = true } = {}) {
   // Workers that pointed at it no longer do: a new session with this name
   // won't receive their notices.
   db.prepare('UPDATE identities SET coordinator = NULL WHERE coordinator = ?').run(name)
+  // Nor is it linked with other squads any more.
+  const links = linksOf(name)
+  db.prepare('DELETE FROM squad_links WHERE a = ? OR b = ?').run(name, name)
+  if (links.length) { broadcast('links', listLinks()); for (const n of links) void pushLinks(n) }
   db.prepare('DELETE FROM updates WHERE recipient = ?').run(name)
   // What it queued for others goes too (it may be why it was deleted).
   db.prepare('DELETE FROM updates WHERE sender = ?').run(name)
@@ -1913,6 +1935,8 @@ const dashboardActions = {
   'hosts/personas': p => hostPersonas(p),
   'templates/save': p => saveTemplate(p),
   'templates/delete': p => deleteTemplate(String(p.name ?? '')),
+  'links/add': p => changeLink(p, true),
+  'links/delete': p => changeLink(p, false),
   'terminals/open': p => openTerminalOn(p),
   'terminals/kill': p => killTerminalOn(p),
   'terminal/ticket': () => newTerminalTicket(),
@@ -2533,6 +2557,51 @@ function listTemplates() {
   })
 }
 
+// Links between squads: two coordinators that may message each other. Set
+// here; each coordinator's machine is told (its plugin lets the other one in
+// while the session runs) and checks it against its own rules.
+const LINKS_MAX = 100
+const LINKS_PER_COORDINATOR = 20
+const isCoordinator = name => {
+  const r = db.prepare('SELECT role, opened_role FROM identities WHERE name = ?').get(name)
+  return !!r && (r.role === 'coordinator' || (r.role == null && r.opened_role === 'coordinator'))
+}
+function listLinks() {
+  return db.prepare('SELECT a, b, created_at FROM squad_links ORDER BY a, b').all()
+}
+async function changeLink(p, add) {
+  const x = String(p.a ?? ''), y = String(p.b ?? '')
+  if (!NAME_RE.test(x) || !NAME_RE.test(y)) throw bad('two session names are needed')
+  if (x === y) throw bad('a coordinator is not linked with itself')
+  const [a, b] = linkKey(x, y)
+  if (add) {
+    for (const n of [a, b]) if (!isCoordinator(n)) throw bad(`"${n}" is not a coordinator`)
+    if (linked(a, b)) throw bad(`"${a}" and "${b}" are already linked`)
+    if (db.prepare('SELECT COUNT(*) AS n FROM squad_links').get().n >= LINKS_MAX) throw bad(`at most ${LINKS_MAX} links`)
+    for (const n of [a, b]) if (linksOf(n).length >= LINKS_PER_COORDINATOR) throw bad(`"${n}" already has ${LINKS_PER_COORDINATOR} links`)
+    db.prepare('INSERT INTO squad_links (a, b, created_at) VALUES (?, ?, ?)').run(a, b, now())
+  } else if (!db.prepare('DELETE FROM squad_links WHERE a = ? AND b = ?').run(a, b).changes) {
+    throw bad('those two are not linked')
+  }
+  broadcast('links', listLinks())
+  process.stderr.write(`squadra-server: ${add ? 'linked' : 'unlinked'} coordinators "${a}" and "${b}"\n`)
+  // (A machine that refuses, or isn't connected: said, the link stays.)
+  const warnings = (await Promise.all([a, b].map(pushLinks))).filter(Boolean)
+  return { a, b, linked: add, warnings }
+}
+// Tell the machine running this coordinator what it is linked with now.
+// Returns a warning, or null.
+async function pushLinks(name) {
+  const host = db.prepare('SELECT host_id FROM identities WHERE name = ?').get(name)?.host_id
+  if (!host || !hostLinks.get(host)?.info?.terminals?.some(t => t.id === name)) return null
+  try {
+    await askHost(host, { t: 'links', name, coordinators: linksOf(name) })
+    return null
+  } catch (err) {
+    return `${name}: ${err.message.replace(/^Bad Request: /, '')}`
+  }
+}
+
 async function openTerminalOn(p) {
   const id = String(p.host ?? '')
   const spec = p.spec && typeof p.spec === 'object' && !Array.isArray(p.spec) ? { ...p.spec } : null
@@ -2574,6 +2643,9 @@ async function openNow(id, name, spec, existing) {
   // the session claims later).
   const openedRole = spec.role === 'coordinator' || spec.role === 'solo' ? spec.role : 'worker'
   const openedPersona = PERSONA_ID_RE.test(String(spec.persona ?? '')) ? spec.persona : null
+  // A coordinator's links are the ones set here, never what the page sends.
+  delete spec.links
+  if (openedRole === 'coordinator') { const l = linksOf(name); if (l.length) spec.links = l }
   if (!existing) {
     spec.identity = register(name, false).secret
     db.prepare('UPDATE identities SET host_id = ?, opened_role = ?, opened_persona = ? WHERE name = ?').run(id, openedRole, openedPersona, name)
