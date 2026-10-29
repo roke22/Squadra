@@ -92,6 +92,7 @@ Every agent is a normal interactive `claude` running in a terminal, so you can s
   - **Personas:** each session can follow a skill or agent from its project or from `~/.claude`, picked from a list; it stays in its system prompt for the whole session, and its coordinator knows which one each worker follows.
   - **Squad templates:** save a squad (coordinator and workers, with their folders and personas) and open it again in one go.
   - **Linked squads:** link two coordinators so their squads share work: each one asks the other and hands what it takes on to its own workers.
+  - **Org chart:** every squad as a card with its agents, the links between squads as lines, and what each one is for on hover; add, describe, link, move and close squads and agents from there.
   - Sessions are only opened by you, never by Claude: a coordinator that needs more workers asks you.
 
 ## Gallery
@@ -329,6 +330,18 @@ Each squad works on its own, but two can share work: **link** their coordinators
 - **What the coordinators are told:** a message from a linked coordinator arrives marked `linked="true"`. It comes from an equal, never from you: the coordinator takes on what fits its squad, gives it to its workers and answers with one result, and asks you here before anything critical. It never answers the other squad's permission prompts nor sends it its workers'. Workers only ever talk to their own coordinator.
 - `status` and `ping` list a coordinator's linked coordinators and whether they are connected; it is told when a link is added or removed while it runs.
 - **No endless conversations:** two coordinators can send each other at most 60 messages an hour; after that the server refuses more and the coordinator tells you.
+
+### Org chart
+
+**🏢 Org chart** (in the sidebar) shows how your squads are organised and lets you change it in one place.
+
+- **What you see:** each squad is a card with its coordinator and its workers (their state, persona and context). The lines between cards are links between squads, with how many messages they sent each other in the last hour (amber near the limit of 60, red at it). Hovering a squad shows its goal, its coordinator's persona and who it is linked with; hovering an agent, what it is for, what it is doing, its machine and folder. Sessions without a squad and standalone sessions are listed below.
+- **Arrange it:** drag a card by its header; **Arrange** puts them all in columns again; − / + zoom. Positions are kept on the server, the same for every browser. On a phone it is a list.
+- **Link squads:** drag the dot on a card's right edge onto another card. Click a line's label to unlink.
+- **Describe:** a squad's ⋯ → *Name and goal*; an agent's ⋯ → *Describe*. An agent with no description shows its persona's. A linked coordinator sees the other squad's name and goal, and each agent's description, in `ping`, so it knows what to ask whom.
+- **Add:** **+ Squad** opens a coordinator (with the squad's name and goal); **+ Agent** on a card, a worker for it.
+- **Change:** an agent's ⋯ → *Change persona or squad*. Both are fixed when a session starts (its system prompt, its coordinator), so the session is closed and opened again in the same folder, continuing its conversation if the machine allows it.
+- **Close and delete:** an agent's ⋯ closes its terminal or deletes it once disconnected; a squad's ⋯ closes all its terminals, or deletes the whole squad once none is connected.
 
 ## Tips: getting the most out of it
 

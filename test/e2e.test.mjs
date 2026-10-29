@@ -1242,6 +1242,51 @@ test('linked coordinators: two squads message each other, the plugin marks it, a
   cb.close()
 })
 
+test('org chart: squads get a name, goal and place, sessions a description, and a linked coordinator sees them in ping', async () => {
+  const post = (path, body) => fetch(`${URL_}/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVER_TOKEN}` }, body: JSON.stringify(body) }).then(r => r.json())
+  const coord = (name, other) => {
+    const c = new Plugin(name, { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' })
+    writeFileSync(join(c.stateDir, 'links.json'), JSON.stringify({ name, coordinators: [other] }))
+    return c
+  }
+  const ca = coord('oga', 'ogb'), cb = coord('ogb', 'oga')
+  await ca.init(); await cb.init()
+  await ca.waitConnected(); await cb.waitConnected()
+  assert.ok((await post('links/add', { a: 'oga', b: 'ogb' })).ok)
+
+  const sq = await post('org/squad', { coordinator: 'ogb', title: '  Marketing\n team ', goal: 'Copy, campaigns\tand social media' })
+  assert.ok(sq.ok, sq.description)
+  assert.deepEqual(sq.result, { coordinator: 'ogb', title: 'Marketing team', goal: 'Copy, campaigns and social media' })
+  assert.match((await post('org/squad', { coordinator: 'nobody', title: 'x' })).description, /"nobody" is not a coordinator/)
+  assert.match((await post('org/positions', { positions: [{ coordinator: 'oga', x: 'a', y: 1 }] })).description, /must be numbers/)
+  assert.match((await post('org/positions', { positions: [] })).description, /1 to 200/)
+  assert.ok((await post('org/positions', { positions: [{ coordinator: 'oga', x: -5, y: 99999 }, { coordinator: 'ogb', x: 400.4, y: 30 }] })).ok)
+  const d = await post('org/describe', { name: 'ogb', description: 'Leads   marketing' })
+  assert.deepEqual(d.result, { name: 'ogb', description: 'Leads marketing' })
+  assert.match((await post('org/describe', { name: 'ghost', description: 'x' })).description, /session not found/)
+  let st = (await dash('/api/state')).result
+  assert.deepEqual(st.squads.filter(q => q.coordinator.startsWith('og')), [
+    { coordinator: 'oga', title: null, goal: null, x: 0, y: 20000 },
+    { coordinator: 'ogb', title: 'Marketing team', goal: 'Copy, campaigns and social media', x: 400, y: 30 },
+  ])
+  assert.equal(st.sessions.find(x => x.name === 'ogb').description, 'Leads marketing')
+
+  // The other squad's coordinator sees what it is for, quoted as data.
+  assert.match(await ca.tool('ping', { chat_id: 'ogb' }), /ogb \(linked coordinator\): ALIVE .*; for: "Leads marketing"; squad "Marketing team", goal: "Copy, campaigns and social media"\)/)
+  // Each link says how busy it was in the last hour.
+  await ca.tool('reply', { chat_id: 'ogb', text: 'Can you write the launch post?' })
+  await cb.waitChannel(p => p.content === 'Can you write the launch post?', 'request')
+  st = (await dash('/api/state')).result
+  assert.equal(st.links.find(l => l.a === 'oga' && l.b === 'ogb').recent.length, 1)
+
+  // A deleted coordinator takes its squad's name, goal and place with it.
+  cb.close()
+  await waitFor(async () => !(await dash('/api/state')).result.sessions.find(x => x.name === 'ogb').online, { what: 'ogb offline' })
+  assert.ok((await post('delete', { session: 'ogb' })).ok)
+  assert.deepEqual((await dash('/api/state')).result.squads.map(q => q.coordinator).filter(c => c.startsWith('og')), ['oga'])
+  ca.close()
+})
+
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
   const wk = new Plugin('auto1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'worker', SQUADRA_COORDINATOR: 'boss9' })
   const r = await wk.init()

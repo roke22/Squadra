@@ -351,8 +351,63 @@
   .term-foot .ro { color: var(--warn); font-weight: 600; }
   .term-over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(22,21,19,.82); color: #ecebe7; text-align: center; padding: 20px; z-index: 2; }
 
+  .field textarea { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); width: 100%; font: inherit; resize: vertical; }
+
+  /* Org chart: squads as cards on a stage, links as lines between them. Heights are
+     fixed (ORG_H in the script): cards are laid out and linked without measuring. */
+  #org { flex: 1; overflow: auto; position: relative; background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 22px 22px; }
+  .org-wrap { position: relative; }
+  .org-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .org-lines { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+  .org-lines .l { fill: none; stroke: var(--coord); stroke-width: 2; opacity: .55; }
+  .org-lines .l.warn { stroke: var(--warn); opacity: .9; }
+  .org-lines .l.full { stroke: var(--err); opacity: .9; }
+  .org-lines .l.tmp { stroke-dasharray: 6 5; opacity: .9; }
+  .org-lines .hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+  .org-label { position: absolute; transform: translate(-50%, -50%); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--coord); cursor: pointer; white-space: nowrap; }
+  .org-label.warn { color: var(--warn); border-color: var(--warn); }
+  .org-label.full { color: var(--err); border-color: var(--err); }
+  .org-card { position: absolute; width: 280px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.06); }
+  .org-card.drop { outline: 2px solid var(--coord); outline-offset: 2px; }
+  .org-head { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; cursor: grab; border-bottom: 1px solid var(--line); background: var(--coord-soft); border-radius: 12px 12px 0 0; }
+  .org-head:active { cursor: grabbing; }
+  .org-title { font-weight: 650; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .org-count { font-size: 12px; color: var(--muted); }
+  .org-goal { height: 36px; box-sizing: border-box; padding: 4px 14px 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .org-agent { height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 14px; font-size: 13px; outline: none; }
+  .org-agent.worker { padding-left: 30px; }
+  .org-agent:hover, .org-agent:focus-visible { background: var(--panel-2); }
+  .org-agent .n { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+  .org-agent.coord .n { color: var(--coord); }
+  .org-persona { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+  .org-ctx { margin-left: auto; font-size: 11px; color: var(--muted); flex: none; }
+  .org-more { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 6px; flex: none; font-size: 15px; line-height: 1; }
+  .org-more:hover { background: var(--panel-2); color: var(--text); }
+  .org-fold { height: 28px; display: block; width: 100%; border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; text-align: left; padding: 0 30px; }
+  .org-foot { height: 42px; box-sizing: border-box; display: flex; align-items: center; padding: 0 10px; border-top: 1px solid var(--line); }
+  .org-foot .btn { font-size: 12px; padding: 3px 10px; }
+  .org-handle { position: absolute; right: -8px; top: 15px; width: 14px; height: 14px; border-radius: 50%; background: var(--coord); border: 2px solid var(--panel); cursor: crosshair; box-shadow: 0 0 0 1px var(--coord); }
+  .org-handle:hover { transform: scale(1.25); }
+  .org-empty { max-width: 460px; margin: 60px auto; text-align: center; color: var(--muted); }
+  .org-extras { display: flex; flex-wrap: wrap; gap: 14px; padding: 0 32px 32px; }
+  .org-extra { width: 280px; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding-bottom: 6px; }
+  .org-extra-h { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 14px 4px; }
+  .org-tip { position: fixed; z-index: 40; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.16); padding: 10px 12px; font-size: 12.5px; pointer-events: none; }
+  .org-tip-t { font-weight: 650; margin-bottom: 4px; }
+  .org-tip p { margin: 4px 0 6px; }
+  .org-tip .m { color: var(--muted); margin-top: 3px; }
+  .org-tip .dot { vertical-align: middle; }
+
   @media (max-width: 900px) {
     .row2 { grid-template-columns: 1fr; }
+    /* The org chart as a list: cards one under another, links as their count. */
+    .org-wrap, .org-stage { position: static; width: auto !important; height: auto !important; transform: none !important; }
+    .org-stage { padding: 12px; display: grid; gap: 12px; }
+    .org-card { position: static; width: auto; }
+    .org-lines, .org-labels, .org-handle { display: none; }
+    .org-head { cursor: default; }
+    .org-extras { padding: 0 12px 12px; }
+    .org-extra { width: auto; flex: 1 1 100%; }
     #app { grid-template-columns: 1fr; }
     #side { position: fixed; inset: 0 30% 0 0; z-index: 10; transform: translateX(-100%); transition: transform .2s; box-shadow: 4px 0 20px rgba(0,0,0,.2); }
     #side.open { transform: none; }
@@ -411,6 +466,7 @@
     <div id="alerts" hidden></div>
     <div id="mosaic" hidden></div>
     <div id="archived" hidden></div>
+    <div id="org" hidden></div>
     <div id="session" class="full" hidden></div>
     <div id="hosts" hidden></div>
     <div id="terminal" hidden></div>
@@ -701,6 +757,53 @@
       noLinks: 'Not linked with any other squad yet.',
       noOtherCoordinators: 'There is no other coordinator to link with.',
       linkedWith: l => `🔗 ${l}`,
+      org: 'Org chart',
+      orgNavSub: (n, l) => `${n} squad${n === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}`,
+      orgSub: (n, a, l) => `${n} squad${n === 1 ? '' : 's'} · ${a} agent${a === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}`,
+      orgNewSquad: '+ Squad',
+      orgArrange: 'Arrange',
+      orgArrangeTitle: 'Put every card in columns again',
+      orgZoomIn: 'Zoom in',
+      orgZoomOut: 'Zoom out',
+      orgZoomReset: 'Back to 100%',
+      orgEmpty: 'No squads yet. A squad is a coordinator and its workers: start with its coordinator.',
+      orgAddAgent: '+ Agent',
+      orgMore: n => `+ ${n} more`,
+      orgLess: 'Show fewer',
+      orgLinkHandle: 'Drag onto another squad to link them',
+      orgSquadMenu: n => `Squad ${n}: actions`,
+      orgAgentMenu: n => `${n}: actions`,
+      orgNoPurpose: 'Not described yet: ⋯ → Describe.',
+      orgNoGoal: 'No goal yet: ⋯ → Name and goal.',
+      orgLinkRecent: n => `${n} message${n === 1 ? '' : 's'} in the last hour (at most 60)`,
+      orgEditSquad: 'Name and goal…',
+      orgEditSquadTitle: n => `Squad ${n}`,
+      orgSquadTitle: 'Name shown',
+      orgGoal: 'Goal',
+      orgGoalHint: 'What this squad is for. You see it here, and so do the coordinators linked with it (in ping), to know what to ask it for.',
+      orgSquadTitleOpt: 'Squad name (optional)',
+      orgGoalOpt: 'Squad goal (optional)',
+      orgDescribe: 'Describe…',
+      orgDescribeTitle: n => `What ${n} is for`,
+      orgPurpose: 'Description',
+      orgDescribeHint: 'You see it on hover, and its coordinator in ping. Empty: its persona\'s description.',
+      orgReshape: 'Change persona or squad…',
+      orgReshapeTitle: n => `Change ${n}`,
+      orgReshapeHint: f => `The persona and the squad are fixed when a session starts: it is closed and opened again with them, in ${f}.`,
+      orgSquad: 'Squad',
+      orgResume: 'Continue its conversation',
+      orgNoResume: 'This machine doesn\'t continue earlier conversations: it starts a new one.',
+      orgReopenBtn: 'Close and open again',
+      orgReopening: 'Opening again…',
+      orgStillOn: n => `"${n}" is still connected: try again in a few seconds.`,
+      orgNeedsMachine: 'Its machine is not connected.',
+      orgNoFolder: n => `The folder of "${n}" is not known: open it from the dashboard first.`,
+      orgCloseSquad: 'Close squad',
+      orgCloseSquadTitle: n => `Close squad ${n}?`,
+      orgCloseSquadText: l => `Closes the terminals of ${l}. What they were doing stops; their chats stay, and each one can be opened again.`,
+      orgDeleteSquad: 'Delete squad',
+      orgDeleteSquadTitle: n => `Delete squad ${n}?`,
+      orgDeleteSquadText: l => `Deletes ${l} from the dashboard, with their chats, and its links with other squads. It can't be undone.`,
       machine: 'Machine',
       noOnlineMachines: 'No machine is connected. Add one, or start squadra-host on it.',
       role: 'Role',
@@ -990,6 +1093,53 @@
       noLinks: 'Todavía no está enlazada con ninguna otra escuadra.',
       noOtherCoordinators: 'No hay otro coordinador con el que enlazarla.',
       linkedWith: l => `🔗 ${l}`,
+      org: 'Organigrama',
+      orgNavSub: (n, l) => `${n} escuadra${n === 1 ? '' : 's'} · ${l} enlace${l === 1 ? '' : 's'}`,
+      orgSub: (n, a, l) => `${n} escuadra${n === 1 ? '' : 's'} · ${a} agente${a === 1 ? '' : 's'} · ${l} enlace${l === 1 ? '' : 's'}`,
+      orgNewSquad: '+ Escuadra',
+      orgArrange: 'Ordenar',
+      orgArrangeTitle: 'Vuelve a colocar todas las tarjetas en columnas',
+      orgZoomIn: 'Acercar',
+      orgZoomOut: 'Alejar',
+      orgZoomReset: 'Volver al 100 %',
+      orgEmpty: 'Aún no hay escuadras. Una escuadra es un coordinador y sus workers: empieza por su coordinador.',
+      orgAddAgent: '+ Agente',
+      orgMore: n => `+ ${n} más`,
+      orgLess: 'Mostrar menos',
+      orgLinkHandle: 'Arrástralo a otra escuadra para enlazarlas',
+      orgSquadMenu: n => `Escuadra ${n}: acciones`,
+      orgAgentMenu: n => `${n}: acciones`,
+      orgNoPurpose: 'Sin describir: ⋯ → Describir.',
+      orgNoGoal: 'Sin objetivo: ⋯ → Nombre y objetivo.',
+      orgLinkRecent: n => `${n} mensaje${n === 1 ? '' : 's'} en la última hora (como mucho 60)`,
+      orgEditSquad: 'Nombre y objetivo…',
+      orgEditSquadTitle: n => `Escuadra ${n}`,
+      orgSquadTitle: 'Nombre visible',
+      orgGoal: 'Objetivo',
+      orgGoalHint: 'Para qué sirve esta escuadra. Lo ves aquí, y también los coordinadores enlazados con ella (en ping), para saber qué pedirle.',
+      orgSquadTitleOpt: 'Nombre de la escuadra (opcional)',
+      orgGoalOpt: 'Objetivo de la escuadra (opcional)',
+      orgDescribe: 'Describir…',
+      orgDescribeTitle: n => `Para qué sirve ${n}`,
+      orgPurpose: 'Descripción',
+      orgDescribeHint: 'La ves al pasar el ratón, y su coordinador en ping. Vacía: la descripción de su persona.',
+      orgReshape: 'Cambiar persona o escuadra…',
+      orgReshapeTitle: n => `Cambiar ${n}`,
+      orgReshapeHint: f => `La persona y la escuadra se fijan al arrancar la sesión: se cierra y se vuelve a abrir con ellas, en ${f}.`,
+      orgSquad: 'Escuadra',
+      orgResume: 'Continuar su conversación',
+      orgNoResume: 'Esta máquina no continúa conversaciones anteriores: empezará una nueva.',
+      orgReopenBtn: 'Cerrar y volver a abrir',
+      orgReopening: 'Volviendo a abrir…',
+      orgStillOn: n => `"${n}" sigue conectada: prueba otra vez en unos segundos.`,
+      orgNeedsMachine: 'Su máquina no está conectada.',
+      orgNoFolder: n => `No se conoce la carpeta de "${n}": ábrela antes desde el panel.`,
+      orgCloseSquad: 'Cerrar escuadra',
+      orgCloseSquadTitle: n => `¿Cerrar la escuadra ${n}?`,
+      orgCloseSquadText: l => `Cierra los terminales de ${l}. Lo que estaban haciendo se detiene; sus chats se quedan, y cada uno se puede volver a abrir.`,
+      orgDeleteSquad: 'Borrar escuadra',
+      orgDeleteSquadTitle: n => `¿Borrar la escuadra ${n}?`,
+      orgDeleteSquadText: l => `Borra ${l} del panel, con sus chats, y sus enlaces con otras escuadras. No se puede deshacer.`,
       machine: 'Máquina',
       noOnlineMachines: 'No hay ninguna máquina conectada. Añade una o arranca squadra-host en ella.',
       role: 'Rol',
@@ -1585,6 +1735,7 @@
     let html = `<button class="nav-item ${route.view === 'mosaic' && !route.squad ? 'sel' : ''}" data-go="#/"><span>▦</span><span class="n">${T.allSessions}</span><span class="badge" hidden></span><span class="s">${T.activeOf(online, list.length)}</span></button>`
     const leadsN = list.filter(s => s.role === 'coordinator').length
     html += `<button class="nav-item ${route.view === 'leads' ? 'sel' : ''}" data-go="#/c"><span>🧭</span><span class="n">${T.leads}</span><span class="badge" hidden></span><span class="s">${T.leadsCount(leadsN)}</span></button>`
+    html += `<button class="nav-item ${route.view === 'org' ? 'sel' : ''}" data-go="#/org"><span>🏢</span><span class="n">${T.org}</span><span class="badge" hidden></span><span class="s">${T.orgNavSub(orgSquads().squads.length, links.length)}</span></button>`
     const item = s => {
       const st = status(s)
       const n = unread.get(s.name) ?? 0
@@ -1683,6 +1834,7 @@
     if (location.hash === '#/archived') return { view: 'archived' }
     if (location.hash === '#/hosts') return { view: 'hosts' }
     if (location.hash === '#/c') return { view: 'leads' }
+    if (location.hash === '#/org') return { view: 'org' }
     const q = location.hash.match(/^#\/q\/(.+)$/)
     if (q) return ROUTE_NAME.test(dec(q[1])) ? { view: 'mosaic', squad: dec(q[1]) } : { view: 'mosaic' }
     const h = location.hash.match(/^#\/h\/(.+)$/)
@@ -1716,6 +1868,13 @@
 
   function renderTop() {
     const r = currentRoute()
+    if (r.view === 'org') {
+      const { squads } = orgSquads()
+      setHtml($('topTitle'), `🏢 ${T.org}`)
+      $('topSub').textContent = T.orgSub(squads.length, squads.reduce((t, q) => t + 1 + q.workers.length, 0), links.length)
+      setHtml($('topRight'), `<span class="seg"><button data-orgzoom="-" aria-label="${esc(T.orgZoomOut)}">−</button><button data-orgzoom="1" title="${esc(T.orgZoomReset)}">${Math.round(orgZoom * 100)}%</button><button data-orgzoom="+" aria-label="${esc(T.orgZoomIn)}">+</button></span><button class="btn" data-orgact="arrange" title="${esc(T.orgArrangeTitle)}">${T.orgArrange}</button><button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button>`)
+      return
+    }
     if (r.view === 'leads') {
       const cs = sortedSessions().filter(s => s.role === 'coordinator')
       const ws = sortedSessions().filter(s => s.role !== 'coordinator' && cs.some(c => c.name === s.coordinator))
@@ -1967,7 +2126,7 @@
   // actions: clear chat, archive / unarchive, delete
   let menuEl = null
   function closeMenu() { menuEl?.remove(); menuEl = null }
-  document.addEventListener('click', e => { if (menuEl && !e.target.closest('.menu') && !e.target.closest('[data-menu], [data-hmenu]')) closeMenu() })
+  document.addEventListener('click', e => { if (menuEl && !e.target.closest('.menu') && !e.target.closest('[data-menu], [data-hmenu], [data-orgmenu], [data-la]')) closeMenu() })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); document.querySelector('.modal-bg')?.querySelector('[data-cancel]')?.click() } })
 
   function openMenu(anchor, name) {
@@ -2148,6 +2307,8 @@
     const c = r.view === 'session' && sessions.get(r.name)?.role === 'worker' ? sessions.get(r.name).coordinator : null
     if (c && squadOpen[c] !== true) { squadOpen[c] = true; store.set('squadraSquads', JSON.stringify(squadOpen)) }
     $('archived').hidden = r.view !== 'archived'
+    $('org').hidden = r.view !== 'org'
+    hideOrgTip()
     $('hosts').hidden = r.view !== 'hosts'
     const st = sessionTerm(r)
     const termMode = r.view === 'terminal' || !!st
@@ -2168,12 +2329,12 @@
       $('session').hidden = true
       $('mosaic').hidden = false
       buildMosaic()
-    } else if (r.view === 'archived') {
+    } else if (r.view === 'archived' || r.view === 'org') {
       if (sessionView) { sessionView.destroy(); sessionView = null; $('session').innerHTML = '' }
       clearMosaic()
       $('session').hidden = true
       $('mosaic').hidden = true
-      renderArchived()
+      if (r.view === 'org') renderOrg(); else renderArchived()
     } else if (st) {
       // The session's live terminal, as in Machines: watch it and type to it.
       if (sessionView) { sessionView.destroy(); sessionView = null; $('session').innerHTML = '' }
@@ -2583,6 +2744,511 @@
   }
 
   // ---------------------------------------------------------------------------
+  // org chart: each squad as a card (its coordinator and workers), the links
+  // between squads as lines, and what each one is for on hover. From here
+  // squads and agents are added, described, moved, linked, closed and
+  // deleted, through the same actions as everywhere else in the dashboard.
+  let squadMeta = new Map()                // coordinator -> {title, goal, x, y}
+  const ORG_W = 280, ORG_GAP_X = 90, ORG_GAP_Y = 40, ORG_PAD = 32, ORG_FOLD = 6
+  // (Fixed heights, as in the CSS: cards are laid out and linked without measuring them.)
+  const ORG_H = { head: 44, goal: 36, row: 32, fold: 28, foot: 42 }
+  let orgZoom = (() => { const z = Number(store.get('squadraOrgZoom')); return z >= 0.4 && z <= 1.6 ? z : 1 })()
+  let orgDrag = null                       // a card or a new link being dragged
+  let orgPos = new Map()                   // coordinator -> {x, y, h}, as drawn
+  const orgOpen = new Set()                // squads showing all their workers
+  const orgSaved = new Set()               // squads placed automatically, already saved
+  let orgTipKey = null
+
+  const squadTitle = name => squadMeta.get(name)?.title || name
+  // What a session is for: what was written for it here, else what its persona says.
+  const purposeOf = s => s?.description || s?.persona?.description || ''
+  const personaOf = s => s?.persona?.name || personaName(s?.opened_persona) || ''
+  const recentOf = l => (l.recent ?? []).filter(t => now() - t < 3600_000).length
+  const orgNarrow = () => matchMedia('(max-width: 900px)').matches
+  // Squads as in the sidebar, plus the sessions opened here that haven't
+  // joined yet (Claude Code still starting, or waiting for its login): by the
+  // role and coordinator they were opened with.
+  const orgRole = s => s.role ?? s.opened_role ?? null
+  const orgCoordOf = s => s.coordinator ?? terminalOf(s.name)?.term.coordinator ?? null
+  function orgSquads() {
+    const list = sortedSessions()
+    const coords = list.filter(s => orgRole(s) === 'coordinator')
+    const names = new Set(coords.map(c => c.name))
+    return {
+      squads: coords.map(c => ({ coord: c, workers: list.filter(s => orgRole(s) === 'worker' && orgCoordOf(s) === c.name).sort(byPresence) })),
+      orphans: list.filter(s => orgRole(s) !== 'coordinator' && orgRole(s) !== 'solo' && !(orgRole(s) === 'worker' && names.has(orgCoordOf(s)))),
+      solos: list.filter(s => orgRole(s) === 'solo'),
+    }
+  }
+
+  function orgCardHeight(q) {
+    const shown = orgOpen.has(q.coord.name) ? q.workers.length : Math.min(q.workers.length, ORG_FOLD)
+    return 2 + ORG_H.head + (squadMeta.get(q.coord.name)?.goal ? ORG_H.goal : 0) + ORG_H.row * (1 + shown) +
+      (q.workers.length > ORG_FOLD ? ORG_H.fold : 0) + ORG_H.foot
+  }
+
+  // Where each card goes: where it was put, or, for a new squad, the lowest
+  // free spot in a column (all of them with "arrange").
+  function orgLayout(squads, { arrange = false } = {}) {
+    const pos = new Map()
+    const loose = []
+    for (const q of squads) {
+      const m = squadMeta.get(q.coord.name)
+      if (!arrange && Number.isFinite(m?.x) && Number.isFinite(m?.y)) pos.set(q.coord.name, { x: m.x, y: m.y, h: orgCardHeight(q) })
+      else loose.push(q)
+    }
+    if (loose.length) {
+      const width = ($('org').clientWidth || 1200) / orgZoom
+      const cols = Math.max(1, Math.floor((width - ORG_PAD) / (ORG_W + ORG_GAP_X)))
+      const bottoms = Array.from({ length: cols }, (_, i) => {
+        const x0 = ORG_PAD + i * (ORG_W + ORG_GAP_X)
+        let b = ORG_PAD
+        for (const p of pos.values()) if (p.x < x0 + ORG_W && p.x + ORG_W > x0) b = Math.max(b, p.y + p.h + ORG_GAP_Y)
+        return b
+      })
+      for (const q of loose) {
+        const i = bottoms.indexOf(Math.min(...bottoms))
+        const p = { x: ORG_PAD + i * (ORG_W + ORG_GAP_X), y: bottoms[i], h: orgCardHeight(q), auto: true }
+        bottoms[i] = p.y + p.h + ORG_GAP_Y
+        pos.set(q.coord.name, p)
+      }
+    }
+    return pos
+  }
+
+  // A link's line, between the two cards' sides (or top and bottom, when one
+  // is above the other), and the middle point for its label.
+  function orgLinkPath(p, q) {
+    const pc = p.x + ORG_W / 2, qc = q.x + ORG_W / 2
+    if (Math.abs(pc - qc) >= ORG_W + 20) {
+      const right = qc > pc
+      const x1 = right ? p.x + ORG_W : p.x, x2 = right ? q.x : q.x + ORG_W
+      const y1 = p.y + ORG_H.head / 2, y2 = q.y + ORG_H.head / 2
+      const d = Math.max(40, Math.abs(x2 - x1) / 2) * (right ? 1 : -1)
+      return { d: `M${x1} ${y1} C${x1 + d} ${y1} ${x2 - d} ${y2} ${x2} ${y2}`, mx: (x1 + x2) / 2, my: (y1 + y2) / 2 }
+    }
+    const down = q.y > p.y
+    const y1 = down ? p.y + p.h : p.y, y2 = down ? q.y : q.y + q.h
+    const d = Math.max(30, Math.abs(y2 - y1) / 2) * (down ? 1 : -1)
+    return { d: `M${pc} ${y1} C${pc} ${y1 + d} ${qc} ${y2 - d} ${qc} ${y2}`, mx: (pc + qc) / 2, my: (y1 + y2) / 2 }
+  }
+  function orgLinesHtml() {
+    let paths = '', labels = ''
+    for (const l of links) {
+      const p = orgPos.get(l.a), q = orgPos.get(l.b)
+      if (!p || !q) continue
+      const { d, mx, my } = orgLinkPath(p, q)
+      const n = recentOf(l)
+      // (Amber from three quarters of what two coordinators may send each other in an hour.)
+      const cls = n >= 60 ? 'full' : n >= 45 ? 'warn' : ''
+      paths += `<path class="l ${cls}" d="${d}"/><path class="hit" d="${d}" data-la="${esc(l.a)}" data-lb="${esc(l.b)}"/>`
+      labels += `<button class="org-label ${cls}" style="left:${Math.round(mx)}px;top:${Math.round(my)}px" data-la="${esc(l.a)}" data-lb="${esc(l.b)}" title="${esc(T.orgLinkRecent(n))}">🔗 ${n}</button>`
+    }
+    return { paths, labels }
+  }
+
+  function orgAgent(s, kind) {
+    const pct = s.activity?.context_pct
+    const persona = personaOf(s)
+    return `<div class="org-agent ${kind}" data-orgtip="agent:${esc(s.name)}" tabindex="0">
+      <span class="dot ${status(s).dot}"></span><span class="n">${esc(s.name)}</span>${persona ? `<span class="org-persona">🎭 ${esc(persona)}</span>` : ''}
+      <span class="org-ctx">${Number.isFinite(pct) ? `<span class="ctx ${pct >= 80 ? 'hot' : pct >= 60 ? 'warm' : ''}">${Math.round(pct)}%</span>` : ''}</span>
+      <button class="org-more" data-orgmenu="agent" data-name="${esc(s.name)}" aria-label="${esc(T.orgAgentMenu(s.name))}">⋯</button></div>`
+  }
+  function orgCard(q, p) {
+    const c = q.coord, m = squadMeta.get(c.name) ?? {}
+    const shown = orgOpen.has(c.name) ? q.workers : q.workers.slice(0, ORG_FOLD)
+    const on = q.workers.filter(w => w.online).length
+    return `<div class="org-card" data-squad="${esc(c.name)}" style="left:${p.x}px;top:${p.y}px">
+      <div class="org-head" data-orgtip="squad:${esc(c.name)}" tabindex="0"><span class="org-title">${esc(m.title || c.name)}</span><span class="org-count" title="${esc(T.squadCount(on, q.workers.length))}">👥 ${on}/${q.workers.length}</span><button class="org-more" data-orgmenu="squad" data-name="${esc(c.name)}" aria-label="${esc(T.orgSquadMenu(c.name))}">⋯</button></div>
+      ${m.goal ? `<div class="org-goal">${esc(m.goal)}</div>` : ''}
+      ${orgAgent(c, 'coord')}${shown.map(w => orgAgent(w, 'worker')).join('')}
+      ${q.workers.length > ORG_FOLD ? `<button class="org-fold" data-orgfold="${esc(c.name)}">${orgOpen.has(c.name) ? T.orgLess : T.orgMore(q.workers.length - shown.length)}</button>` : ''}
+      <div class="org-foot"><button class="btn" data-orgact="addagent" data-name="${esc(c.name)}">${T.orgAddAgent}</button></div>
+      <span class="org-handle" data-orghandle="${esc(c.name)}" title="${esc(T.orgLinkHandle)}"></span></div>`
+  }
+
+  function renderOrg() {
+    if (orgDrag) return // (drawn again when the drag ends)
+    const { squads, orphans, solos } = orgSquads()
+    orgPos = orgLayout(squads)
+    // New squads stay where they were first put.
+    const fresh = squads.filter(q => orgPos.get(q.coord.name).auto && !orgSaved.has(q.coord.name))
+    if (fresh.length) {
+      for (const q of fresh) orgSaved.add(q.coord.name)
+      postJson('/api/org/positions', { positions: fresh.map(q => ({ coordinator: q.coord.name, x: orgPos.get(q.coord.name).x, y: orgPos.get(q.coord.name).y })) }).catch(() => {})
+    }
+    let w = 0, h = 0
+    for (const p of orgPos.values()) { w = Math.max(w, p.x + ORG_W); h = Math.max(h, p.y + p.h) }
+    w += ORG_PAD + 240; h += ORG_PAD + 160 // (room to drag a card further)
+    const { paths, labels } = orgLinesHtml()
+    const extra = [[T.noCoordinator, orphans], [T.standalone, solos]].filter(([, l]) => l.length)
+      .map(([label, l]) => `<div class="org-extra"><div class="org-extra-h">${esc(label)}</div>${l.map(s => orgAgent(s, 'loose')).join('')}</div>`).join('')
+    setHtml($('org'), `${squads.length ? '' : `<div class="org-empty"><p>${T.orgEmpty}</p><button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button></div>`}
+      <div class="org-wrap" style="width:${Math.round(w * orgZoom)}px;height:${squads.length ? Math.round(h * orgZoom) : 0}px">
+        <div class="org-stage" style="width:${w}px;height:${h}px;transform:scale(${orgZoom})">
+          <svg class="org-lines" width="${w}" height="${h}">${paths}</svg>
+          ${squads.map(q => orgCard(q, orgPos.get(q.coord.name))).join('')}
+          <div class="org-labels">${labels}</div>
+        </div>
+      </div>${extra ? `<div class="org-extras">${extra}</div>` : ''}`)
+    if (orgTipKey) {
+      const el = $('org').querySelector(`[data-orgtip="${CSS.escape(orgTipKey)}"]`)
+      if (el) showOrgTip(el); else hideOrgTip()
+    }
+  }
+
+  // During a drag: only the moved card and the lines.
+  function drawOrgLines() {
+    const { paths, labels } = orgLinesHtml()
+    const svg = $('org').querySelector('.org-lines')
+    const tmp = svg.querySelector('.tmp')?.outerHTML ?? ''
+    svg.innerHTML = paths + tmp
+    $('org').querySelector('.org-labels').innerHTML = labels
+  }
+  const stagePoint = e => {
+    const r = $('org').querySelector('.org-stage').getBoundingClientRect()
+    return { x: (e.clientX - r.left) / orgZoom, y: (e.clientY - r.top) / orgZoom }
+  }
+  function endOrgDrag() {
+    if (!orgDrag) return
+    $('org').querySelectorAll('.drop').forEach(x => x.classList.remove('drop'))
+    $('org').querySelector('.org-lines .tmp')?.remove()
+    orgDrag = null
+    $('org')._html = undefined // (the DOM was changed by hand: drawn again in full)
+    renderOrg()
+  }
+
+  // Hover (or keyboard focus): what a squad or an agent is for.
+  function orgTipHtml(key) {
+    const i = key.indexOf(':')
+    const kind = key.slice(0, i), name = key.slice(i + 1)
+    if (kind === 'agent') {
+      const s = sessions.get(name)
+      if (!s) return ''
+      const where = terminalOf(name)
+      const host = where?.host ?? hosts.get(s.host_id)
+      const folder = where?.term.folder ?? s.activity?.cwd
+      const purpose = purposeOf(s)
+      const pct = s.activity?.context_pct
+      return `<div class="org-tip-t">${esc(name)} ${roleTag(orgRole(s))}</div>
+        <p>${purpose ? esc(purpose) : `<i>${T.orgNoPurpose}</i>`}</p>
+        ${personaOf(s) ? `<div>🎭 ${esc(personaOf(s))}${s.description && s.persona?.description ? ` — <span class="m">${esc(s.persona.description)}</span>` : ''}</div>` : ''}
+        <div class="m"><span class="dot ${status(s).dot}"></span> ${esc(status(s).text)}</div>
+        ${host || folder ? `<div class="m">${[host ? T.onHost(host.name) : '', folder].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+        ${Number.isFinite(pct) ? `<div class="m">${esc(T.contextPct(Math.round(pct)))}</div>` : ''}`
+    }
+    const c = sessions.get(name)
+    if (!c) return ''
+    const m = squadMeta.get(name) ?? {}
+    const workers = orgSquads().squads.find(q => q.coord.name === name)?.workers ?? []
+    const linked = linksOf(name)
+    return `<div class="org-tip-t">${esc(m.title || name)}${m.title ? ` <span class="m">· ${esc(name)}</span>` : ''}</div>
+      <p>${m.goal ? esc(m.goal) : `<i>${T.orgNoGoal}</i>`}</p>
+      ${personaOf(c) ? `<div>🎭 ${esc(personaOf(c))}</div>` : ''}
+      <div class="m">${esc(T.squadCount(workers.filter(w => w.online).length, workers.length))}</div>
+      ${linked.length ? `<div class="m">🔗 ${linked.map(n => esc(squadTitle(n))).join(', ')}</div>` : ''}`
+  }
+  const orgTip = document.createElement('div')
+  orgTip.className = 'org-tip'
+  orgTip.hidden = true
+  orgTip.setAttribute('role', 'tooltip')
+  document.body.appendChild(orgTip)
+  function showOrgTip(el) {
+    const html = orgTipHtml(el.dataset.orgtip)
+    if (!html) return hideOrgTip()
+    orgTipKey = el.dataset.orgtip
+    setHtml(orgTip, html)
+    orgTip.hidden = false
+    const r = el.getBoundingClientRect()
+    const w = orgTip.offsetWidth, h = orgTip.offsetHeight
+    const left = r.right + 10 + w <= innerWidth ? r.right + 10 : Math.max(8, r.left - 10 - w)
+    orgTip.style.left = `${left}px`
+    orgTip.style.top = `${Math.max(8, Math.min(r.top, innerHeight - h - 8))}px`
+  }
+  function hideOrgTip() { orgTip.hidden = true; orgTipKey = null }
+  $('org').addEventListener('pointerover', e => { const el = e.target.closest('[data-orgtip]'); if (el && !orgDrag && !menuEl && el.dataset.orgtip !== orgTipKey) showOrgTip(el) })
+  $('org').addEventListener('pointerout', e => { const el = e.target.closest('[data-orgtip]'); if (el && !el.contains(e.relatedTarget)) hideOrgTip() })
+  $('org').addEventListener('focusin', e => { const el = e.target.closest('[data-orgtip]'); if (el) showOrgTip(el) })
+  $('org').addEventListener('focusout', hideOrgTip)
+  $('org').addEventListener('scroll', hideOrgTip)
+
+  // Dragging a card by its header moves it; dragging its handle onto another
+  // card links the two squads.
+  $('org').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || orgNarrow()) return
+    const handle = e.target.closest('[data-orghandle]')
+    const head = !handle && !e.target.closest('button') && e.target.closest('.org-head')
+    if (!handle && !head) return
+    e.preventDefault()
+    hideOrgTip()
+    if (handle) {
+      const from = handle.dataset.orghandle
+      orgDrag = { kind: 'link', from }
+      $('org').querySelector('.org-lines').insertAdjacentHTML('beforeend', '<path class="l tmp" d=""/>')
+    } else {
+      const card = head.closest('.org-card')
+      orgDrag = { kind: 'card', name: card.dataset.squad, card, px: e.clientX, py: e.clientY, x: parseFloat(card.style.left), y: parseFloat(card.style.top), moved: false }
+    }
+  })
+  addEventListener('pointermove', e => {
+    if (!orgDrag) return
+    if (orgDrag.kind === 'card') {
+      const dx = (e.clientX - orgDrag.px) / orgZoom, dy = (e.clientY - orgDrag.py) / orgZoom
+      if (!orgDrag.moved && Math.hypot(dx, dy) < 4) return
+      orgDrag.moved = true
+      const x = Math.max(0, Math.round(orgDrag.x + dx)), y = Math.max(0, Math.round(orgDrag.y + dy))
+      orgDrag.card.style.left = `${x}px`
+      orgDrag.card.style.top = `${y}px`
+      Object.assign(orgPos.get(orgDrag.name), { x, y })
+      drawOrgLines()
+      return
+    }
+    const p = orgPos.get(orgDrag.from)
+    if (!p) return
+    const to = stagePoint(e)
+    const x1 = p.x + ORG_W, y1 = p.y + ORG_H.head / 2
+    $('org').querySelector('.org-lines .tmp')?.setAttribute('d', `M${x1} ${y1} C${x1 + 60} ${y1} ${to.x - 60} ${to.y} ${to.x} ${to.y}`)
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.org-card')
+    $('org').querySelectorAll('.org-card.drop').forEach(x => { if (x !== over) x.classList.remove('drop') })
+    if (over && over.dataset.squad !== orgDrag.from) over.classList.add('drop')
+  })
+  addEventListener('pointerup', async e => {
+    const d = orgDrag
+    if (!d) return
+    if (d.kind === 'card') {
+      if (d.moved) {
+        const p = orgPos.get(d.name)
+        squadMeta.set(d.name, { ...(squadMeta.get(d.name) ?? { coordinator: d.name }), x: p.x, y: p.y })
+        postJson('/api/org/positions', { positions: [{ coordinator: d.name, x: p.x, y: p.y }] }).catch(err => alertBox(err.message))
+      }
+      return endOrgDrag()
+    }
+    const to = document.elementFromPoint(e.clientX, e.clientY)?.closest('.org-card')?.dataset.squad
+    endOrgDrag()
+    if (!to || to === d.from) return
+    try {
+      const r = await postJson('/api/links/add', { a: d.from, b: to })
+      if (r?.warnings?.length) alertBox(r.warnings.join(' · '))
+    } catch (err) { alertBox(err.message) }
+  })
+  addEventListener('keydown', e => { if (e.key === 'Escape' && orgDrag) endOrgDrag() })
+  addEventListener('resize', () => { if (currentRoute().view === 'org') soon(renderOrg) })
+
+  $('org').addEventListener('click', e => {
+    const menu = e.target.closest('[data-orgmenu]')
+    if (menu) return menu.dataset.orgmenu === 'squad' ? squadMenu(menu, menu.dataset.name) : agentMenu(menu, menu.dataset.name)
+    const fold = e.target.closest('[data-orgfold]')
+    if (fold) { const n = fold.dataset.orgfold; if (orgOpen.has(n)) orgOpen.delete(n); else orgOpen.add(n); return renderOrg() }
+    const link = e.target.closest('[data-la]')
+    if (link) return linkMenu(link, link.dataset.la, link.dataset.lb)
+  })
+  $('org').addEventListener('dblclick', e => {
+    const a = e.target.closest('.org-agent')
+    if (a && !e.target.closest('button')) location.hash = `#/s/${encodeURIComponent(a.dataset.orgtip.slice(6))}`
+  })
+  // (The top bar's buttons too.)
+  document.addEventListener('click', e => {
+    const act = e.target.closest('[data-orgact]')
+    if (act) {
+      if (act.dataset.orgact === 'newsquad') newSessionDialog(undefined, { role: 'coordinator' })
+      if (act.dataset.orgact === 'addagent') addWorkerTo(act.dataset.name)
+      if (act.dataset.orgact === 'arrange') arrangeOrg()
+    }
+    const z = e.target.closest('[data-orgzoom]')
+    if (z) {
+      const v = z.dataset.orgzoom
+      orgZoom = v === '1' ? 1 : Math.min(1.6, Math.max(0.4, Math.round((orgZoom + (v === '+' ? 0.1 : -0.1)) * 10) / 10))
+      store.set('squadraOrgZoom', String(orgZoom))
+      renderOrg()
+      renderTop()
+    }
+  })
+
+  function arrangeOrg() {
+    const { squads } = orgSquads()
+    if (!squads.length) return
+    const pos = orgLayout(squads, { arrange: true })
+    for (const [name, p] of pos) squadMeta.set(name, { ...(squadMeta.get(name) ?? { coordinator: name }), x: p.x, y: p.y })
+    renderOrg()
+    postJson('/api/org/positions', { positions: [...pos].map(([coordinator, p]) => ({ coordinator, x: p.x, y: p.y })) }).catch(err => alertBox(err.message))
+  }
+
+  // A small menu next to what was clicked: [{label, run, danger, disabled}].
+  function orgMenuAt(anchor, items, head = '') {
+    closeMenu()
+    hideOrgTip()
+    menuEl = document.createElement('div')
+    menuEl.className = 'menu'
+    menuEl.innerHTML = (head ? `<div class="hint">${head}</div>` : '') +
+      items.filter(Boolean).map((it, i) => `<button data-i="${i}" class="${it.danger ? 'danger' : ''}" ${it.disabled ? 'disabled' : ''}>${esc(it.label)}</button>`).join('')
+    document.body.appendChild(menuEl)
+    const r = anchor.getBoundingClientRect()
+    const w = menuEl.offsetWidth
+    menuEl.style.top = `${Math.min(r.bottom + 4, innerHeight - menuEl.offsetHeight - 8)}px`
+    menuEl.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`
+    const list = items.filter(Boolean)
+    menuEl.addEventListener('click', e => {
+      const b = e.target.closest('button')
+      if (!b || b.disabled) return
+      closeMenu()
+      list[Number(b.dataset.i)].run()
+    })
+  }
+
+  function squadMenu(anchor, name) {
+    const workers = orgSquads().squads.find(q => q.coord.name === name)?.workers ?? []
+    const members = [...workers.map(w => w.name), name]
+    const running = members.filter(n => terminalOf(n))
+    const anyOn = members.some(n => sessions.get(n)?.online)
+    orgMenuAt(anchor, [
+      { label: T.orgEditSquad, run: () => squadDialog(name) },
+      { label: T.addWorkerTo(name), run: () => addWorkerTo(name) },
+      { label: T.links(linksOf(name).length), run: () => linksDialog(name) },
+      { label: T.viewSquad, run: () => { location.hash = `#/q/${encodeURIComponent(name)}` } },
+      { label: T.saveTemplateTitle(name), run: () => saveTemplateDialog(name) },
+      { label: T.orgCloseSquad, danger: true, disabled: !running.length, run: () => confirmDialog({
+        title: T.orgCloseSquadTitle(squadTitle(name)), text: T.orgCloseSquadText(running.map(n => `<b>${esc(n)}</b>`).join(', ')), confirm: T.orgCloseSquad, danger: true,
+        run: async () => { for (const n of running) { const w = terminalOf(n); if (w) await postJson('/api/terminals/kill', { host: w.host.id, term: n }) } },
+      }) },
+      { label: T.orgDeleteSquad, danger: true, disabled: anyOn || running.length > 0, run: () => confirmDialog({
+        title: T.orgDeleteSquadTitle(squadTitle(name)), text: T.orgDeleteSquadText(members.map(n => `<b>${esc(n)}</b>`).join(', ')), confirm: T.orgDeleteSquad, danger: true,
+        run: async () => { for (const n of members) if (sessions.has(n)) await post('delete', n) },
+      }) },
+    ])
+  }
+
+  function agentMenu(anchor, name) {
+    const s = sessions.get(name)
+    if (!s) return
+    const where = terminalOf(name)
+    const role = s.opened_role ?? s.role
+    orgMenuAt(anchor, [
+      { label: T.orgDescribe, run: () => describeDialog(name) },
+      s.host_id && (role === 'worker' || role === 'coordinator') ? { label: T.orgReshape, disabled: !hosts.get(s.host_id)?.online, run: () => reshapeDialog(name) } : null,
+      where ? { label: T.terminal, run: () => { location.hash = `#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}` } } : null,
+      { label: T.openChat, run: () => { location.hash = `#/s/${encodeURIComponent(name)}/chat` } },
+      reopenable(s) ? { label: T.reopen, run: () => reopen(name) } : null,
+      where ? { label: T.closeSession, danger: true, run: () => hostAction('kill', where.host.id, name) } : null,
+      { label: T.deleteSession, danger: true, disabled: s.online, run: () => runAction('delete', name) },
+    ])
+  }
+
+  function linkMenu(anchor, a, b) {
+    const l = links.find(x => x.a === a && x.b === b)
+    if (!l) return
+    orgMenuAt(anchor, [
+      { label: T.unlink, danger: true, run: () => postJson('/api/links/delete', { a, b }).catch(err => alertBox(err.message)) },
+    ], `${esc(squadTitle(a))} ↔ ${esc(squadTitle(b))}<br>${esc(T.orgLinkRecent(recentOf(l)))}`)
+  }
+
+  function squadDialog(name) {
+    const m = squadMeta.get(name) ?? {}
+    const d = dialog(`<h3>${esc(T.orgEditSquadTitle(name))}</h3>
+      <label class="field"><span>${T.orgSquadTitle}</span><input type="text" name="title" maxlength="40" value="${esc(m.title ?? '')}" placeholder="${esc(name)}" autocomplete="off"></label>
+      <label class="field"><span>${T.orgGoal}</span><textarea name="goal" maxlength="300" rows="3">${esc(m.goal ?? '')}</textarea><span class="hint">${T.orgGoalHint}</span></label>
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.save}</button></div>`)
+    const f = n => d.el.querySelector(`[name=${n}]`)
+    f('title').focus()
+    d.el.querySelector('[data-ok]').addEventListener('click', async () => {
+      try { await postJson('/api/org/squad', { coordinator: name, title: f('title').value, goal: f('goal').value }); d.close() } catch (err) { d.el.querySelector('.err').textContent = err.message }
+    })
+  }
+
+  function describeDialog(name) {
+    const s = sessions.get(name)
+    if (!s) return
+    const d = dialog(`<h3>${esc(T.orgDescribeTitle(name))}</h3>
+      <label class="field"><span>${T.orgPurpose}</span><textarea name="desc" maxlength="300" rows="3" placeholder="${esc(s.persona?.description ?? '')}">${esc(s.description ?? '')}</textarea><span class="hint">${T.orgDescribeHint}</span></label>
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.save}</button></div>`)
+    const ta = d.el.querySelector('textarea')
+    ta.focus()
+    d.el.querySelector('[data-ok]').addEventListener('click', async () => {
+      try { await postJson('/api/org/describe', { name, description: ta.value }); d.close() } catch (err) { d.el.querySelector('.err').textContent = err.message }
+    })
+  }
+
+  // Another persona, or (a worker) another squad: both are fixed when a
+  // session starts (its system prompt, its coordinator), so the session is
+  // closed and opened again with them, in the same folder.
+  function reshapeDialog(name) {
+    const s = sessions.get(name)
+    const h = hosts.get(s?.host_id)
+    if (!s || !h?.online) return alertBox(T.orgNeedsMachine)
+    const where = terminalOf(name)
+    const folder = where?.term.folder ?? s.activity?.cwd
+    if (!folder) return alertBox(T.orgNoFolder(name))
+    const role = s.opened_role ?? s.role
+    const coords = orgSquads().squads.map(q => q.coord).filter(x => x.name !== name)
+    const resume = h.info?.allow_resume === true
+    const was = where?.term.persona?.id ?? s.opened_persona ?? ''
+    const d = dialog(`<h3>${esc(T.orgReshapeTitle(name))}</h3><p class="hint" style="font-size:12.5px;margin:-2px 0 12px">${T.orgReshapeHint(esc(folder))}</p>
+      <label class="field"><span>${T.persona}</span><select name="persona"><option value="">${T.personaNone}</option></select></label>
+      <div class="persona-hint"></div>
+      ${role === 'worker' ? `<label class="field"><span>${T.orgSquad}</span><select name="coord">${coords.map(c => `<option value="${esc(c.name)}" ${c.name === s.coordinator ? 'selected' : ''}>${esc(squadTitle(c.name))}${squadTitle(c.name) !== c.name ? ` (${esc(c.name)})` : ''}</option>`).join('')}</select></label>` : ''}
+      ${resume ? `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:4px 0 10px"><input type="checkbox" name="resume" checked> ${T.orgResume}</label>` : `<p class="hint" style="font-size:12px;color:var(--muted)">${T.orgNoResume}</p>`}
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.orgReopenBtn}</button></div>`, { wide: true })
+    const f = n => d.el.querySelector(`[name=${n}]`)
+    const hint = d.el.querySelector('.persona-hint')
+    let list = []
+    const note = () => { const p = list.find(x => x.id === f('persona').value); hint.textContent = p?.description ?? '' }
+    f('persona').addEventListener('change', note)
+    postJson('/api/hosts/personas', { host: h.id, folder }).then(r => {
+      list = r.personas ?? []
+      f('persona').innerHTML = `<option value="">${T.personaNone}</option>${personaOptions(list, was, false)}`
+      note()
+    }).catch(err => { hint.textContent = `${T.personaLoadFailed}: ${err.message}` })
+    const ok = d.el.querySelector('[data-ok]')
+    ok.addEventListener('click', async () => {
+      const spec = { name, role, folder }
+      if (role === 'worker') spec.coordinator = f('coord')?.value || orgCoordOf(s)
+      if (f('persona').value) spec.persona = f('persona').value
+      if (where?.term.compact_window) spec.compact_window = where.term.compact_window
+      if (f('resume')?.checked) spec.resume = true
+      ok.disabled = true
+      ok.textContent = T.orgReopening
+      try {
+        if (where) await postJson('/api/terminals/kill', { host: h.id, term: name })
+        // (Until its terminal is gone and it is no longer connected: the name is free again.)
+        const t0 = Date.now()
+        while (terminalOf(name) || sessions.get(name)?.online) {
+          if (Date.now() - t0 > 20_000) throw new Error(T.orgStillOn(name))
+          await new Promise(r => setTimeout(r, 300))
+        }
+        await postJson('/api/terminals/open', { host: h.id, spec })
+        d.close()
+        location.hash = `#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(name)}`
+      } catch (err) {
+        d.el.querySelector('.err').textContent = err.message
+        ok.disabled = false
+        ok.textContent = T.orgReopenBtn
+      }
+    })
+  }
+
+  // A persona list's options, by kind and where they come from. (An agent
+  // whose tools leave out Squadra's can't message its squad: only solo.)
+  function personaOptions(list, want, solo) {
+    const groups = [['skill', 'project', T.personaSkillsProject], ['skill', 'user', T.personaSkillsUser], ['agent', 'project', T.personaAgentsProject], ['agent', 'user', T.personaAgentsUser]]
+    return groups.map(([kind, scope, label]) => {
+      const xs = list.filter(p => p.kind === kind && p.scope === scope)
+      return xs.length ? `<optgroup label="${esc(label)}">${xs.map(p => { const off = p.no_squadra_tools && !solo; return `<option value="${esc(p.id)}" ${p.id === want && !off ? 'selected' : ''} ${off ? 'disabled' : ''}>${esc(p.name)}${off ? ` — ${esc(T.personaNoTools)}` : ''}</option>` }).join('')}</optgroup>` : ''
+    }).join('')
+  }
+
+  // A message between two linked coordinators: the line's count goes up.
+  function noteLinkMessage(m) {
+    if (m.system || !m.from || !m.target) return
+    const l = links.find(x => (x.a === m.from && x.b === m.target) || (x.b === m.from && x.a === m.target))
+    if (!l) return
+    l.recent = [m.created_at, ...(l.recent ?? [])].slice(0, 100)
+    if (currentRoute().view === 'org') soon(renderOrg)
+  }
+
+  // ---------------------------------------------------------------------------
   // links between squads: two coordinators that may message each other. Set
   // here; the machine of each one is told while it runs.
   function linksDialog(coord) {
@@ -2650,6 +3316,10 @@
         <label class="field"><span>${T.sessionName}</span><input type="text" name="name" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off"></label>
       </div>
       <label class="field" data-only="worker"><span>${T.coordinatorName}</span><select name="coordinator">${coordOptions()}</select></label>
+      <div class="row2" data-only="coordinator">
+        <label class="field"><span>${T.orgSquadTitleOpt}</span><input type="text" name="sqtitle" maxlength="40" autocomplete="off"></label>
+        <label class="field"><span>${T.orgGoalOpt}</span><input type="text" name="sqgoal" maxlength="300" autocomplete="off"></label>
+      </div>
       <div class="row2">
         <label class="field"><span>${T.folder}</span><select name="folder"></select></label>
         <label class="field"><span>${T.subfolder}</span><input type="text" name="sub" placeholder="${esc(T.subfolderHint)}" autocomplete="off"></label>
@@ -2725,12 +3395,7 @@
     const renderPersonas = () => {
       const want = f('persona').value || wantPersona
       const solo = f('role').value === 'solo'
-      const groups = [['skill', 'project', T.personaSkillsProject], ['skill', 'user', T.personaSkillsUser], ['agent', 'project', T.personaAgentsProject], ['agent', 'user', T.personaAgentsUser]]
-      f('persona').innerHTML = `<option value="">${T.personaNone}</option>` + groups.map(([kind, scope, label]) => {
-        const xs = personaList.filter(p => p.kind === kind && p.scope === scope)
-        // (An agent limited to tools that aren't Squadra's can't message its squad.)
-        return xs.length ? `<optgroup label="${esc(label)}">${xs.map(p => { const off = p.no_squadra_tools && !solo; return `<option value="${esc(p.id)}" ${p.id === want && !off ? 'selected' : ''} ${off ? 'disabled' : ''}>${esc(p.name)}${off ? ` — ${esc(T.personaNoTools)}` : ''}</option>` }).join('')}</optgroup>` : ''
-      }).join('')
+      f('persona').innerHTML = `<option value="">${T.personaNone}</option>${personaOptions(personaList, want, solo)}`
       notePersona()
     }
     function loadPersonas() {
@@ -2765,6 +3430,7 @@
     d.el.querySelector('.row2').after(soloHint)
     const sync = () => {
       d.el.querySelector('[data-only=worker]').hidden = f('role').value !== 'worker'
+      d.el.querySelector('[data-only=coordinator]').hidden = f('role').value !== 'coordinator' || !!preset.reopen
       soloHint.hidden = f('role').value !== 'solo'
       syncFolders()
     }
@@ -2778,6 +3444,8 @@
     f('folder').addEventListener('change', noteFolder)
     f('sub').addEventListener('input', noteFolder)
     f('name').value = suggestName()
+    // A new squad (from the org chart): a coordinator.
+    if (preset.role && !preset.reopen) { f('role').value = preset.role; f('name').value = suggestName() }
     // Reopening a session: what it was opened with, and the last folder it worked in.
     if (preset.reopen) {
       f('role').value = preset.role
@@ -2815,6 +3483,9 @@
       ok.textContent = T.opening
       try {
         await postJson('/api/terminals/open', { host, spec })
+        // (Its squad's title and goal, if given: the session is open either way.)
+        const title = f('sqtitle').value.trim(), goal = f('sqgoal').value.trim()
+        if (spec.role === 'coordinator' && !preset.reopen && (title || goal)) await postJson('/api/org/squad', { coordinator: spec.name, title, goal }).catch(e => alertBox(e.message))
         d.close()
         location.hash = `#/t/${encodeURIComponent(host)}/${encodeURIComponent(spec.name)}`
       } catch (e) {
@@ -3095,6 +3766,7 @@
       for (const fn of templateListeners) fn()
       links = data.links ?? []
       for (const fn of linkListeners) fn()
+      squadMeta = new Map((data.squads ?? []).map(q => [q.coordinator, q]))
       hosts.clear()
       for (const h of data.hosts ?? []) hosts.set(h.id, h)
       // After a reconnect, what happened in between isn't in the open chats:
@@ -3110,6 +3782,7 @@
       const r = currentRoute()
       if (r.view === 'hosts') { if (r.host && data.removed && data.id === r.host) { location.hash = '#/hosts'; return } renderHosts(r.host); soon(renderTop) }
       if (r.view === 'terminal' || r.view === 'session') soon(renderTop)
+      if (r.view === 'org') soon(renderOrg)
       // A session's terminal opened or ended: its view switches between terminal and chat.
       if (r.view === 'session' && !!sessionTerm(r) !== (!!termView && !$('terminal').hidden)) soon(route)
       if (r.view === 'mosaic' || r.view === 'leads') {
@@ -3130,6 +3803,7 @@
         else { const p = mosaicPanes.get(data.name); if (p) { p.pane.className = paneClass(data); setHtml(p.pane.querySelector('.pane-head'), paneHead(data)) } soon(refreshSquadRows); soon(refreshLeads) }
       }
       if (r.view === 'archived') renderArchived()
+      if (r.view === 'org') { soon(renderOrg); soon(renderTop) }
       if (r.view === 'session' && r.name === data.name && data.deleted) { location.hash = '#/'; return }
       for (const v of views) if (v.name === data.name) { v.renderStatus(); v.scheduleRender() }
       soon(renderNav)
@@ -3145,7 +3819,14 @@
     if (type === 'links') {
       links = Array.isArray(data) ? data : []
       for (const fn of linkListeners) fn()
-      if (currentRoute().squad) soon(renderTop)
+      if (currentRoute().squad || currentRoute().view === 'org') soon(renderTop)
+      if (currentRoute().view === 'org') soon(renderOrg)
+      soon(renderNav)
+      return
+    }
+    if (type === 'squads') {
+      squadMeta = new Map((Array.isArray(data) ? data : []).map(q => [q.coordinator, q]))
+      if (currentRoute().view === 'org') soon(renderOrg)
       return
     }
     if (type === 'cleared') {
@@ -3164,6 +3845,7 @@
       }
       return
     }
+    if (type === 'message') noteLinkMessage(data)
     if (type === 'event' || type === 'message') {
       const it = type === 'event' ? { ...data, t: 'event' } : { ...data, t: 'message', ts: data.created_at }
       if (it.t === 'event' && it.kind === 'usage') return

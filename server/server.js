@@ -230,6 +230,9 @@ function personaOf(p) {
   const description = typeof p.description === 'string' ? cleanText(p.description.slice(0, 600)).replace(/\s+/g, ' ').trim().slice(0, 300) : ''
   return JSON.stringify({ kind: p.kind, name, description })
 }
+// One line of text written in the dashboard (a title, a goal, a
+// description): clean, at most n characters.
+const oneLine = (v, n) => (typeof v === 'string' ? cleanText(v.slice(0, n * 2)).replace(/\s+/g, ' ').trim().slice(0, n) : '')
 function personaView(name) {
   try { return JSON.parse(db.prepare('SELECT persona FROM identities WHERE name = ?').get(name)?.persona ?? 'null') } catch { return null }
 }
@@ -383,6 +386,16 @@ db.exec(`
     spec TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  -- What the dashboard says of a squad (its coordinator's name): a title,
+  -- its goal, and where its card is in the org chart.
+  CREATE TABLE IF NOT EXISTS squads (
+    coordinator TEXT PRIMARY KEY,
+    title TEXT,
+    goal TEXT,
+    x REAL,
+    y REAL,
+    updated_at INTEGER NOT NULL
+  );
   -- Two coordinators (of two squads) that work with each other: a < b.
   CREATE TABLE IF NOT EXISTS squad_links (
     a TEXT NOT NULL,
@@ -424,6 +437,7 @@ for (const [table, column, type] of [
   ['identities', 'opened_role', 'TEXT'],               // the role the dashboard opened it with (on a machine)
   ['identities', 'opened_persona', 'TEXT'],            // and the persona (skill or agent id on that machine)
   ['identities', 'persona', 'TEXT'],                   // the persona it says it follows, set at login (JSON: kind, name, description)
+  ['identities', 'description', 'TEXT'],               // what it is for, written in the dashboard (org chart)
   ['host_enrollments', 'ticket', 'TEXT'],              // a random id for the code (shown to the dashboard)
   ['hosts', 'enrollment', 'TEXT'],                     // the ticket of the code it enrolled with
 ]) {
@@ -1366,6 +1380,9 @@ const methods = {
       id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, ...presenceOf(id),
       context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
       persona: personaView(id),
+      // What the dashboard says it is for, and of its squad when it leads one.
+      description: db.prepare('SELECT description FROM identities WHERE name = ?').get(id)?.description || null,
+      squad: roleOf(id) === 'coordinator' ? squadInfo(id) : null,
     }
   },
 }
@@ -1679,7 +1696,7 @@ cleanup()
 // --- dashboard (server token) ------------------------------------------------------
 
 function sessionView(name) {
-  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona FROM identities WHERE name = ?').get(name)
+  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona, description FROM identities WHERE name = ?').get(name)
   if (!row) return { name, deleted: true }
   const a = activityOf(name)
   return {
@@ -1692,6 +1709,7 @@ function sessionView(name) {
     host_id: row.host_id ?? null, // the machine that opened it from the dashboard
     opened_role: row.host_id && ['coordinator', 'worker', 'solo'].includes(row.opened_role) ? row.opened_role : null, // and as what
     opened_persona: row.host_id && PERSONA_ID_RE.test(String(row.opened_persona ?? '')) ? row.opened_persona : null, // and with which persona
+    description: row.description || null, // what it is for (org chart)
     ...presenceOf(name),
     activity: { ...a, tool: a.tool ? { ...a.tool } : null },
   }
@@ -1814,6 +1832,7 @@ const dashboard = {
       groups: allGroups(),
       templates: listTemplates(),
       links: listLinks(),
+      squads: listSquads(),
     }
   },
   events(q) {
@@ -1867,7 +1886,8 @@ function deleteSession(name, { requireOffline = true } = {}) {
   // Workers that pointed at it no longer do: a new session with this name
   // won't receive their notices.
   db.prepare('UPDATE identities SET coordinator = NULL WHERE coordinator = ?').run(name)
-  // Nor is it linked with other squads any more.
+  // Nor is it linked with other squads any more, nor its squad described.
+  if (db.prepare('DELETE FROM squads WHERE coordinator = ?').run(name).changes) broadcast('squads', listSquads())
   const links = linksOf(name)
   db.prepare('DELETE FROM squad_links WHERE a = ? OR b = ?').run(name, name)
   if (links.length) { broadcast('links', listLinks()); for (const n of links) void pushLinks(n) }
@@ -1937,6 +1957,9 @@ const dashboardActions = {
   'templates/delete': p => deleteTemplate(String(p.name ?? '')),
   'links/add': p => changeLink(p, true),
   'links/delete': p => changeLink(p, false),
+  'org/squad': p => describeSquad(p),
+  'org/positions': p => placeSquads(p),
+  'org/describe': p => describeSession(p),
   'terminals/open': p => openTerminalOn(p),
   'terminals/kill': p => killTerminalOn(p),
   'terminal/ticket': () => newTerminalTicket(),
@@ -2154,6 +2177,7 @@ function sanitizeHostInfo(info) {
     folders_from_dashboard: info.folders_from_dashboard === true,
     max_sessions: Number.isInteger(info.max_sessions) ? info.max_sessions : null,
     allow_input: info.allow_input !== false,
+    allow_resume: info.allow_resume === true, // (older machines don't say: taken as no)
     plugin: info.plugin && typeof info.plugin === 'object'
       ? { installed: info.plugin.installed === true, enabled: info.plugin.enabled === true, version: str(info.plugin.version, 40) }
       : null,
@@ -2567,7 +2591,12 @@ const isCoordinator = name => {
   return !!r && (r.role === 'coordinator' || (r.role == null && r.opened_role === 'coordinator'))
 }
 function listLinks() {
+  // (With when they last wrote to each other, within the hour: the org chart
+  // shows how busy each link is, next to the cap.)
+  const since = now() - 3600_000
+  const recent = db.prepare('SELECT created_at FROM messages WHERE ((from_name = ? AND target = ?) OR (from_name = ? AND target = ?)) AND system = 0 AND auto = 0 AND created_at >= ? ORDER BY created_at DESC LIMIT 100')
   return db.prepare('SELECT a, b, created_at FROM squad_links ORDER BY a, b').all()
+    .map(l => ({ ...l, recent: recent.all(l.a, l.b, l.b, l.a, since).map(r => r.created_at) }))
 }
 async function changeLink(p, add) {
   const x = String(p.a ?? ''), y = String(p.b ?? '')
@@ -2600,6 +2629,55 @@ async function pushLinks(name) {
   } catch (err) {
     return `${name}: ${err.message.replace(/^Bad Request: /, '')}`
   }
+}
+
+// The org chart: each squad's title and goal, where its card is, and what
+// each session is for. Written in the dashboard; a coordinator sees the goal
+// of the squads it is linked with (getChat), as data.
+const SQUAD_POS_MAX = 20_000
+function listSquads() {
+  return db.prepare('SELECT coordinator, title, goal, x, y FROM squads ORDER BY coordinator').all()
+    .map(r => ({ coordinator: r.coordinator, title: r.title || null, goal: r.goal || null, x: r.x, y: r.y }))
+}
+function squadInfo(coordinator) {
+  const r = db.prepare('SELECT title, goal FROM squads WHERE coordinator = ?').get(coordinator)
+  return r && (r.title || r.goal) ? { title: r.title || null, goal: r.goal || null } : null
+}
+function describeSquad(p) {
+  const coordinator = String(p.coordinator ?? '')
+  if (!NAME_RE.test(coordinator) || !isCoordinator(coordinator)) throw bad(`"${cleanText(coordinator.slice(0, 40))}" is not a coordinator`)
+  const title = oneLine(p.title, 40), goal = oneLine(p.goal, 300)
+  db.prepare(`INSERT INTO squads (coordinator, title, goal, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(coordinator) DO UPDATE SET title = excluded.title, goal = excluded.goal, updated_at = excluded.updated_at`).run(coordinator, title || null, goal || null, now())
+  broadcast('squads', listSquads())
+  return { coordinator, title: title || null, goal: goal || null }
+}
+function placeSquads(p) {
+  const list = Array.isArray(p.positions) ? p.positions : null
+  if (!list || !list.length || list.length > 200) throw bad('positions: a list of 1 to 200 {coordinator, x, y}')
+  const clamp = v => Math.round(Math.min(SQUAD_POS_MAX, Math.max(0, v)))
+  const rows = list.map(q => {
+    const coordinator = String(q?.coordinator ?? '')
+    if (!NAME_RE.test(coordinator) || !isCoordinator(coordinator)) throw bad(`"${cleanText(coordinator.slice(0, 40))}" is not a coordinator`)
+    if (!Number.isFinite(q.x) || !Number.isFinite(q.y)) throw bad('x and y must be numbers')
+    return [coordinator, clamp(q.x), clamp(q.y)]
+  })
+  inTx(() => {
+    for (const [c, x, y] of rows) {
+      db.prepare(`INSERT INTO squads (coordinator, x, y, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(coordinator) DO UPDATE SET x = excluded.x, y = excluded.y, updated_at = excluded.updated_at`).run(c, x, y, now())
+    }
+  })
+  broadcast('squads', listSquads())
+  return { placed: rows.length }
+}
+function describeSession(p) {
+  const name = String(p.name ?? '')
+  if (!NAME_RE.test(name) || !identityExists(name)) throw bad('session not found')
+  const description = oneLine(p.description, 300)
+  db.prepare('UPDATE identities SET description = ? WHERE name = ?').run(description || null, name)
+  broadcast('session', sessionView(name))
+  return { name, description: description || null }
 }
 
 async function openTerminalOn(p) {
@@ -2658,6 +2736,9 @@ async function openNow(id, name, spec, existing) {
     spec.identity = register(name, true).secret
     db.prepare('UPDATE identities SET opened_role = ?, opened_persona = ? WHERE name = ?').run(openedRole, openedPersona, name)
   }
+  // A worker's coordinator, as it was opened (until it says so itself at
+  // login): the org chart keeps it in its squad while it isn't connected.
+  if (openedRole === 'worker' && NAME_RE.test(String(spec.coordinator ?? ''))) db.prepare('UPDATE identities SET coordinator = ? WHERE name = ?').run(spec.coordinator, name)
   try {
     const result = await askHost(id, { t: 'open', spec })
     process.stderr.write(`squadra-server: opened session "${name}" on host ${id}\n`)

@@ -92,6 +92,7 @@ Cada agente es un `claude` interactivo normal en un terminal, así que puedes in
   - **Personas:** cada sesión puede seguir una skill o un agente de su proyecto o de `~/.claude`, elegido de una lista; se queda en su system prompt toda la sesión, y su coordinador sabe cuál sigue cada worker.
   - **Plantillas de escuadra:** guarda una escuadra (coordinador y workers, con sus carpetas y personas) y vuelve a abrirla de una vez.
   - **Escuadras enlazadas:** enlaza dos coordinadores para que sus escuadras compartan trabajo: cada uno pide al otro y reparte lo que acepta entre sus workers.
+  - **Organigrama:** cada escuadra como una tarjeta con sus agentes, los enlaces entre escuadras como líneas y, al pasar el ratón, para qué sirve cada una; desde ahí se añaden, describen, enlazan, mueven y cierran escuadras y agentes.
   - Las sesiones solo las abres tú, nunca Claude: si un coordinador necesita más workers, te los pide.
 
 ## Galería
@@ -329,6 +330,18 @@ Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaz
 - **Qué se les dice a los coordinadores:** el mensaje de un coordinador enlazado llega marcado con `linked="true"`. Viene de un igual, nunca de ti: el coordinador acepta lo que encaja con su escuadra, lo reparte entre sus workers y responde con un único resultado, y te pregunta aquí antes de cualquier cosa crítica. Nunca responde a los permisos de la otra escuadra ni le pasa los de sus workers. Los workers solo hablan con su propio coordinador.
 - `status` y `ping` muestran los coordinadores enlazados y si están conectados; si se añade o quita un enlace mientras está abierto, se le avisa.
 - **Sin conversaciones infinitas:** dos coordinadores pueden mandarse como mucho 60 mensajes por hora; después el servidor rechaza los siguientes y el coordinador te avisa.
+
+### Organigrama
+
+**🏢 Organigrama** (en la barra lateral) muestra cómo están organizadas tus escuadras y permite cambiarlo todo desde un sitio.
+
+- **Qué se ve:** cada escuadra es una tarjeta con su coordinador y sus workers (su estado, su persona y su contexto). Las líneas entre tarjetas son los enlaces entre escuadras, con cuántos mensajes se han cruzado en la última hora (en ámbar cerca del límite de 60, en rojo al llegar). Al pasar el ratón por una escuadra ves su objetivo, la persona de su coordinador y con quién está enlazada; por un agente, para qué sirve, qué está haciendo, su máquina y su carpeta. Las sesiones sin escuadra y las independientes aparecen debajo.
+- **Ordenarlo:** arrastra una tarjeta por su cabecera; **Ordenar** vuelve a ponerlas en columnas; − / + para el zoom. Las posiciones se guardan en el servidor, iguales para todos los navegadores. En el móvil se ve como lista.
+- **Enlazar escuadras:** arrastra el punto del borde derecho de una tarjeta hasta otra. Pulsa la etiqueta de una línea para quitar el enlace.
+- **Describir:** ⋯ de una escuadra → *Nombre y objetivo*; ⋯ de un agente → *Describir*. Un agente sin descripción muestra la de su persona. Un coordinador enlazado ve en `ping` el nombre y el objetivo de la otra escuadra y la descripción de cada agente, para saber qué pedir y a quién.
+- **Añadir:** **+ Escuadra** abre un coordinador (con el nombre y el objetivo de la escuadra); **+ Agente** en una tarjeta, un worker para ella.
+- **Cambiar:** ⋯ de un agente → *Cambiar persona o escuadra*. Las dos se fijan al arrancar la sesión (su system prompt, su coordinador), así que la sesión se cierra y se vuelve a abrir en la misma carpeta, continuando su conversación si la máquina lo permite.
+- **Cerrar y borrar:** el ⋯ de un agente cierra su terminal o lo borra cuando está desconectado; el ⋯ de una escuadra cierra todos sus terminales, o borra la escuadra entera cuando ninguno está conectado.
 
 ## Consejos: cómo sacarle el máximo partido
 
