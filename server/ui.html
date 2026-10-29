@@ -373,6 +373,7 @@
   .org-head:active { cursor: grabbing; }
   .org-title { font-weight: 650; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .org-count { font-size: 12px; color: var(--muted); }
+  .org-self { font-size: 13px; cursor: help; }
   .org-goal { height: 36px; box-sizing: border-box; padding: 4px 14px 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .org-agent { height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 14px; font-size: 13px; outline: none; }
   .org-agent.worker { padding-left: 30px; }
@@ -770,6 +771,7 @@
       orgAddAgent: '+ Agent',
       orgMore: n => `+ ${n} more`,
       orgLess: 'Show fewer',
+      orgSelfWorking: 'No workers connected: the coordinator does the squad\'s work itself',
       orgLinkHandle: 'Drag onto another squad to link them',
       orgSquadMenu: n => `Squad ${n}: actions`,
       orgAgentMenu: n => `${n}: actions`,
@@ -1106,6 +1108,7 @@
       orgAddAgent: '+ Agente',
       orgMore: n => `+ ${n} más`,
       orgLess: 'Mostrar menos',
+      orgSelfWorking: 'Sin workers conectados: el coordinador hace él mismo el trabajo de la escuadra',
       orgLinkHandle: 'Arrástralo a otra escuadra para enlazarlas',
       orgSquadMenu: n => `Escuadra ${n}: acciones`,
       orgAgentMenu: n => `${n}: acciones`,
@@ -2860,7 +2863,7 @@
     const shown = orgOpen.has(c.name) ? q.workers : q.workers.slice(0, ORG_FOLD)
     const on = q.workers.filter(w => w.online).length
     return `<div class="org-card" data-squad="${esc(c.name)}" style="left:${p.x}px;top:${p.y}px">
-      <div class="org-head" data-orgtip="squad:${esc(c.name)}" tabindex="0"><span class="org-title">${esc(m.title || c.name)}</span><span class="org-count" title="${esc(T.squadCount(on, q.workers.length))}">👥 ${on}/${q.workers.length}</span><button class="org-more" data-orgmenu="squad" data-name="${esc(c.name)}" aria-label="${esc(T.orgSquadMenu(c.name))}">⋯</button></div>
+      <div class="org-head" data-orgtip="squad:${esc(c.name)}" tabindex="0"><span class="org-title">${esc(m.title || c.name)}</span>${c.online && !on ? `<span class="org-self" title="${esc(T.orgSelfWorking)}">🛠</span>` : ''}<span class="org-count" title="${esc(T.squadCount(on, q.workers.length))}">👥 ${on}/${q.workers.length}</span><button class="org-more" data-orgmenu="squad" data-name="${esc(c.name)}" aria-label="${esc(T.orgSquadMenu(c.name))}">⋯</button></div>
       ${m.goal ? `<div class="org-goal">${esc(m.goal)}</div>` : ''}
       ${orgAgent(c, 'coord')}${shown.map(w => orgAgent(w, 'worker')).join('')}
       ${q.workers.length > ORG_FOLD ? `<button class="org-fold" data-orgfold="${esc(c.name)}">${orgOpen.has(c.name) ? T.orgLess : T.orgMore(q.workers.length - shown.length)}</button>` : ''}
@@ -2947,6 +2950,7 @@
       <p>${m.goal ? esc(m.goal) : `<i>${T.orgNoGoal}</i>`}</p>
       ${personaOf(c) ? `<div>🎭 ${esc(personaOf(c))}</div>` : ''}
       <div class="m">${esc(T.squadCount(workers.filter(w => w.online).length, workers.length))}</div>
+      ${c.online && !workers.some(w => w.online) ? `<div class="m">🛠 ${esc(T.orgSelfWorking)}</div>` : ''}
       ${linked.length ? `<div class="m">🔗 ${linked.map(n => esc(squadTitle(n))).join(', ')}</div>` : ''}`
   }
   const orgTip = document.createElement('div')

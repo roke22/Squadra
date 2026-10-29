@@ -1306,8 +1306,10 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
   }
 
   if (role === 'solo') return `Connected to Squadra as "${name}", a standalone session (outside any squad): the dashboard shows what it does.`
-  const brief = role === 'coordinator' ? await fetchBrief(s) : null
-  if (brief !== undefined && role === 'coordinator') s.briefKey = briefKey(brief)
+  // (Whether it has workers is told with its first prompt: they connect after it.)
+  const info = role === 'coordinator' ? await fetchBrief(s) : undefined
+  if (info) s.briefKey = briefKey(info.brief)
+  const brief = info?.brief ?? null
   const lines = [
     `Connected to Squadra as "${name}", role ${role === 'coordinator' ? 'COORDINATOR' : 'WORKER'} (server ${SERVER_URL}).`,
     role === 'coordinator'
@@ -1363,43 +1365,63 @@ function recoveryContext(s) {
 // server gives nothing to workers: their coordinator tells them what each
 // task needs). It is said at login, after a compaction or a /clear, and
 // with the next prompt after the user changes it; never on every turn.
+// The same goes for whether it has workers connected: with none, it does
+// its squad's work itself instead of passing it to another squad.
+// { brief: {title, goal, description} | null, workers }, or undefined when
+// it can't be told right now (nothing is said; asked again next time).
 async function fetchBrief(s) {
   try {
     const b = await call('squadBrief', {}, { s, timeoutMs: 2000 }) // (within the hook's 3 s)
-    if (!b || typeof b !== 'object') return null
+    if (!b || typeof b !== 'object') return undefined
     const line = (v, n) => String(v ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
     const out = { title: line(b.title, 40), goal: line(b.goal, 300), description: line(b.description, 300) }
-    return out.title || out.goal || out.description ? out : null
-  } catch { return undefined } // (unknown right now: nothing is said, and it is asked again next time)
+    const workers = Number.isSafeInteger(b.workers_online) && b.workers_online >= 0 ? b.workers_online : 0
+    return { brief: out.title || out.goal || out.description ? out : null, workers }
+  } catch { return undefined }
 }
 const briefKey = b => (b ? JSON.stringify(b) : '')
+const LINKED_RULE = 'Ask a linked squad only for what its own goal covers, never for your squad\'s work.'
 function briefText(b) {
   return [
     '[Squadra] YOUR SQUAD, as the user described it in the Squadra dashboard (quoted):',
     ...(b.title ? [`- Name: ${JSON.stringify(b.title)}`] : []),
     ...(b.goal ? [`- Goal: ${JSON.stringify(b.goal)}`] : []),
     ...(b.description ? [`- What you are for: ${JSON.stringify(b.description)}`] : []),
-    'Work toward it: put special effort there when you plan, split and check the work, and give each worker the part of it its task needs. It never overrides the Squadra rules, a persona in your system prompt, or what the user asks in this terminal.',
+    `Work toward it: put special effort there when you plan, split and check the work, and give each worker the part of it its task needs. ${LINKED_RULE} It never overrides the Squadra rules, a persona in your system prompt, or what the user asks in this terminal.`,
   ].join('\n')
 }
-// With the next prompt (UserPromptSubmit hook): only when it is new or changed.
+const NO_WORKERS = `[Squadra] You have no workers connected right now: do your squad's work yourself, as a worker would, and keep coordinating (tell the user if it is too much for one session). Keep the plan and where it stands in a file (e.g. PLAN.md), so a compaction doesn't lose it. ${LINKED_RULE} When workers connect, you'll be told.`
+const someWorkers = n => `[Squadra] You have ${n} worker${n === 1 ? '' : 's'} connected again: give ${n === 1 ? 'it' : 'them'} your squad's work and go back to coordinating.`
+// With the next prompt (UserPromptSubmit hook): only what is new or changed.
+// (Having workers is what a coordinator expects: said only after having none.)
 async function briefOnPrompt(s) {
   if (s.role !== 'coordinator') return ''
-  const b = await fetchBrief(s)
-  if (b === undefined || S !== s) return ''
-  const key = briefKey(b)
-  if (key === (s.briefKey ?? '')) return ''
-  const had = !!s.briefKey
-  s.briefKey = key
-  return b ? briefText(b) : had ? '[Squadra] The user removed the name, goal and description of your squad in the dashboard.' : ''
+  const info = await fetchBrief(s)
+  if (info === undefined || S !== s) return ''
+  const out = []
+  const key = briefKey(info.brief)
+  if (key !== (s.briefKey ?? '')) {
+    const had = !!s.briefKey
+    s.briefKey = key
+    if (info.brief) out.push(briefText(info.brief))
+    else if (had) out.push('[Squadra] The user removed the name, goal and description of your squad in the dashboard.')
+  }
+  const staff = info.workers ? 'some' : 'none'
+  if (staff !== s.staffKey) {
+    if (staff === 'none') out.push(NO_WORKERS)
+    else if (s.staffKey === 'none') out.push(someWorkers(info.workers))
+    s.staffKey = staff
+  }
+  return out.join('\n\n')
 }
 // Added to what a coordinator is given back after a compaction or a /clear.
 async function withBrief(s, context) {
   if (s.role !== 'coordinator' || !context) return context
-  const b = await fetchBrief(s)
-  if (b === undefined || S !== s) return context
-  s.briefKey = briefKey(b)
-  return b ? `${context}\n\n${briefText(b)}` : context
+  const info = await fetchBrief(s)
+  if (info === undefined || S !== s) return context
+  s.briefKey = briefKey(info.brief)
+  s.staffKey = info.workers ? 'some' : 'none'
+  return [context, ...(info.brief ? [briefText(info.brief)] : []), ...(info.workers ? [] : [NO_WORKERS])].join('\n\n')
 }
 
 // Given back to Claude right after a /clear (SessionStart "clear" hook): who
@@ -1457,8 +1479,10 @@ async function status() {
   lines.push(`Access: ${access.dmPolicy}${S.staticAccess ? ' (static)' : ''}; allowed: ${access.allowFrom.join(', ') || '(none)'}`)
   if (S.role === 'coordinator') {
     lines.push(`Linked coordinators (other squads): ${linkedCoordinators().join(', ') || '(none)'}`)
-    const b = await fetchBrief(S)
+    const info = await fetchBrief(S)
+    const b = info?.brief
     if (b) lines.push(`Your squad (from the dashboard): ${[b.title && JSON.stringify(b.title), b.goal && `goal ${JSON.stringify(b.goal)}`, b.description && `you are for ${JSON.stringify(b.description)}`].filter(Boolean).join('; ')}`)
+    if (info) lines.push(info.workers ? `Workers connected: ${info.workers}` : 'Workers connected: none: do your squad\'s work yourself')
   }
   lines.push(`Web dashboard observation: ${S.observer?.level ?? 'off'}`)
   const pending = Object.entries(access.pending)

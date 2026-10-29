@@ -1213,12 +1213,15 @@ const methods = {
   // A coordinator's own squad, as the user described it in the dashboard:
   // its name and goal, and what the coordinator itself is for. Nothing for
   // workers: their coordinator gives them the context each task needs.
+  // (With how many of its workers are connected: with none, it does its
+  // squad's work itself.)
   squadBrief(name) {
     readLimit(name, 'brief')
     if (roleOf(name) !== 'coordinator') return null
     const sq = squadInfo(name)
     const description = db.prepare('SELECT description FROM identities WHERE name = ?').get(name)?.description || null
-    return sq || description ? { title: sq?.title ?? null, goal: sq?.goal ?? null, description } : null
+    const workers = db.prepare("SELECT name FROM identities WHERE role = 'worker' AND coordinator = ?").all(name).filter(r => isOnline(r.name)).length
+    return { title: sq?.title ?? null, goal: sq?.goal ?? null, description, workers_online: workers }
   },
 
   getMe(name) {

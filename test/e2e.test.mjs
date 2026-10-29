@@ -1380,6 +1380,43 @@ test('squad brief: a coordinator learns what its squad is for from the dashboard
   wk.close()
 })
 
+test('a coordinator with no workers connected does its squad\'s work itself, and is told when they come and go', async () => {
+  const coord = new Plugin('nwc', { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.waitConnected()
+  const promptHook = async () => {
+    const out = await runHookOut(coord, { hook_event_name: 'UserPromptSubmit', prompt: 'next', session_id: 's', cwd: '/x' }, ['--context'])
+    return out ? JSON.parse(out).hookSpecificOutput.additionalContext : null
+  }
+  // Alone: it does the work itself (and never hands it to another squad for lack of hands). Said once.
+  const alone = await promptHook()
+  assert.match(alone, /^\[Squadra\] You have no workers connected right now: do your squad's work yourself, as a worker would, and keep coordinating/)
+  assert.match(alone, /Ask a linked squad only for what its own goal covers, never for your squad's work\./)
+  assert.match(alone, /PLAN\.md/)
+  assert.equal(await promptHook(), null)
+  assert.match(await coord.tool('status', {}), /Workers connected: none: do your squad's work yourself/)
+
+  // A worker connects: back to coordinating.
+  const acc = JSON.parse(readFileSync(join(coord.stateDir, 'access.json'), 'utf8'))
+  acc.allowFrom.push('nww')
+  writeFileSync(join(coord.stateDir, 'access.json'), JSON.stringify(acc, null, 2))
+  const wk = new Plugin('nww', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'nwc' })
+  await wk.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 nww connected'), 'greeting')
+  assert.equal(await promptHook(), '[Squadra] You have 1 worker connected again: give it your squad\'s work and go back to coordinating.')
+  assert.equal(await promptHook(), null)
+  // (The worker itself is told none of this.)
+  assert.equal(await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: 'x', session_id: 's', cwd: '/x' }, ['--context']), '')
+
+  // It leaves: on its own again, and a compaction keeps that in mind.
+  wk.close()
+  await waitFor(async () => !(await dash('/api/state')).result.sessions.find(x => x.name === 'nww')?.online, { what: 'nww offline' })
+  assert.match(await promptHook(), /^\[Squadra\] You have no workers connected right now/)
+  const ctx = JSON.parse(await runHookOut(coord, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.match(ctx, /You have no workers connected right now/)
+  coord.close()
+})
+
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
   const wk = new Plugin('auto1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'worker', SQUADRA_COORDINATOR: 'boss9' })
   const r = await wk.init()
