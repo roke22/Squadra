@@ -2,8 +2,8 @@
 # single container. Everything it keeps (the dashboard's data, the machine's
 # credential, Claude Code's login and the projects) lives in one folder.
 #
-# From the repository root:
-#   docker compose -f deploy/demo/docker-compose.yml up -d --build
+# From deploy/demo (it builds this image):
+#   docker-compose up -d
 #
 # Not for production: there the dashboard and the machines run apart (see the
 # README). This is for trying Squadra out on one computer.

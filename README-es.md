@@ -32,14 +32,28 @@ node server/server.js          # panel en http://127.0.0.1:7787
 
 Entra con el token del servidor que muestra, abre **Máquinas → + Añadir máquina** y ejecuta el comando que te enseña en cada equipo donde quieras agentes. Eso es todo: los detalles, Docker y HTTPS están en los [pasos 1 y 2](#1-instala-el-panel).
 
-**¿Solo quieres probarlo?** Con Docker, un comando arranca el panel *y* una máquina con Claude Code, y lo guarda todo en una carpeta (`deploy/demo/squadra`):
+### ¿Solo quieres probarlo? Docker
+
+Un comando arranca el panel *y* una máquina que ejecuta Claude Code, en un solo contenedor. Todo lo que guarda (los datos del panel, el login de Claude Code, tus proyectos) va en una carpeta, `deploy/demo/squadra`.
+
+**1. Arráncalo** (la primera vez construye la imagen, unos minutos):
 
 ```bash
-docker compose -f deploy/demo/docker-compose.yml up -d --build
-docker compose -f deploy/demo/docker-compose.yml logs    # el token para entrar
+cd deploy/demo
+docker-compose up -d        # o bien: docker compose up -d
 ```
 
-Abre http://localhost:7787 y después **+ Nueva sesión** en `/squadra/projects/demo`, un proyecto de ejemplo con tres personas. La primera vez, inicia sesión en Claude desde el terminal de la sesión. Más en [el README de la demo](deploy/demo/README.md).
+**2. Lee el token para entrar**, cuando haya arrancado (unos 20 segundos):
+
+```bash
+cat squadra/data/server-token
+```
+
+También aparece en los logs, en el recuadro *Squadra demo*: `docker-compose logs`. Es siempre el mismo aunque reinicies el contenedor.
+
+**3. Entra:** abre **http://localhost:7787** y pega el token. Después, **+ Nueva sesión** (o 🏢 **Organigrama → + Escuadra**) con la carpeta `/squadra/projects/demo`, un proyecto de ejemplo con tres personas. La primera vez, Claude Code pide en el terminal de la sesión el tema, tu login de Claude (`/login`) y si confías en la carpeta; el login se guarda para todas las sesiones siguientes.
+
+Para pararlo, `docker-compose down` (la carpeta se queda). Después de un `git pull`, `docker-compose up -d --build` lo vuelve a construir. Solo este equipo puede acceder. Más en [el README de la demo](deploy/demo/README-es.md).
 
 ![Panel de Squadra: dos escuadras lado a lado, cada coordinador con sus workers](docs/screenshots/mosaic-squads.jpg)
 

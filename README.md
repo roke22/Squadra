@@ -32,14 +32,28 @@ node server/server.js          # dashboard at http://127.0.0.1:7787
 
 Sign in with the server token it prints, open **Machines → + Add machine** and run the one command it shows on each computer where agents should work. That's it: the details, Docker and HTTPS are in [steps 1 and 2](#1-install-the-dashboard) below.
 
-**Just want to try it?** With Docker, one command starts the dashboard *and* a machine with Claude Code, everything kept in one folder (`deploy/demo/squadra`):
+### Just want to try it? Docker
+
+One command starts the dashboard *and* a machine that runs Claude Code, in a single container. Everything it keeps (the dashboard's data, Claude Code's login, your projects) goes in one folder, `deploy/demo/squadra`.
+
+**1. Start it** (the first time it builds the image, a few minutes):
 
 ```bash
-docker compose -f deploy/demo/docker-compose.yml up -d --build
-docker compose -f deploy/demo/docker-compose.yml logs    # the sign-in token
+cd deploy/demo
+docker-compose up -d        # or: docker compose up -d
 ```
 
-Open http://localhost:7787, then **+ New session** in `/squadra/projects/demo`, an example project with three personas. Log in to Claude in the session's terminal the first time. More in [the demo's README](deploy/demo/README.md).
+**2. Read the sign-in token**, once it has started (some 20 seconds):
+
+```bash
+cat squadra/data/server-token
+```
+
+It is also in the logs, in the *Squadra demo* box: `docker-compose logs`. It stays the same when the container restarts.
+
+**3. Sign in:** open **http://localhost:7787** and paste the token. Then **+ New session** (or 🏢 **Org chart → + Squad**) with the folder `/squadra/projects/demo`, an example project with three personas. The first time, Claude Code asks in the session's terminal for its theme, your Claude login (`/login`) and whether you trust the folder; the login is kept for every later session.
+
+To stop it, `docker-compose down` (the folder stays). After a `git pull`, `docker-compose up -d --build` builds it again. Only this computer can reach it. More in [the demo's README](deploy/demo/README.md).
 
 ![Squadra dashboard: two squads side by side, each coordinator with its workers](docs/screenshots/mosaic-squads.jpg)
 
