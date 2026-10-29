@@ -13,7 +13,7 @@
       "name": "squadra",
       "source": "./plugins/squadra",
       "description": "Channel that lets Claude Code sessions message each other through your self-hosted Squadra server, with one session acting as coordinator of the others. Includes pairing, allowlists and access policy (/squadra:access) and reports activity to the Squadra dashboard.",
-      "version": "0.0.4"
+      "version": "0.0.5"
     }
   ]
 }

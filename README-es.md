@@ -13,7 +13,7 @@
   <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="Estrellas en GitHub"></a>
 </p>
 
-<p align="center"><a href="README.md">Read in English</a> · <a href="https://roke22.github.io/Squadra/">Web</a> · <a href="docs/referencia.md">Referencia</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.4</p>
+<p align="center"><a href="README.md">Read in English</a> · <a href="https://roke22.github.io/Squadra/">Web</a> · <a href="docs/referencia.md">Referencia</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.5</p>
 
 ---
 
