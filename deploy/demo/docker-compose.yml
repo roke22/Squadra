@@ -1,0 +1,18 @@
+# Squadra demo: the dashboard and one machine that runs Claude Code, in a
+# single container. Everything it keeps is in ./squadra, next to this file.
+#
+#   docker compose -f deploy/demo/docker-compose.yml up -d --build
+#   docker compose -f deploy/demo/docker-compose.yml logs    # the sign-in token
+#
+# Then open http://localhost:7787. Only this computer can reach it.
+services:
+  squadra-demo:
+    build:
+      context: ../..
+      dockerfile: deploy/demo/Dockerfile
+    image: squadra-demo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7787:7787"
+    volumes:
+      - ./squadra:/squadra

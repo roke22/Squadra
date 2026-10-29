@@ -8,3 +8,8 @@ data/
 
 # Claude Code local config and secrets (not .claude-plugin, which is the marketplace manifest)
 .claude/
+# (except the demo project's personas)
+!deploy/demo/example/.claude/
+
+# The demo container's folder (tokens, Claude Code login, projects)
+deploy/demo/squadra/

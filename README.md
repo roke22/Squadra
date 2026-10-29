@@ -32,6 +32,15 @@ node server/server.js          # dashboard at http://127.0.0.1:7787
 
 Sign in with the server token it prints, open **Machines → + Add machine** and run the one command it shows on each computer where agents should work. That's it: the details, Docker and HTTPS are in [steps 1 and 2](#1-install-the-dashboard) below.
 
+**Just want to try it?** With Docker, one command starts the dashboard *and* a machine with Claude Code, everything kept in one folder (`deploy/demo/squadra`):
+
+```bash
+docker compose -f deploy/demo/docker-compose.yml up -d --build
+docker compose -f deploy/demo/docker-compose.yml logs    # the sign-in token
+```
+
+Open http://localhost:7787, then **+ New session** in `/squadra/projects/demo`, an example project with three personas. Log in to Claude in the session's terminal the first time. More in [the demo's README](deploy/demo/README.md).
+
 ![Squadra dashboard: two squads side by side, each coordinator with its workers](docs/screenshots/mosaic-squads.jpg)
 
 ## What you can do with it
