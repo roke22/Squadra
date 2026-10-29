@@ -283,9 +283,10 @@ export function compactPointFor(model, env = process.env) {
 
 // --- observer -----------------------------------------------------------------
 
-// contextProvider(source): text to give back to Claude right after a
-// compaction or a /clear (source "compact" or "clear"), asked for by the
-// SessionStart hook through the same socket.
+// contextProvider(source): text (or a promise of it) to give Claude right
+// after a compaction or a /clear (source "compact" or "clear", from the
+// SessionStart hook), or with a prompt ("prompt", from UserPromptSubmit),
+// asked for through the same socket.
 // onToolInput(tool, input): the exact input of each tool call, at every level
 // (kept in memory by the plugin to show the coordinator exactly what will run).
 export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null }) {
@@ -494,10 +495,12 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           let msg = null
           try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {}
           if (msg?.want === 'context') {
-            let context = ''
-            // (What started the session again: "compact", or "clear".)
-            try { context = contextProvider(msg.source === 'clear' ? 'clear' : 'compact') ?? '' } catch (err) { log(`observe: context provider failed: ${err.message}`) }
-            conn.end(JSON.stringify({ context }))
+            // (What it is for: "compact" or "clear", the session starting
+            // again; "prompt", a prompt about to be sent.)
+            const source = ['clear', 'prompt'].includes(msg.source) ? msg.source : 'compact'
+            Promise.resolve().then(() => contextProvider(source))
+              .catch(err => { log(`observe: context provider failed: ${err.message}`); return '' })
+              .then(context => conn.end(JSON.stringify({ context: typeof context === 'string' ? context : '' })))
             return
           }
           conn.end()

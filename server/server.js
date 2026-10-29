@@ -1210,6 +1210,19 @@ async function freshStart(name, p) {
 const methods = {
   observe,
   freshStart,
+  // A coordinator's own squad, as the user described it in the dashboard:
+  // its name and goal, and what the coordinator itself is for. Nothing for
+  // workers: their coordinator gives them the context each task needs.
+  // (With how many of its workers are connected: with none, it does its
+  // squad's work itself.)
+  squadBrief(name) {
+    readLimit(name, 'brief')
+    if (roleOf(name) !== 'coordinator') return null
+    const sq = squadInfo(name)
+    const description = db.prepare('SELECT description FROM identities WHERE name = ?').get(name)?.description || null
+    const workers = db.prepare("SELECT name FROM identities WHERE role = 'worker' AND coordinator = ?").all(name).filter(r => isOnline(r.name)).length
+    return { title: sq?.title ?? null, goal: sq?.goal ?? null, description, workers_online: workers }
+  },
 
   getMe(name) {
     readLimit(name)
@@ -1429,9 +1442,12 @@ const methods = {
       id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, ...presenceOf(id),
       context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
       persona: personaView(id),
-      // What the dashboard says it is for, and of its squad when it leads one.
-      description: db.prepare('SELECT description FROM identities WHERE name = ?').get(id)?.description || null,
-      squad: roleOf(id) === 'coordinator' ? squadInfo(id) : null,
+      // What the dashboard says it is for, and of its squad when it leads
+      // one: for coordinators only (workers get their context from theirs).
+      ...(roleOf(name) === 'coordinator' ? {
+        description: db.prepare('SELECT description FROM identities WHERE name = ?').get(id)?.description || null,
+        squad: roleOf(id) === 'coordinator' ? squadInfo(id) : null,
+      } : {}),
     }
   },
 }
