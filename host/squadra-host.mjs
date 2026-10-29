@@ -34,7 +34,7 @@ import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 
-const VERSION = '0.0.4'
+const VERSION = '0.0.5'
 const run = promisify(execFile)
 
 const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')

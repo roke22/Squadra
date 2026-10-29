@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: Squadra version
-      placeholder: v0.0.4 (git describe --tags)
+      placeholder: v0.0.5 (git describe --tags)
     validations:
       required: true
   - type: dropdown
