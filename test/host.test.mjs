@@ -576,6 +576,57 @@ test('links between squads: a coordinator opens with the ones the dashboard set,
   assert.ok((await dash('terminals/kill', { host: hostId, term: 'lk2' })).ok)
 })
 
+test('fresh start: a coordinator has its idle worker\'s context cleared before a new task', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const api = async (method, params, auth, inst) => (await fetch(`${URL_}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth}`, ...(inst ? { 'X-Squadra-Instance': inst } : {}) },
+    body: JSON.stringify(params),
+  })).json()
+  const session = async (name, role, coordinator, secret) => {
+    secret ??= (await api('register', { name }, SERVER_TOKEN)).result.secret
+    const call = (m, p) => api(m, p, secret, `inst-${name}-000001`)
+    await call('claimSession', { instance: `inst-${name}-000001`, role, ...(coordinator ? { coordinator } : {}) })
+    return call
+  }
+  const screen = name => execFileSync('tmux', ['-L', SOCKET, 'capture-pane', '-p', '-J', '-t', `=sq-${name}:`], { encoding: 'utf8' })
+  const C = await session('fc', 'coordinator')
+  for (const name of ['fw1', 'fw2']) {
+    const r = await dash('terminals/open', { host: hostId, spec: { name, role: 'worker', coordinator: 'fc', folder: allowed } })
+    assert.ok(r.ok, r.description)
+  }
+  // Each worker's plugin, played here with the identity the machine gave it.
+  const secretOf = name => JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', name, 'identity.json'), 'utf8')).secret
+  const W1 = await session('fw1', 'worker', 'fc', secretOf('fw1'))
+  const W2 = await session('fw2', 'worker', 'fc', secretOf('fw2'))
+  const ev = (kind, extra = {}) => ({ kind, ts: Date.now(), ...extra })
+  await W1('observe', { events: [ev('observe_start', { level: 'activity' }), ev('prompt', { text: 'the login screen' })] })
+
+  // In the middle of a turn: not cleared.
+  let f = (await C('freshStart', { chat_id: 'fw1' })).result
+  assert.deepEqual([f.cleared, f.reason], [false, 'busy'])
+  // Idle: its machine types /clear in its terminal, and its plugin confirms it.
+  await W1('observe', { events: [ev('stop')] })
+  const pending = C('freshStart', { chat_id: 'fw1' })
+  await waitFor(() => screen('fw1').includes('GOT:/clear'), { what: '/clear typed' })
+  await W1('observe', { events: [ev('session_start', { source: 'clear' })] })
+  assert.deepEqual((await pending).result, { cleared: true })
+  // At most once a minute.
+  assert.equal((await C('freshStart', { chat_id: 'fw1' })).result.reason, 'too_soon')
+  // Only its own coordinator.
+  const other = await session('fc2', 'coordinator')
+  assert.equal((await other('freshStart', { chat_id: 'fw2' })).result.reason, 'not_your_worker')
+  // And only if the machine allows it.
+  await W2('observe', { events: [ev('observe_start', { level: 'activity' })] })
+  const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, allow_clear: false }))
+  f = (await C('freshStart', { chat_id: 'fw2' })).result
+  assert.equal(f.reason, 'machine_refused')
+  assert.match(f.text, /"allow_clear": false/)
+  assert.ok(!screen('fw2').includes('GOT:/clear'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+  for (const name of ['fw1', 'fw2']) assert.ok((await dash('terminals/kill', { host: hostId, term: name })).ok)
+})
+
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const r = await dash('hosts/remove', { host: hostId })
   assert.ok(r.ok, r.description)

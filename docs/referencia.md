@@ -301,6 +301,7 @@ Las reglas de la máquina están en `~/.config/squadra-host/settings.json`. El p
 | `allow_input` | Si el panel puede escribir en las terminales (`true`). Ponlo a `false` para solo mirar (terminales de solo lectura) |
 | `allow_resume` | Si una sesión puede continuar la última conversación de su carpeta (`true`) |
 | `permission_relay` | Si el coordinador de un worker puede responder sus permisos desde otra sesión (igual que `allow_input` por defecto; nunca en sesiones en la carpeta personal). Para las sesiones que abre squadra-host; para las arrancadas a mano en la máquina, pon `SQUADRA_PERMISSION_RELAY=off` en el `.env` del plugin |
+| `allow_clear` | Si el coordinador de un worker puede limpiar su contexto (`/clear`, escrito en su terminal) antes de darle una tarea nueva (igual que `allow_input` por defecto) |
 | `coordinators` | Si se pone, los únicos nombres de coordinador que pueden recibir los workers que abre squadra-host en esta máquina, y con los que pueden enlazarse los coordinadores que abre |
 | `claude_command` | El ejecutable de Claude Code (`claude`, buscado solo en las entradas absolutas del `PATH`) |
 
@@ -342,6 +343,14 @@ Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaz
 - **Añadir:** **+ Escuadra** abre un coordinador (con el nombre y el objetivo de la escuadra); **+ Agente** en una tarjeta, un worker para ella.
 - **Cambiar:** ⋯ de un agente → *Cambiar persona o escuadra*. Las dos se fijan al arrancar la sesión (su system prompt, su coordinador), así que la sesión se cierra y se vuelve a abrir en la misma carpeta, continuando su conversación si la máquina lo permite.
 - **Cerrar y borrar:** el ⋯ de un agente cierra su terminal o lo borra cuando está desconectado; el ⋯ de una escuadra cierra todos sus terminales, o borra la escuadra entera cuando ninguno está conectado.
+
+### Empezar de cero en cada tarea nueva
+
+Un worker que encadena tareas en la misma conversación arrastra todas en cada petición: más lento y más caro. Cuando un worker informa de una tarea terminada y la siguiente no tiene nada que ver, su coordinador manda la tarea nueva con `fresh`: primero se limpia el contexto del worker, y la tarea llega a una sesión limpia. Para una continuación o una corrección, la manda como siempre y el worker conserva lo que sabe.
+
+- Claude no puede limpiar su propio contexto, así que la máquina del worker escribe `/clear` en su terminal, como lo harías tú, y el plugin del worker lo confirma antes de que se envíe la tarea. Después se le recuerda quién es y sus reglas, sin ninguno de los mensajes anteriores.
+- Solo para workers abiertos desde el panel, conectados y parados, por su propio coordinador, como mucho una vez por minuto. Si no, la tarea se envía con el contexto anterior y el coordinador sabe por qué.
+- Una máquina lo desactiva con `"allow_clear": false` en su `settings.json`.
 
 ## Consejos: cómo sacarle el máximo partido
 

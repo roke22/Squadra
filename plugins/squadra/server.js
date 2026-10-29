@@ -1277,7 +1277,7 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
     level: observe,
     send: events => call('observe', { events }, { s }),
     log,
-    contextProvider: () => (S === s ? recoveryContext(s) : ''),
+    contextProvider: source => (S !== s ? '' : source === 'clear' ? clearedContext(s) : recoveryContext(s)),
     onToolInput: (tool, input) => {
       const now = Date.now()
       s.toolInputs.push({ tool, input, at: now })
@@ -1350,6 +1350,26 @@ function recoveryContext(s) {
     for (const m of s.recent) parts.push(`- ${m.ts} from session ${JSON.stringify(m.from)}${m.group ? ` in ${m.group}` : ''}: ${JSON.stringify(safeContent(m.text))}`)
   }
   return parts.join('\n')
+}
+
+// Given back to Claude right after a /clear (SessionStart "clear" hook): who
+// it is in Squadra and its role's rules, but none of the earlier messages —
+// that was the point. (Its coordinator may have cleared it for a new task.)
+function clearedContext(s) {
+  if (s.role === 'solo') return ''
+  s.recent = [] // (a later compaction doesn't bring back what came before)
+  const who = s.role === 'coordinator'
+    ? `You are connected to Squadra as "${s.name}", role COORDINATOR.`
+    : `You are connected to Squadra as "${s.name}", role WORKER; your coordinator is "${s.coordinator}".`
+  return [
+    '[Squadra] Your context was just cleared. You are still in Squadra:',
+    who,
+    ...(s.role === 'worker' ? ['If your coordinator cleared it to give you a new task, that task arrives next as a channel message: start from it, assuming nothing from earlier work.'] : []),
+    '',
+    instructionsFor(s.role),
+    ...(s.persona ? ['', personaRule(s.persona)] : []),
+    ...(s.role === 'coordinator' && linkedCoordinators(s).length ? ['', `Linked coordinators (other squads): ${linkedCoordinators(s).join(', ')}.`] : []),
+  ].join('\n')
 }
 
 async function logout({ ask = false } = {}) {
@@ -1435,6 +1455,7 @@ const TOOLS = [
         chat_id: { type: 'string', description: 'Session name (e.g. "coord", "worker1") or group id ("#backend").' },
         text: { type: 'string' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block.' },
+        fresh: { type: 'boolean', description: 'Coordinator, to one of your workers: true clears the worker\'s context (/clear) before it gets this message, so a NEW task unrelated to what it did before starts light (cheaper turns, nothing stale). Leave it out for follow-ups, corrections or anything that builds on its last task. Only for workers opened from the dashboard and idle; the answer says whether it was cleared.' },
         files: {
           type: 'array',
           items: { type: 'string' },
@@ -1587,6 +1608,20 @@ async function callTool(name, args) {
       assertAllowedChat(chat_id)
       await assertPeerIsPinned(chat_id)
 
+      // A new task for a worker, from a clean context: cleared first (its
+      // machine types /clear), then sent. Not cleared because it couldn't be
+      // (busy, opened by hand…): sent anyway, and said. Typed but not
+      // confirmed: not sent, or the /clear could still wipe the task.
+      let freshNote = ''
+      if (args.fresh === true) {
+        if (S.role !== 'coordinator') throw new Error('fresh: only a coordinator clears the context of its workers')
+        if (GROUP_ID_RE.test(chat_id)) throw new Error('fresh: one worker at a time, not a group')
+        const r = await call('freshStart', { chat_id }, { timeoutMs: 45_000 })
+        if (r?.cleared === true) freshNote = `\n"${chat_id}" started from a clean context.`
+        else if (r?.reason === 'not_confirmed') throw new Error(`NOT SENT: ${String(r.text ?? '')}. Send the task again in a moment (without fresh if it keeps failing).`)
+        else freshNote = `\nNot cleared (${String(r?.text ?? 'unknown reason')}): it got the task with its earlier context.`
+      }
+
       // Each file is opened once, here, and checked through that descriptor;
       // the upload reads the same descriptor, so nothing can be swapped in.
       const sendable = files.map(f => openSendable(f))
@@ -1635,7 +1670,7 @@ async function callTool(name, args) {
 
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
         (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '')
-      if (offline.size === 0) return result
+      if (offline.size === 0) return result + freshNote
       const label = o => `${o.name} (last seen ${ago(o.last_seen_at)})`
       const queued = [...offline.values()].filter(o => o.queued)
       const skipped = [...offline.values()].filter(o => !o.queued)
@@ -1646,7 +1681,7 @@ async function callTool(name, args) {
       if (skipped.length) {
         notes.push(`⚠️ NOT delivered to ${skipped.map(label).join(', ')}: ${skipped.length === 1 ? 'it is a disconnected worker' : 'they are disconnected workers'}, and workers only receive while connected. If it was work for ${skipped.length === 1 ? 'it' : 'them'}, give it to another active worker.`)
       }
-      return notes.join('\n\n')
+      return notes.join('\n\n') + freshNote
     }
     case 'react': {
       assertAllowedChat(String(args.chat_id))
