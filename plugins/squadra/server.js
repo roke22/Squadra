@@ -1459,7 +1459,7 @@ const TOOLS = [
   },
   {
     name: 'ping',
-    description: 'Check whether Squadra sessions are alive, without waking them or using their tokens. The Squadra server answers: a session is online while its Claude Code process is running. Also shows when it last sent a message, how many of your messages it has not picked up yet, how much of its context it has used before it auto-compacts, and the persona (skill or agent) it follows. Omit chat_id to check every session you are allowed to talk to. Coordinator: use it before giving work to a worker you have not heard from in a while, or when the user asks; never in a loop or periodically. If a worker is DOWN, tell the user and do not send it tasks. Give big tasks to workers with context to spare, and each task to the worker whose persona fits it.',
+    description: 'Check whether Squadra sessions are alive, without waking them or using their tokens. The Squadra server answers: a session is online while its Claude Code process is running. Also shows when it last sent a message, how many of your messages it has not picked up yet, how much of its context it has used before it auto-compacts, the persona (skill or agent) it follows, what the user says it is for, and a linked coordinator\'s squad and goal. Omit chat_id to check every session you are allowed to talk to. Coordinator: use it before giving work to a worker you have not heard from in a while, or when the user asks; never in a loop or periodically. If a worker is DOWN, tell the user and do not send it tasks. Give big tasks to workers with context to spare, each task to the worker whose persona and purpose fit it, and ask a linked squad for what its goal covers.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1512,10 +1512,16 @@ function describePresence(name, c) {
   // (What the session itself says it follows: quoted, as data.)
   const p = launchPersona(c.persona)
   const persona = p ? `; persona: ${p.kind} ${JSON.stringify(p.name)}${p.description ? ` ${JSON.stringify(p.description)}` : ''}` : ''
+  // What the dashboard says it is for, and its squad's title and goal (a
+  // coordinator): quoted too.
+  const line = (v, n) => String(v ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
+  const desc = line(c.description, 300)
+  const sq = c.squad && typeof c.squad === 'object' ? [line(c.squad.title, 40), line(c.squad.goal, 300)] : ['', '']
+  const about = `${desc ? `; for: ${JSON.stringify(desc)}` : ''}${sq[0] || sq[1] ? `; squad${sq[0] ? ` ${JSON.stringify(sq[0])}` : ''}${sq[1] ? `, goal: ${JSON.stringify(sq[1])}` : ''}` : ''}`
   if (c.online) {
-    return `${name}: ALIVE (connected ${ago(c.connected_since)}; ${lastMsg}${pending}${ctx}${persona})`
+    return `${name}: ALIVE (connected ${ago(c.connected_since)}; ${lastMsg}${pending}${ctx}${persona}${about})`
   }
-  return `${name}: DOWN or closed (last seen ${ago(c.last_seen_at)}; ${lastMsg}${pending}${persona})`
+  return `${name}: DOWN or closed (last seen ${ago(c.last_seen_at)}; ${lastMsg}${pending}${persona}${about})`
 }
 
 // Liveness without waking anyone: the server tracks whether each plugin is

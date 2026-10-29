@@ -1332,6 +1332,8 @@ async function hostInfo() {
     folders_from_dashboard: settings.folders_from_dashboard,
     max_sessions: settings.max_sessions,
     allow_input: settings.allow_input,
+    // (Whether a session may be opened again continuing its conversation.)
+    allow_resume: settings.allow_resume,
     terminals: await listTerminals(),
   }
 }

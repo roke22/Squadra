@@ -52,6 +52,7 @@ Open http://localhost:7787, then **+ New session** in `/squadra/projects/demo`, 
 - **Use all your computers and accounts:** each agent runs on any machine you add, with that machine's Claude Code login.
 - **Build teams with your own skills:** give each agent a skill or agent from its project (design, marketing, HR, code review…) as its persona, and save the whole squad as a template to open it again in one click.
 - **Link squads:** link the coordinators of two squads (design and marketing, say) so they share work, each handing what it takes on to its own workers.
+- **See and shape your whole organisation:** the org chart shows every squad, its agents and how squads are linked, with what each one is for on hover; add, describe, link, move and close them from there.
 
 ## How it works
 

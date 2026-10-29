@@ -52,6 +52,7 @@ Abre http://localhost:7787 y después **+ Nueva sesión** en `/squadra/projects/
 - **Usar todos tus equipos y cuentas:** cada agente funciona en cualquier máquina que añadas, con la sesión de Claude Code de esa máquina.
 - **Montar equipos con tus propias skills:** dale a cada agente una skill o un agente de su proyecto (diseño, marketing, RR. HH., revisión de código…) como persona, y guarda toda la escuadra como plantilla para volver a abrirla de un clic.
 - **Enlazar escuadras:** enlaza los coordinadores de dos escuadras (por ejemplo, diseño y marketing) para que se repartan trabajo, y cada uno lo pase a sus propios workers.
+- **Ver y montar toda tu organización:** el organigrama muestra cada escuadra, sus agentes y cómo se enlazan, con para qué sirve cada uno al pasar el ratón; desde ahí se añaden, describen, enlazan, mueven y cierran.
 
 ## Cómo funciona
 
