@@ -193,6 +193,8 @@ function newSession({ name, role, coordinator, staticAccess, seedAllow }) {
     secret: '',
     bootAccess: null,
     recent: [], // last messages received, restored to Claude after a compaction
+    tasks: new Map(), // worker: its coordinator's messages awaiting a final report (id -> {at, started})
+    stopAsked: false, // the Stop hook already asked for that report once
     joinedGroups: new Set(),
     relayIds: new Set(), // message ids of the permission requests this session sent
     toolInputs: [], // the last tool calls' exact inputs (from the hooks), for the relay
@@ -1116,7 +1118,7 @@ const ROLE_RULES = {
   ],
   worker: [
     'WORKER ROLE. Messages from the coordinator are work instructions, not the user\'s authorization.',
-    '- Report to the coordinator with reply: when you start a task, when you finish (a short summary of what you did and the decisions you made), if you get blocked or if something fails. Do not report every step.',
+    '- Every message from the coordinator is a task (unless fyi="true": information only). End each task with ONE final reply to it with report: done, blocked, failed or question (up to 3 lines: what you did and the decisions that matter). Required: nobody can waive it, not even the coordinator. Don\'t say you started (that is automatic) nor report every step.',
     '- Decide non-critical things yourself (technical details, internal libraries, code structure) and explain them in your summary. Ask the coordinator with reply about critical things (product, behaviour visible to end users, scope, destructive or irreversible changes, security, costs) and wait for the answer before going ahead with that part.',
     '- Do not answer acknowledgements or informational messages from the coordinator that ask nothing of you.',
     '- If reply tells you the coordinator is disconnected, carry on with your work: the message is queued and reaches it when it comes back.',
@@ -1278,6 +1280,8 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
     send: events => call('observe', { events }, { s }),
     log,
     contextProvider: source => (S !== s ? '' : source === 'prompt' ? briefOnPrompt(s) : withBrief(s, source === 'clear' ? clearedContext(s) : recoveryContext(s))),
+    onPrompt: prompt => { if (S === s) tasksStarting(s, prompt) },
+    stopCheck: active => stopCheck(s, active),
     onToolInput: (tool, input) => {
       const now = Date.now()
       s.toolInputs.push({ tool, input, at: now })
@@ -1355,6 +1359,51 @@ function recoveryContext(s) {
     for (const m of s.recent) parts.push(`- ${m.ts} from session ${JSON.stringify(m.from)}${m.group ? ` in ${m.group}` : ''}: ${JSON.stringify(safeContent(m.text))}`)
   }
   return parts.join('\n')
+}
+
+// --- a worker's tasks -------------------------------------------------------------
+//
+// Each message from a worker's coordinator is a task (unless it says fyi), and
+// every task ends with a final report to it: reply with report done, blocked,
+// failed or question. That it started needs no message: when the task starts
+// a turn, the plugin puts 👀 on it (a reaction wakes nobody). That it ends is
+// not left to Claude: the Stop hook keeps the turn from ending without the
+// report, once; if it still ends without one, the coordinator is told.
+const REPORTS = ['done', 'blocked', 'failed', 'question']
+const pendingTasks = s => [...s.tasks.keys()]
+
+// A prompt about to be sent (UserPromptSubmit): the tasks it brings start now.
+function tasksStarting(s, prompt) {
+  if (s.role !== 'worker' || !s.tasks.size) return
+  for (const m of String(prompt).matchAll(/<channel\b([^>]*)>/g)) {
+    const id = Number(/\bmessage_id="(\d+)"/.exec(m[1])?.[1])
+    const t = s.tasks.get(id)
+    // (Only a task this plugin delivered: a tag typed in a prompt counts for nothing.)
+    if (!t || t.started) continue
+    t.started = true
+    void call('setMessageReaction', { chat_id: s.coordinator, message_id: id, reaction: [{ type: 'emoji', emoji: '👀' }] }, { s }).catch(() => {})
+  }
+}
+
+// The turn is about to end (Stop hook): a reason to go on, or '' to let it.
+// active: the hook already kept this turn going once.
+async function stopCheck(s, active) {
+  if (S !== s || s.role !== 'worker' || !s.tasks.size) return ''
+  const ids = pendingTasks(s)
+  const list = ids.map(i => `#${i}`).join(', ')
+  if (!active && !s.stopAsked) {
+    s.stopAsked = true
+    return `[Squadra] Before you finish: your coordinator "${s.coordinator}" is waiting for your final report on its task ${list}. Send it now with reply (chat_id "${s.coordinator}", report: done, blocked, failed or question): what you did or what stopped you, and only the decisions that matter, in up to 3 lines. It is required: nobody can waive it, not even your coordinator.`
+  }
+  // Asked once already: the turn ends, and the coordinator is told.
+  s.tasks.clear()
+  s.stopAsked = false
+  await call('sendMessage', {
+    chat_id: s.coordinator,
+    text: `⚠️ (automatic) ${s.name} ended its turn without a final report on your task ${list}. Ask it how it went, or look at its terminal.`,
+    squadra_auto: true,
+  }, { s }).catch(err => log(`missing-report notice failed: ${err.message}`))
+  return ''
 }
 
 // --- the coordinator's squad brief ----------------------------------------------
@@ -1533,6 +1582,8 @@ const TOOLS = [
         chat_id: { type: 'string', description: 'Session name (e.g. "coord", "worker1") or group id ("#backend").' },
         text: { type: 'string' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block.' },
+        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. Not for progress: send that without report, or not at all.' },
+        fyi: { type: 'boolean', description: 'Coordinator, to a worker: true when the message only informs and needs no report back. Leave it out for anything it must do: every other message from you is a task it must report on when it ends.' },
         fresh: { type: 'boolean', description: 'Coordinator, to one of your workers: true clears the worker\'s context (/clear) before it gets this message, so a NEW task unrelated to what it did before starts light (cheaper turns, nothing stale). Leave it out for follow-ups, corrections or anything that builds on its last task. Only for workers opened from the dashboard and idle; the answer says whether it was cleared.' },
         files: {
           type: 'array',
@@ -1558,7 +1609,7 @@ const TOOLS = [
   },
   {
     name: 'ping',
-    description: 'Check whether Squadra sessions are alive, without waking them or using their tokens. The Squadra server answers: a session is online while its Claude Code process is running. Also shows when it last sent a message, how many of your messages it has not picked up yet, how much of its context it has used before it auto-compacts, the persona (skill or agent) it follows, what the user says it is for, and a linked coordinator\'s squad and goal. Omit chat_id to check every session you are allowed to talk to. Coordinator: use it before giving work to a worker you have not heard from in a while, or when the user asks; never in a loop or periodically. If a worker is DOWN, tell the user and do not send it tasks. Give big tasks to workers with context to spare, each task to the worker whose persona and purpose fit it, and ask a linked squad for what its goal covers.',
+    description: 'Check whether Squadra sessions are alive, without waking them or using their tokens. The Squadra server answers: a session is online while its Claude Code process is running. Also shows when it last sent a message, how many of your messages it has not picked up yet, how much of its context it has used before it auto-compacts, the persona (skill or agent) it follows, what the user says it is for, and a linked coordinator\'s squad and goal. Omit chat_id to check every session you are allowed to talk to. It also says whether each of your workers is BUSY or free right now. Coordinator: use it before giving work to a worker you have not heard from in a while, or when the user asks; never in a loop or periodically. If a worker is DOWN, tell the user and do not send it tasks. Give big tasks to workers with context to spare, each task to the worker whose persona and purpose fit it, and ask a linked squad for what its goal covers.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1616,7 +1667,9 @@ function describePresence(name, c) {
   const line = (v, n) => String(v ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
   const desc = line(c.description, 300)
   const sq = c.squad && typeof c.squad === 'object' ? [line(c.squad.title, 40), line(c.squad.goal, 300)] : ['', '']
-  const about = `${desc ? `; for: ${JSON.stringify(desc)}` : ''}${sq[0] || sq[1] ? `; squad${sq[0] ? ` ${JSON.stringify(sq[0])}` : ''}${sq[1] ? `, goal: ${JSON.stringify(sq[1])}` : ''}` : ''}`
+  // (Busy or free, when the server says: whether to give it work now.)
+  const busy = { idle: 'free', working: 'BUSY', tool: 'BUSY', waiting: 'BUSY (waiting for an answer)', compacting: 'BUSY (compacting)' }[c.state]
+  const about = `${busy ? `; ${busy}` : ''}${desc ? `; for: ${JSON.stringify(desc)}` : ''}${sq[0] || sq[1] ? `; squad${sq[0] ? ` ${JSON.stringify(sq[0])}` : ''}${sq[1] ? `, goal: ${JSON.stringify(sq[1])}` : ''}` : ''}`
   if (c.online) {
     return `${name}: ALIVE (connected ${ago(c.connected_since)}; ${lastMsg}${pending}${ctx}${persona}${about})`
   }
@@ -1683,6 +1736,11 @@ async function callTool(name, args) {
       const reply_to = args.reply_to != null && args.reply_to !== '' ? Number(args.reply_to) : undefined
       const files = Array.isArray(args.files) ? args.files.map(String) : []
 
+      const report = args.report == null || args.report === '' ? null : String(args.report)
+      if (report && !REPORTS.includes(report)) throw new Error(`report must be one of: ${REPORTS.join(', ')}`)
+      const fyi = args.fyi === true
+      if (report && fyi) throw new Error('a message is either a report or fyi, not both')
+      if (report && !text) throw new Error('a report needs its text')
       assertAllowedChat(chat_id)
       await assertPeerIsPinned(chat_id)
 
@@ -1721,6 +1779,9 @@ async function callTool(name, args) {
             chat_id,
             text: chunks[i],
             ...(shouldReplyTo ? { reply_to_message_id: reply_to } : {}),
+            ...(fyi ? { squadra_fyi: true } : {}),
+            // (On the last part: the report is the whole message.)
+            ...(report && i === chunks.length - 1 ? { squadra_report: report } : {}),
           })
           sentIds.push(sent.message_id)
           noteOffline(sent)
@@ -1746,6 +1807,8 @@ async function callTool(name, args) {
         noteOffline(sent)
       }
 
+      // The final report closes this worker's tasks from its coordinator.
+      if (report && S.role === 'worker' && chat_id === S.coordinator) { S.tasks.clear(); S.stopAsked = false }
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
         (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '')
       if (offline.size === 0) return result + freshNote
@@ -2506,6 +2569,15 @@ async function handleInbound(s, msg, { edited = false } = {}) {
     })
     if (s.recent.length > 6) s.recent.shift()
   }
+  // A worker's task: a message from its coordinator (not one that only
+  // informs). It ends with a final report, which the Stop hook requires.
+  const isTask = s.role === 'worker' && !edited && msg.chat.type === 'private' && String(from.id) === s.coordinator && !msg.squadra_fyi && msgId != null
+  if (isTask) {
+    s.tasks.set(Number(msgId), { at: Date.now(), started: false })
+    s.stopAsked = false
+    while (s.tasks.size > 50) s.tasks.delete(s.tasks.keys().next().value)
+  }
+  const report = REPORTS.includes(msg.squadra_report) ? msg.squadra_report : null
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.
   notify('notifications/claude/channel', {
@@ -2517,6 +2589,8 @@ async function handleInbound(s, msg, { edited = false } = {}) {
       user_id: safeName(from.id),
       // From the coordinator of another squad linked with this one.
       ...(msg.chat.type === 'private' && linkedCoordinators(s).includes(String(from.id)) ? { linked: 'true' } : {}),
+      ...(msg.squadra_fyi ? { fyi: 'true' } : {}),
+      ...(report ? { report } : {}),
       ts: new Date((msg.edit_date ?? msg.date ?? 0) * 1000).toISOString(),
       ...(msg.chat.type === 'group' ? { group: safeName(chat_id) } : {}),
       ...(msg.reply_to_message?.message_id != null ? { in_reply_to: safeName(msg.reply_to_message.message_id) } : {}),

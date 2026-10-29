@@ -289,7 +289,10 @@ export function compactPointFor(model, env = process.env) {
 // asked for through the same socket.
 // onToolInput(tool, input): the exact input of each tool call, at every level
 // (kept in memory by the plugin to show the coordinator exactly what will run).
-export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null }) {
+// onPrompt(prompt): each prompt about to be sent, whole (a worker's tasks start).
+// stopCheck(active): when the turn is about to end, a reason to go on, or ''
+// (asked for by the Stop hook through the same socket).
+export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null, onPrompt = null, stopCheck = null }) {
   level = normalizeLevel(level) ?? 'full'
   const limits = LIMITS[level]
   let server = null
@@ -396,6 +399,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
         return push({ ...base, kind: 'session_start', source: input.source, model: input.model, cwd })
       case 'UserPromptSubmit': {
         const prompt = String(input.prompt ?? '')
+        try { onPrompt?.(prompt) } catch (err) { log(`observe: prompt callback failed: ${err.message}`) }
         // A turn started by a channel message: the dashboard already shows the
         // message itself.
         const fromChannel = /^\s*<channel\b/.test(prompt)
@@ -494,6 +498,12 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
         conn.on('end', () => {
           let msg = null
           try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {}
+          if (msg?.want === 'stop') {
+            Promise.resolve().then(() => stopCheck?.(msg.active === true))
+              .catch(err => { log(`observe: stop check failed: ${err.message}`); return '' })
+              .then(block => conn.end(JSON.stringify({ block: typeof block === 'string' ? block : '' })))
+            return
+          }
           if (msg?.want === 'context') {
             // (What it is for: "compact" or "clear", the session starting
             // again; "prompt", a prompt about to be sent.)

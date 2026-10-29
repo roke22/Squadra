@@ -5,6 +5,7 @@
 
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { spawn, execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1415,6 +1416,68 @@ test('a coordinator with no workers connected does its squad\'s work itself, and
   const ctx = JSON.parse(await runHookOut(coord, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
   assert.match(ctx, /You have no workers connected right now/)
   coord.close()
+})
+
+test('task reports: a worker can\'t end a task without its final report, and its coordinator is told if it does', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'trc' })
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'trc', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('trw')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const wk = new Plugin('trw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'trc' })
+  await wk.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 trw connected'), 'greeting')
+  const stopHook = async (active = false) => {
+    const out = await runHookOut(wk, { hook_event_name: 'Stop', stop_hook_active: active, session_id: 's', cwd: '/x' }, ['--stop'])
+    return out ? JSON.parse(out) : null
+  }
+  const idOf = r => Number(/id: (\d+)/.exec(r)[1])
+
+  // A task: when it starts a turn, 👀 on it (no message, nobody woken).
+  const t1 = idOf(await coord.tool('reply', { chat_id: 'trw', text: 'Task: the login screen' }))
+  const got = await wk.waitChannel(p => p.content === 'Task: the login screen', 'task')
+  assert.equal(got.meta.fyi, undefined)
+  await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: `<channel source="squadra" chat_id="trc" message_id="${t1}" user="trc">Task: the login screen</channel>`, session_id: 's', cwd: '/x' })
+  const db = new DatabaseSync(join(dataDir, 'squadra.db'), { readOnly: true })
+  await waitFor(() => db.prepare('SELECT emoji FROM reactions WHERE message_id = ? AND from_name = ?').get(t1, 'trw')?.emoji === '👀', { what: '👀 on the task' })
+  db.close()
+  // Ending the turn without the report: Claude Code is told to send it first.
+  const b = await stopHook()
+  assert.equal(b.decision, 'block')
+  assert.match(b.reason, new RegExp(`your coordinator "trc" is waiting for your final report on its task #${t1}\\. Send it now with reply \\(chat_id "trc", report: done, blocked, failed or question\\)`))
+  assert.match(b.reason, /nobody can waive it, not even your coordinator/)
+  // Ending it again without one: the turn ends, and the coordinator is told.
+  assert.equal(await stopHook(true), null)
+  const notice = await coord.waitChannel(p => p.content.includes('ended its turn without a final report'), 'missing report notice')
+  assert.equal(notice.content, `⚠️ (automatic) trw ended its turn without a final report on your task #${t1}. Ask it how it went, or look at its terminal.`)
+  assert.equal(await stopHook(), null)
+
+  // With the report: nothing is asked, and the coordinator sees it is the final one.
+  const t2 = idOf(await coord.tool('reply', { chat_id: 'trw', text: 'Task: the invoices page' }))
+  await wk.waitChannel(p => p.content === 'Task: the invoices page', 'task 2')
+  await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'finished' }), /report must be one of: done, blocked, failed, question/)
+  await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'done', fyi: true }), /either a report or fyi/)
+  await wk.tool('reply', { chat_id: 'trc', text: 'Invoices page done: src/invoices.js', report: 'done' })
+  const done = await coord.waitChannel(p => p.content === 'Invoices page done: src/invoices.js', 'report')
+  assert.equal(done.meta.report, 'done')
+  assert.equal(await stopHook(), null)
+  assert.ok(t2 > t1)
+
+  // Information only: no report expected.
+  await coord.tool('reply', { chat_id: 'trw', text: 'FYI: the API moved to v2', fyi: true })
+  const info = await wk.waitChannel(p => p.content === 'FYI: the API moved to v2', 'fyi')
+  assert.equal(info.meta.fyi, 'true')
+  assert.equal(await stopHook(), null)
+  // The dashboard shows which message was the report.
+  const items = (await dash('/api/timeline?session=trc&limit=50')).result.items
+  assert.equal(items.find(m => m.text === 'Invoices page done: src/invoices.js')?.report, 'done')
+  assert.equal(items.find(m => m.text === 'FYI: the API moved to v2')?.fyi, true)
+  // ping tells the coordinator whether its worker is busy or free.
+  assert.match(await coord.tool('ping', { chat_id: 'trw' }), /trw: ALIVE .*; (free|BUSY)/)
+  coord.close()
+  wk.close()
 })
 
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {

@@ -374,6 +374,11 @@
   .org-title { font-weight: 650; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .org-count { font-size: 12px; color: var(--muted); }
   .org-self { font-size: 13px; cursor: help; }
+  .rep { font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 8px; white-space: nowrap; }
+  .rep.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, var(--panel)); }
+  .rep.blocked, .rep.question { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--panel)); }
+  .rep.failed { color: var(--err); background: color-mix(in srgb, var(--err) 14%, var(--panel)); }
+  .rep.fyi { color: var(--muted); background: var(--panel-2); }
   .org-goal { height: 36px; box-sizing: border-box; padding: 4px 14px 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .org-agent { height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 14px; font-size: 13px; outline: none; }
   .org-agent.worker { padding-left: 30px; }
@@ -771,6 +776,9 @@
       orgAddAgent: '+ Agent',
       orgMore: n => `+ ${n} more`,
       orgLess: 'Show fewer',
+      reportTag: { done: '✓ done', blocked: '⛔ blocked', failed: '✗ failed', question: '? question' },
+      fyiTag: 'fyi',
+      contextCleared: 'Context cleared for a new task',
       orgSelfWorking: 'No workers connected: the coordinator does the squad\'s work itself',
       orgLinkHandle: 'Drag onto another squad to link them',
       orgSquadMenu: n => `Squad ${n}: actions`,
@@ -1108,6 +1116,9 @@
       orgAddAgent: '+ Agente',
       orgMore: n => `+ ${n} más`,
       orgLess: 'Mostrar menos',
+      reportTag: { done: '✓ hecho', blocked: '⛔ bloqueado', failed: '✗ fallido', question: '? pregunta' },
+      fyiTag: 'informativo',
+      contextCleared: 'Contexto limpiado para una tarea nueva',
       orgSelfWorking: 'Sin workers conectados: el coordinador hace él mismo el trabajo de la escuadra',
       orgLinkHandle: 'Arrástralo a otra escuadra para enlazarlas',
       orgSquadMenu: n => `Escuadra ${n}: acciones`,
@@ -1592,9 +1603,9 @@
         const file = it.file ? `${it.text ? '\n' : ''}📎 ${esc(it.file.name)}` : ''
         if (it.system) return `<div class="sysline notice">${esc(it.text)}<div class="t">${hhmm(it.ts)} · ${T.serverNotice}</div></div>`
         if (it.from === this.name) {
-          return `<div class="sent"><div class="h">→ <b>${esc(it.target)}</b> · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="x">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
+          return `<div class="sent"><div class="h">→ <b>${esc(it.target)}</b>${msgTag(it)} · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="x">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
         }
-        return `<div class="row-user"><div class="bubble-head"><b>${esc(it.from)}</b>${it.target.startsWith('#') ? T.inGroup(esc(it.target)) : ''} · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="bubble in">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
+        return `<div class="row-user"><div class="bubble-head"><b>${esc(it.from)}</b>${it.target.startsWith('#') ? T.inGroup(esc(it.target)) : ''}${msgTag(it)} · ${hhmm(it.ts)}${it.edited_at ? ` · ${T.editedMark}` : ''}</div><div class="bubble in">${clipEsc(it, 'text', MAX_RENDER_TEXT)}${file}</div></div>`
       }
       switch (it.kind) {
         case 'prompt': return `<div class="row-user"><div class="bubble-head"><b>${T.you}</b> · ${hhmm(it.ts)}</div><div class="bubble">${clipEsc(it, 'text', MAX_RENDER_TEXT)}</div></div>`
@@ -1603,7 +1614,8 @@
         case 'notification': return `<div class="sysline warn">⏳ ${it.text ? clipEsc(it, 'text', 500) : esc(it.type)} · ${hhmm(it.ts)}</div>`
         case 'compact': return `<div class="sysline">${T.compactingLine} · ${hhmm(it.ts)}</div>`
         case 'compacted': return `<div class="sysline">${T.compactedLine(it.trigger !== 'manual')} · ${hhmm(it.ts)}${it.summary ? `<details style="text-align:left"><summary>${T.compactSummary}</summary><pre style="white-space:pre-wrap;font:12px/1.4 var(--mono);background:var(--panel-2);padding:8px;border-radius:6px;max-height:300px;overflow:auto">${clipEsc(it, 'summary', MAX_RENDER_TEXT)}</pre></details>` : ''}</div>`
-        case 'session_start': return `<div class="sysline">${T.sessionStarted(it.source === 'resume')}${it.cwd ? T.inDir(esc(it.cwd)) : ''} · ${hhmm(it.ts)}</div>`
+        case 'session_start': if (it.source === 'clear') return `<div class="sysline">🧹 ${T.contextCleared} · ${hhmm(it.ts)}</div>`
+          return `<div class="sysline">${T.sessionStarted(it.source === 'resume')}${it.cwd ? T.inDir(esc(it.cwd)) : ''} · ${hhmm(it.ts)}</div>`
         case 'session_end': return `<div class="sysline">${T.sessionEnded}${it.reason ? ` (${esc(it.reason)})` : ''} · ${hhmm(it.ts)}</div>`
         case 'observe_start': return `<div class="sysline">${T.observing(esc(it.level))} · ${hhmm(it.ts)}</div>`
         default: return ''
@@ -1863,6 +1875,12 @@
 
   function roleTag(role) {
     return role ? `<span class="role-tag ${role}">${role === 'coordinator' ? T.roleCoordinator : role === 'solo' ? T.roleSolo : T.roleWorker}</span>` : ''
+  }
+  // A task's final report (done, blocked, failed, question), or information
+  // that needs none (fyi), on a message.
+  function msgTag(it) {
+    if (['done', 'blocked', 'failed', 'question'].includes(it.report)) return ` <span class="rep ${it.report}">${T.reportTag[it.report]}</span>`
+    return it.fyi ? ` <span class="rep fyi">${T.fyiTag}</span>` : ''
   }
   // The persona (skill or agent) a session follows.
   function personaTag(p) {

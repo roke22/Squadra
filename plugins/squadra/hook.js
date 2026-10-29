@@ -77,19 +77,22 @@ function readStdin() {
 }
 
 const CONTEXT_MODE = process.argv.includes('--context')
+// --stop (Stop hook, synchronous): a worker can't end its turn without its
+// final report to its coordinator (the plugin says what is missing, once).
+const STOP_MODE = process.argv.includes('--stop')
 
 // --context (SessionStart "compact" and "clear" hooks, and UserPromptSubmit;
 // synchronous): ask the plugin for the Squadra context and hand it back to
 // Claude Code as additionalContext, so the session still knows its name, role
 // and task after compacting (or who it is after a /clear), and a coordinator
 // learns what its squad is for when the user sets or changes it.
-function askContext(sock, source) {
+function askContext(sock, source, { want = 'context', field = 'context', extra = {} } = {}) {
   return new Promise(resolve => {
     const chunks = []
-    const c = connect(sock, () => c.end(JSON.stringify({ want: 'context', source })))
+    const c = connect(sock, () => c.end(JSON.stringify({ want, source, ...extra })))
     c.on('data', d => chunks.push(d))
     c.on('close', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')).context ?? '') } catch { resolve('') }
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))[field] ?? '') } catch { resolve('') }
     })
     c.on('error', () => resolve(''))
     setTimeout(() => { c.destroy(); resolve('') }, 3000).unref()
@@ -100,6 +103,13 @@ async function main() {
   const sock = findSocket()
   if (!sock) return
   const raw = await readStdin()
+  if (STOP_MODE) {
+    let input = {}
+    try { input = JSON.parse(raw) ?? {} } catch {}
+    const block = await askContext(sock, 'stop', { want: 'stop', field: 'block', extra: { active: input.stop_hook_active === true } })
+    if (block) process.stdout.write(JSON.stringify({ decision: 'block', reason: block }))
+    return
+  }
   if (CONTEXT_MODE) {
     let input = {}
     try { input = JSON.parse(raw) ?? {} } catch {}

@@ -84,7 +84,7 @@ Para pararlo, `docker-compose down` (la carpeta se queda). Después de un `git p
 ```
 
 - **El coordinador** es una sesión de Claude Code con el rol de coordinador. Convierte tu petición en tareas, las asigna a los workers, responde sus preguntas, aprueba las acciones inofensivas y solo te escala lo crítico.
-- **Los workers** son sesiones de Claude Code con el rol de worker, cada una en su carpeta de proyecto. Deciden los detalles técnicos solas y avisan cuando empiezan, terminan, se bloquean o necesitan una decisión.
+- **Los workers** son sesiones de Claude Code con el rol de worker, cada una en su carpeta de proyecto. Deciden los detalles técnicos solas, y cada tarea termina con un informe final (hecho, bloqueado, fallido o una pregunta): Claude Code no las deja terminar sin él.
 - **`squadra-server`** pasa los mensajes entre agentes y sirve el panel. Los agentes se conectan *hacia fuera*, así que sus equipos no abren puertos.
 - **El plugin `squadra`** entrega cada mensaje dentro de la sesión del agente, incluso cuando está parada, mediante los [Channels](https://code.claude.com/docs/en/channels) de Claude Code, y cuenta al panel qué está haciendo el agente.
 
