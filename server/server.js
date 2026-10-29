@@ -217,6 +217,22 @@ const RATE_LIMIT_PER_MIN = 120             // messages per sender per minute
 const ONLINE_GRACE_MS = 15 * 1000          // gap allowed between two polls of a live plugin
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const GROUP_RE = /^#[A-Za-z0-9_-]{1,32}$/
+// A persona: a skill or an agent a session follows (its machine found it in
+// the session's folder, or in that user's ~/.claude). Its id on the machine:
+const PERSONA_ID_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
+
+// The persona a session says it follows (at login): what its kind and name
+// are, and its description, short. Like its role, the session's own word.
+function personaOf(p) {
+  if (!p || typeof p !== 'object' || !['skill', 'agent'].includes(p.kind)) return null
+  const name = typeof p.name === 'string' ? cleanText(p.name.slice(0, 128)).replace(/\s+/g, ' ').trim().slice(0, 64) : ''
+  if (!name) return null
+  const description = typeof p.description === 'string' ? cleanText(p.description.slice(0, 600)).replace(/\s+/g, ' ').trim().slice(0, 300) : ''
+  return JSON.stringify({ kind: p.kind, name, description })
+}
+function personaView(name) {
+  try { return JSON.parse(db.prepare('SELECT persona FROM identities WHERE name = ?').get(name)?.persona ?? 'null') } catch { return null }
+}
 const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 
 // --- storage -----------------------------------------------------------------
@@ -362,6 +378,11 @@ db.exec(`
     instance TEXT NOT NULL,
     since INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS squad_templates (
+    name TEXT PRIMARY KEY,
+    spec TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
 `)
 
 // Indexes for the per-session message lookups (presence, relations, files):
@@ -394,6 +415,8 @@ for (const [table, column, type] of [
   ['updates', 'sender', 'TEXT'],                       // who it came from (per-sender queue cap)
   ['identities', 'epoch', 'TEXT'],                     // random, per registration: what sessions pin (a name registered again gets a new one)
   ['identities', 'opened_role', 'TEXT'],               // the role the dashboard opened it with (on a machine)
+  ['identities', 'opened_persona', 'TEXT'],            // and the persona (skill or agent id on that machine)
+  ['identities', 'persona', 'TEXT'],                   // the persona it says it follows, set at login (JSON: kind, name, description)
   ['host_enrollments', 'ticket', 'TEXT'],              // a random id for the code (shown to the dashboard)
   ['hosts', 'enrollment', 'TEXT'],                     // the ticket of the code it enrolled with
 ]) {
@@ -1218,7 +1241,7 @@ const methods = {
     // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
     const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null
     const coordinator = role === 'worker' && NAME_RE.test(String(p.coordinator ?? '')) ? String(p.coordinator) : null
-    if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ? WHERE name = ?').run(role, coordinator, name)
+    if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ?, persona = ? WHERE name = ?').run(role, coordinator, personaOf(p.persona), name)
     // An archived session that logs in again is active again.
     if (db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) {
       setImmediate(() => broadcast('session', sessionView(name)))
@@ -1325,6 +1348,7 @@ const methods = {
     return {
       id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, ...presenceOf(id),
       context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
+      persona: personaView(id),
     }
   },
 }
@@ -1638,17 +1662,19 @@ cleanup()
 // --- dashboard (server token) ------------------------------------------------------
 
 function sessionView(name) {
-  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role FROM identities WHERE name = ?').get(name)
+  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona FROM identities WHERE name = ?').get(name)
   if (!row) return { name, deleted: true }
   const a = activityOf(name)
   return {
     name,
     role: row.role ?? null,
     coordinator: row.coordinator ?? null,
+    persona: personaView(name),
     archived_at: row.archived_at ?? null,
     cleared_at: row.cleared_at ?? null,
     host_id: row.host_id ?? null, // the machine that opened it from the dashboard
     opened_role: row.host_id && ['coordinator', 'worker', 'solo'].includes(row.opened_role) ? row.opened_role : null, // and as what
+    opened_persona: row.host_id && PERSONA_ID_RE.test(String(row.opened_persona ?? '')) ? row.opened_persona : null, // and with which persona
     ...presenceOf(name),
     activity: { ...a, tool: a.tool ? { ...a.tool } : null },
   }
@@ -1769,6 +1795,7 @@ const dashboard = {
       sessions: db.prepare('SELECT name FROM identities ORDER BY name').all().map(r => sessionView(r.name)),
       hosts: listHosts(),
       groups: allGroups(),
+      templates: listTemplates(),
     }
   },
   events(q) {
@@ -1883,6 +1910,9 @@ const dashboardActions = {
   'hosts/rename': p => renameHost(String(p.host ?? ''), p.name),
   'hosts/remove': p => removeHost(String(p.host ?? '')),
   'hosts/folders': p => changeHostFolders(p),
+  'hosts/personas': p => hostPersonas(p),
+  'templates/save': p => saveTemplate(p),
+  'templates/delete': p => deleteTemplate(String(p.name ?? '')),
   'terminals/open': p => openTerminalOn(p),
   'terminals/kill': p => killTerminalOn(p),
   'terminal/ticket': () => newTerminalTicket(),
@@ -1893,7 +1923,7 @@ const dashboardActions = {
 // A host is squadra-host running on a machine. It joins with a one-time code
 // the dashboard generates (POST /host/enroll), gets its own secret, and keeps a
 // WebSocket open to /host/connect. Through it the server can only ask for a
-// session *spec* (name, role, folder, compact window) — the host validates it
+// session *spec* (name, role, folder, compact window, persona id) — the host validates it
 // against its own local rules and always runs the same fixed command — and
 // relay terminal output and keystrokes for the dashboard's web terminal.
 //
@@ -2082,6 +2112,8 @@ function sanitizeHostInfo(info) {
     coordinator: str(t?.coordinator, 40),
     folder: str(t?.folder, 500),
     compact_window: Number.isInteger(t?.compact_window) ? t.compact_window : null,
+    persona: t?.persona && PERSONA_ID_RE.test(String(t.persona.id)) && ['skill', 'agent'].includes(t.persona.kind)
+      ? { id: t.persona.id, kind: t.persona.kind, name: str(t.persona.name, 64) } : null,
     created_at: Number.isFinite(t?.created_at) ? t.created_at : null,
   })).filter(t => t.id && NAME_RE.test(t.id))
   return {
@@ -2438,6 +2470,69 @@ async function changeHostFolders(p) {
   return { folders: (Array.isArray(r?.folders) ? r.folders : []).slice(0, 50).filter(f => typeof f === 'string').map(f => cleanText(f.slice(0, 1000)).slice(0, 500)) }
 }
 
+// The skills and agents a session opened in that folder of a machine could
+// follow (the machine looks for them, within its own rules).
+async function hostPersonas(p) {
+  const id = String(p.host ?? '')
+  const folder = typeof p.folder === 'string' ? p.folder.trim() : ''
+  if (!folder || folder.length > 4096 || /[\x00-\x1f\x7f]/.test(folder)) throw bad('a folder path is needed')
+  const r = await askHost(id, { t: 'personas', folder })
+  const str = (v, n) => typeof v === 'string' ? cleanText(v.slice(0, n * 2)).replace(/\s+/g, ' ').trim().slice(0, n) : ''
+  return {
+    personas: (Array.isArray(r?.personas) ? r.personas : []).slice(0, 200)
+      .filter(x => x && PERSONA_ID_RE.test(String(x.id)) && ['skill', 'agent'].includes(x.kind) && ['project', 'user'].includes(x.scope))
+      .map(x => ({ id: x.id, kind: x.kind, scope: x.scope, name: str(x.name, 64) || x.id.split(':')[2], description: str(x.description, 300), no_squadra_tools: x.no_squadra_tools === true })),
+  }
+}
+
+// Squad templates: a coordinator and its workers (name, folder, persona,
+// compact window each), saved to open them all again in one go. Only what
+// the dashboard asks a machine for anyway, one session at a time: each
+// machine still checks every session against its own rules.
+const TEMPLATE_NAME_RE = /^[\p{L}\p{N} ._-]{1,40}$/u
+const TEMPLATES_MAX = 50
+function templateMember(m, role) {
+  if (!m || typeof m !== 'object') throw bad('each member of a template needs a name and a folder')
+  const name = String(m.name ?? '')
+  if (!NAME_RE.test(name)) throw bad(`invalid session name "${cleanText(name.slice(0, 40))}" in the template`)
+  const folder = typeof m.folder === 'string' ? m.folder.trim() : ''
+  if (!folder.startsWith('/') || folder.length > 4096 || /[\x00-\x1f\x7f]/.test(folder)) throw bad(`"${name}" needs an absolute folder`)
+  const persona = m.persona == null || m.persona === '' ? null : String(m.persona)
+  if (persona && !PERSONA_ID_RE.test(persona)) throw bad(`invalid persona for "${name}"`)
+  const compact = m.compact_window == null || m.compact_window === '' ? null : Number(m.compact_window)
+  if (compact !== null && !(Number.isInteger(compact) && compact >= 50_000 && compact <= 1_000_000)) throw bad(`invalid compact window for "${name}"`)
+  return { name, role, folder, persona, compact_window: compact }
+}
+function saveTemplate(p) {
+  const name = String(p.name ?? '').trim()
+  if (!TEMPLATE_NAME_RE.test(name)) throw bad('the template name may have letters, digits, spaces, dots, dashes and underscores (max 40)')
+  const host = p.host == null || p.host === '' ? null : String(p.host)
+  if (host && !hostRow(host)) throw bad('host not found')
+  const coordinator = templateMember(p.coordinator, 'coordinator')
+  const workers = (Array.isArray(p.workers) ? p.workers : []).map(w => templateMember(w, 'worker'))
+  if (workers.length > 30) throw bad('a template has at most 30 workers')
+  const names = [coordinator.name, ...workers.map(w => w.name)]
+  if (new Set(names).size !== names.length) throw bad('every session in a template needs its own name')
+  const exists = db.prepare('SELECT 1 FROM squad_templates WHERE name = ?').get(name)
+  if (!exists && db.prepare('SELECT COUNT(*) AS n FROM squad_templates').get().n >= TEMPLATES_MAX) throw bad(`at most ${TEMPLATES_MAX} templates`)
+  const spec = { host, coordinator, workers }
+  db.prepare('INSERT INTO squad_templates (name, spec, created_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET spec = excluded.spec').run(name, JSON.stringify(spec), now())
+  broadcast('templates', listTemplates())
+  return { name, ...spec }
+}
+function deleteTemplate(name) {
+  if (!db.prepare('DELETE FROM squad_templates WHERE name = ?').run(name).changes) throw bad('template not found')
+  broadcast('templates', listTemplates())
+  return { name, deleted: true }
+}
+function listTemplates() {
+  return db.prepare('SELECT name, spec, created_at FROM squad_templates ORDER BY name').all().map(r => {
+    let spec = {}
+    try { spec = JSON.parse(r.spec) } catch {}
+    return { name: r.name, created_at: r.created_at, host: spec.host ?? null, coordinator: spec.coordinator ?? null, workers: Array.isArray(spec.workers) ? spec.workers : [] }
+  })
+}
+
 async function openTerminalOn(p) {
   const id = String(p.host ?? '')
   const spec = p.spec && typeof p.spec === 'object' && !Array.isArray(p.spec) ? { ...p.spec } : null
@@ -2478,9 +2573,10 @@ async function openNow(id, name, spec, existing) {
   // The role it was opened with (the dashboard trusts that one, not whatever
   // the session claims later).
   const openedRole = spec.role === 'coordinator' || spec.role === 'solo' ? spec.role : 'worker'
+  const openedPersona = PERSONA_ID_RE.test(String(spec.persona ?? '')) ? spec.persona : null
   if (!existing) {
     spec.identity = register(name, false).secret
-    db.prepare('UPDATE identities SET host_id = ?, opened_role = ? WHERE name = ?').run(id, openedRole, name)
+    db.prepare('UPDATE identities SET host_id = ?, opened_role = ?, opened_persona = ? WHERE name = ?').run(id, openedRole, openedPersona, name)
     created = true
   } else {
     // Already this machine's name, and not connected: a new secret goes with
@@ -2488,7 +2584,7 @@ async function openNow(id, name, spec, existing) {
     // the session was disconnected from the dashboard).
     dropLease(name)
     spec.identity = register(name, true).secret
-    db.prepare('UPDATE identities SET opened_role = ? WHERE name = ?').run(openedRole, name)
+    db.prepare('UPDATE identities SET opened_role = ?, opened_persona = ? WHERE name = ?').run(openedRole, openedPersona, name)
   }
   try {
     const result = await askHost(id, { t: 'open', spec })

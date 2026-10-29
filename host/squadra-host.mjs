@@ -4,12 +4,14 @@
  * dashboard, and lets the dashboard see and type into their terminals.
  *
  * Security model: the server can only ask for a session *spec* — a name, a
- * role, a folder and the auto-compact window — never a command. Every field is
+ * role, a folder, the auto-compact window and the id of a persona (a skill or
+ * agent this machine found in that folder) — never a command. Every field is
  * validated here, against limits that live in this machine's settings file
  * (allowed folders, maximum sessions, whether the web terminal may type), so a
  * compromised server cannot widen them. The command is always the same:
  *
  *   claude --dangerously-load-development-channels plugin:squadra@squadra [--continue]
+ *          [--append-system-prompt-file <its private copy of the skill> | --agent <name>]
  *
  * Typing in a session's terminal from the dashboard is, by nature, the same as
  * sitting at this machine: anyone holding the dashboard can make Claude run
@@ -552,6 +554,7 @@ async function listTerminals() {
       coordinator: spec.coordinator ?? null,
       folder: spec.folder ?? null,
       compact_window: spec.compact_window ?? null,
+      persona: spec.persona ?? null,
       created_at: Number(created) * 1000,
     })
   }
@@ -572,7 +575,7 @@ function insideAllowed(real, folders) {
 // The only thing a server can ask for. Anything unexpected is refused.
 export function validateSpec(spec, settings, current) {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('invalid request')
-  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume', 'identity'])
+  const allowed = new Set(['name', 'role', 'coordinator', 'folder', 'compact_window', 'resume', 'identity', 'persona'])
   for (const k of Object.keys(spec)) if (!allowed.has(k)) throw new Error(`unknown field "${plain(k).slice(0, 40)}"`)
   const name = String(spec.name ?? '')
   if (!NAME_RE.test(name)) throw new Error('name must match [A-Za-z0-9_-]{1,32}')
@@ -604,34 +607,175 @@ export function validateSpec(spec, settings, current) {
   if (spec.resume === true && !settings.allow_resume) throw new Error('this machine does not allow continuing earlier conversations ("allow_resume": false in its settings.json)')
   // The session's identity secret, when the server reserved the name for this machine.
   if (spec.identity != null && !(typeof spec.identity === 'string' && /^sq_[A-Za-z0-9_-]{20,64}$/.test(spec.identity))) throw new Error('invalid identity')
-  if (typeof spec.folder !== 'string' || !isAbsolute(spec.folder) || spec.folder.length > 4096) throw new Error('folder must be an absolute path')
-  // Nothing outside the allowed folders is even looked at (no "exists / not
-  // a folder" answers about the rest of the machine).
-  const asWritten = resolve(spec.folder)
-  if (!settings.folders.some(f => within(asWritten, resolve(f)) || within(asWritten, realOr(f)))) {
-    throw new Error(`that folder is not inside the folders this machine allows (${settings.folders.join(', ') || 'none configured'})`)
-  }
-  // tmux expands #{…} and #(…) in some arguments and splits commands on ";":
-  // such paths are refused outright.
-  if (/[#;\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(spec.folder)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
-  // Where it really leads is checked against the allowed folders before
-  // anything else is said about it: a symlink inside them (to "/") can't be
-  // used to ask what exists elsewhere. One answer for missing, not a folder,
-  // or outside.
-  const notOpenable = () => new Error(`folder ${spec.folder} is not a folder inside the folders this machine allows (${settings.folders.join(', ') || 'none configured'})`)
-  let real
-  try { real = realpathSync.native(resolve(spec.folder)) } catch { throw notOpenable() }
-  if (!insideAllowed(real, settings.folders)) throw notOpenable()
-  try { if (!statSync(real).isDirectory()) throw notOpenable() } catch { throw notOpenable() }
-  if (/[#;\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(real)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
-  const why = forbiddenFolder(real, { allowHome: settings.allow_home })
-  if (why) throw new Error(`sessions cannot be opened in ${real}: it is ${why}`)
+  // Only the id of a skill or agent listed for that folder: the machine looks
+  // it up again when the session opens (see personas below).
+  if (spec.persona != null && spec.persona !== '' && !(typeof spec.persona === 'string' && PERSONA_RE.test(spec.persona))) throw new Error('invalid persona')
+  const real = checkFolder(spec.folder, settings)
   if (current.some(t => t.name === name)) throw new Error(`a session named "${name}" is already open on this machine`)
   if (current.length >= settings.max_sessions) throw new Error(`this machine allows at most ${settings.max_sessions} sessions`)
   // Which folder exactly (device and inode), to check after the start that
   // the session is in this one and not in another put at the same path.
   const id = statSync(real)
-  return { name, role, coordinator, folder: real, folderId: `${id.dev}:${id.ino}`, compact_window: compact, resume: spec.resume === true, identity: spec.identity ?? null, home: isHome(real) }
+  return { name, role, coordinator, folder: real, folderId: `${id.dev}:${id.ino}`, compact_window: compact, resume: spec.resume === true, identity: spec.identity ?? null, persona: spec.persona || null, home: isHome(real) }
+}
+
+// A folder the server names (to open a session there, or to list its
+// personas): inside the allowed folders, and none of the forbidden ones.
+// Returns where it really is.
+function checkFolder(folder, settings) {
+  if (typeof folder !== 'string' || !isAbsolute(folder) || folder.length > 4096) throw new Error('folder must be an absolute path')
+  // Nothing outside the allowed folders is even looked at (no "exists / not
+  // a folder" answers about the rest of the machine).
+  const asWritten = resolve(folder)
+  if (!settings.folders.some(f => within(asWritten, resolve(f)) || within(asWritten, realOr(f)))) {
+    throw new Error(`that folder is not inside the folders this machine allows (${settings.folders.join(', ') || 'none configured'})`)
+  }
+  // tmux expands #{…} and #(…) in some arguments and splits commands on ";":
+  // such paths are refused outright.
+  if (/[#;\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(folder)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
+  // Where it really leads is checked against the allowed folders before
+  // anything else is said about it: a symlink inside them (to "/") can't be
+  // used to ask what exists elsewhere. One answer for missing, not a folder,
+  // or outside.
+  const notOpenable = () => new Error(`folder ${folder} is not a folder inside the folders this machine allows (${settings.folders.join(', ') || 'none configured'})`)
+  let real
+  try { real = realpathSync.native(resolve(folder)) } catch { throw notOpenable() }
+  if (!insideAllowed(real, settings.folders)) throw notOpenable()
+  try { if (!statSync(real).isDirectory()) throw notOpenable() } catch { throw notOpenable() }
+  if (/[#;\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(real)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
+  const why = forbiddenFolder(real, { allowHome: settings.allow_home })
+  if (why) throw new Error(`sessions cannot be opened in ${real}: it is ${why}`)
+  return real
+}
+
+// --- personas: a skill or agent a session follows -----------------------------------
+//
+// The dashboard offers the skills and agents found for a session's folder —
+// the project's (<folder>/.claude/skills/<dir>/SKILL.md, <folder>/.claude/agents/<name>.md)
+// and this user's (~/.claude/skills, ~/.claude/agents) — and sends back only
+// the id of the one picked, never a path or a text. The machine looks it up
+// again when the session opens: a skill's text goes into the system prompt
+// (--append-system-prompt-file), an agent starts the session with --agent.
+// Either way it is part of the system prompt, so it holds for the whole
+// session: compactions don't summarize it away, and skills loaded later add
+// to it, they don't replace it.
+const PERSONA_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
+const PERSONA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const PERSONA_MAX_BYTES = 256 * 1024
+const PERSONAS_MAX = 200
+// The Squadra tools, as an agent's "tools" list names them.
+const SQUADRA_TOOLS_PREFIX = 'mcp__plugin_squadra_squadra'
+
+// The frontmatter of a SKILL.md or an agent file (the YAML between the
+// leading "---" lines): top-level "key: value" pairs, quoted values, block
+// scalars (| and >) and lists ("- item"). Enough for name, description and
+// tools; anything else is ignored.
+export function frontmatter(text) {
+  const m = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
+  if (!m) return { data: {}, body: text }
+  const data = {}
+  const lines = m[1].split(/\r?\n/)
+  const unquote = v => {
+    v = v.trim()
+    if (/^"(.*)"$/.test(v)) { try { return JSON.parse(v) } catch { return v.slice(1, -1) } }
+    if (/^'(.*)'$/.test(v)) return v.slice(1, -1).replace(/''/g, "'")
+    return v
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const kv = /^([A-Za-z_][\w-]*):[ \t]*(.*)$/.exec(lines[i])
+    if (!kv) continue
+    const [, key, raw] = kv
+    const more = []
+    while (i + 1 < lines.length && (/^[ \t]/.test(lines[i + 1]) || lines[i + 1].trim() === '')) more.push(lines[++i])
+    if (/^[|>][+-]?$/.test(raw.trim())) {
+      const parts = more.map(l => l.trim())
+      data[key] = (raw.trim()[0] === '>' ? parts.join(' ').replace(/\s+/g, ' ') : parts.join('\n')).trim()
+    } else if (!raw.trim() && more.some(l => /^\s*-\s/.test(l))) {
+      data[key] = more.filter(l => /^\s*-\s/.test(l)).map(l => unquote(l.replace(/^\s*-\s/, '')))
+    } else data[key] = unquote([raw, ...more.map(l => l.trim())].join(' '))
+  }
+  return { data, body: text.slice(m[0].length) }
+}
+
+// A persona's file, read only when it really is under its base folder (no
+// symlink out of the project or out of ~/.claude), is this user's and isn't
+// huge. null otherwise.
+function readPersonaFile(path, base) {
+  try {
+    const real = realpathSync.native(path)
+    if (!within(real, realOr(base))) return null
+    const st = statSync(real)
+    if (!st.isFile() || st.size > PERSONA_MAX_BYTES) return null
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return null
+    return { real, text: readFileSync(real, 'utf8') }
+  } catch { return null }
+}
+
+// One line of text for the dashboard: no control characters, at most n characters.
+const oneLine = (v, n) => String(v ?? '').replace(/[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩﻿]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
+
+// Every persona for sessions opened in this folder (its real path).
+export function listPersonas(folder, home = claudeHome()) {
+  // [scope, its .claude folder, where its files may really be]
+  const scopes = [['project', join(folder, '.claude'), folder], ['user', home, home]]
+  // (A session in the home folder: its project's .claude is the user's.)
+  if (realOr(scopes[0][1]) === realOr(home)) scopes.shift()
+  const out = []
+  const agentNames = new Set()
+  const entries = dir => { try { return readdirSync(dir, { withFileTypes: true }).filter(e => PERSONA_FILE_RE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name)) } catch { return [] } }
+  for (const [scope, dot, base] of scopes) {
+    for (const e of entries(join(dot, 'skills'))) {
+      const f = readPersonaFile(join(dot, 'skills', e.name, 'SKILL.md'), base)
+      if (!f) continue
+      const { data } = frontmatter(f.text)
+      out.push({ id: `skill:${scope}:${e.name}`, kind: 'skill', scope, name: oneLine(data.name || e.name, 64), description: oneLine(data.description, 300), file: f.real, base })
+    }
+    for (const e of entries(join(dot, 'agents'))) {
+      if (!e.name.endsWith('.md')) continue
+      const f = readPersonaFile(join(dot, 'agents', e.name), base)
+      if (!f) continue
+      const { data } = frontmatter(f.text)
+      const name = String(data.name ?? '')
+      // Claude Code finds an agent by its name, the project's first: a user's
+      // agent with the name of one of the project's is never the one used.
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || agentNames.has(name)) continue
+      agentNames.add(name)
+      const tools = Array.isArray(data.tools) ? data.tools : typeof data.tools === 'string' && data.tools.trim() ? data.tools.split(',') : null
+      // An agent limited to some tools, none of them Squadra's, can't message its squad.
+      const noSquadra = !!tools && !tools.map(t => String(t).trim()).some(t => t === '*' || t.startsWith(SQUADRA_TOOLS_PREFIX))
+      out.push({ id: `agent:${scope}:${name}`, kind: 'agent', scope, name, description: oneLine(data.description, 300), no_squadra_tools: noSquadra })
+    }
+  }
+  return out.slice(0, PERSONAS_MAX)
+}
+
+// What the dashboard sees of them (never a path or a text).
+const personaView = p => ({ id: p.id, kind: p.kind, scope: p.scope, name: p.name, description: p.description, ...(p.no_squadra_tools ? { no_squadra_tools: true } : {}) })
+
+// The persona a session opens with, looked up again in its folder now.
+function findPersona(folder, id, role) {
+  const p = listPersonas(folder).find(x => x.id === id)
+  if (!p) throw new Error(`the persona "${plain(id)}" is not in ${folder}/.claude or in this user's ${claudeHome()} any more: pick another one`)
+  if (p.no_squadra_tools && role !== 'solo') {
+    throw new Error(`the agent "${p.name}" only allows some tools, none of them Squadra's: as a ${role} it could not message its squad. Add ${SQUADRA_TOOLS_PREFIX}__reply (and the other Squadra tools) to its "tools", or open it as a standalone session`)
+  }
+  return p
+}
+
+// A skill's text as the session's system prompt gets it: what it is, that
+// it holds for the whole session, and where its own files are.
+function skillPrompt(p) {
+  const f = readPersonaFile(p.file, p.base)
+  if (!f) throw new Error(`the skill "${p.name}" could not be read`)
+  return [
+    `# Persona of this session: the "${p.name}" skill`,
+    '',
+    'The user opened this session to follow the skill below in all of its work, for as long as it runs: before and after any context compaction, and also when other skills are loaded later (they add to it, they never replace it). It never overrides what the user asks in this terminal, nor the Squadra rules (trust, access, permissions).',
+    `The skill's own files (references, scripts, templates) are in: ${dirname(f.real)}`,
+    '',
+    frontmatter(f.text).body.trim(),
+    '',
+  ].join('\n')
 }
 
 // --- the Squadra plugin on this machine ----------------------------------------------
@@ -882,11 +1026,16 @@ async function openTerminalNow(spec) {
   if (s.identity && CREDS_SERVER && origin(pluginServerUrl()) !== origin(CREDS_SERVER)) {
     throw new Error(`the Squadra plugin on this machine is configured for ${pluginServerUrl() ?? 'no server'}, but this machine belongs to ${CREDS_SERVER}: set SQUADRA_URL=${CREDS_SERVER} in ${join(claudeHome(), 'channels', 'squadra', '.env')}`)
   }
+  // The persona, looked up again in the folder now (it may have changed since
+  // the dashboard listed it).
+  s.personaInfo = s.persona ? findPersona(s.folder, s.persona, s.role) : null
   const dir = pluginStateDir(s.name)
   // (A session in the home folder reaches everything of this user: its
   // permission prompts are answered only in its own terminal.)
   const relay = settings.permission_relay && !s.home && s.role !== 'solo'
-  writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, ...(relay ? {} : { permission_relay: false }) })
+  // (The plugin tells the session's squad which persona it follows.)
+  const persona = s.personaInfo ? { kind: s.personaInfo.kind, name: s.personaInfo.name, description: s.personaInfo.description } : null
+  writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, ...(relay ? {} : { permission_relay: false }), ...(persona ? { persona } : {}) })
   // If anything below fails, no ticket (launch.json) is left for a later start.
   try { return await startSession(s, settings, claude, dir) } catch (err) {
     rmSync(join(dir, 'launch.json'), { force: true })
@@ -912,7 +1061,21 @@ async function startSession(s, settings, claude, dir) {
   // no dialog about it at every start. The plugin still reports its activity.)
   const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, ...(s.role === 'solo' ? [] : ['--dangerously-load-development-channels', 'plugin:squadra@squadra'])]
   if (s.resume) argv.push('--continue')
-  const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window })
+  // The persona, in the system prompt: a skill's text from a private copy
+  // (what the session reads is what was checked, not the file as it may be
+  // later), an agent by its name.
+  const promptFile = join(dir, 'persona.md')
+  if (s.personaInfo?.kind === 'skill') {
+    ensurePrivateDir(dir)
+    const tmp = join(dir, `.persona.md.${process.pid}.${Date.now()}`)
+    writeFileSync(tmp, skillPrompt(s.personaInfo), { mode: 0o600, flag: 'wx' })
+    renameSync(tmp, promptFile)
+    argv.push('--append-system-prompt-file', promptFile)
+  } else {
+    rmSync(promptFile, { force: true })
+    if (s.personaInfo?.kind === 'agent') argv.push('--agent', s.personaInfo.name)
+  }
+  const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window, persona: s.personaInfo ? { id: s.personaInfo.id, kind: s.personaInfo.kind, name: s.personaInfo.name } : null })
   await tmux([
     'start-server', ';',
     'set-option', '-g', 'history-limit', '10000', ';',
@@ -941,7 +1104,7 @@ async function startSession(s, settings, claude, dir) {
     rmSync(join(dir, 'launch.json'), { force: true }) // no ticket left for a later start
     throw new Error(where ? `the session started in ${where} instead of ${s.folder}; closed it` : 'could not check where the session started; closed it')
   }
-  log(`opened "${plain(s.name)}" (${s.role}) in ${s.folder}`)
+  log(`opened "${plain(s.name)}" (${s.role}${s.personaInfo ? `, ${s.personaInfo.kind} "${plain(s.personaInfo.name)}"` : ''}) in ${s.folder}`)
   return { id: s.name, name: s.name }
 }
 
@@ -1211,6 +1374,8 @@ async function connect(creds) {
     // Push the info either way: a refusal may have found the plugin missing.
     async open(m) { try { return await openTerminal(m.spec) } finally { await pushInfo() } },
     async kill(m) { const r = await killTerminal(m.term); await pushInfo(); return r },
+    // The skills and agents a session opened in this folder could follow.
+    async personas(m) { return { personas: listPersonas(checkFolder(m.folder, loadSettings())).map(personaView) } },
     // The dashboard adds or removes an allowed folder: the same checks as
     // here, unless this machine keeps its folders to itself.
     async folders(m) {

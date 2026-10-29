@@ -66,7 +66,7 @@ after(() => {
 const plugins = []
 
 class Plugin {
-  constructor(name, extraEnv = {}, { configDir, envFile = '', launch = true, noServer = false } = {}) {
+  constructor(name, extraEnv = {}, { configDir, envFile = '', launch = true, noServer = false, persona } = {}) {
     this.configDir = configDir ?? mkdtempSync(join(tmpdir(), `squadra-cfg-${name || 'none'}-`))
     mkdirSync(join(this.configDir, 'channels', 'squadra'), { recursive: true })
     writeFileSync(join(this.configDir, 'channels', 'squadra', '.env'), `${noServer ? '' : `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${SERVER_TOKEN}\n`}${envFile}`)
@@ -85,6 +85,7 @@ class Plugin {
         coordinator: role === 'worker' ? (extraEnv.SQUADRA_COORDINATOR || 'coord') : null,
         allow_from: (extraEnv.SQUADRA_ALLOW_FROM ?? '').split(',').filter(Boolean),
         access_mode: extraEnv.SQUADRA_ACCESS_MODE,
+        ...(persona ? { persona } : {}),
       }))
     }
     this.proc = spawn(process.execPath, [join(ROOT, 'plugins/squadra/server.js')], { env, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -310,8 +311,9 @@ test('plugin: idle until login', async () => {
   const r = await p.init()
   // The channel capability is always declared: the session may log in later.
   assert.deepEqual(r.capabilities.experimental, { 'claude/channel': {}, 'claude/channel/permission': {} })
-  assert.match(r.instructions, /COORDINATOR ROLE/)
-  assert.match(r.instructions, /WORKER ROLE/)
+  // Not logged in yet: the common rules, and where the role's come from.
+  assert.match(r.instructions, /ROLES\. Once logged in, the login tool's answer gives you the rules for your role/)
+  assert.doesNotMatch(r.instructions, /COORDINATOR ROLE|WORKER ROLE/)
   const tools = (await p.request('tools/list', {})).result.tools.map(t => t.name).sort()
   assert.deepEqual(tools, ['download_attachment', 'edit_message', 'login', 'logout', 'ping', 'react', 'reply', 'status'])
   assert.match(await p.tool('status', {}), /not connected/)
@@ -1049,6 +1051,96 @@ test('compaction: role restored, coordinator told, context tracked', async () =>
 
   coord.close()
   wk.close()
+})
+
+// Claude Code keeps only the first 4096 characters of a server's instructions:
+// whatever a session starts with fits, the longest names and persona included.
+test('plugin: the startup instructions fit in what Claude Code keeps, with the role and the persona', async () => {
+  const persona = { kind: 'skill', name: 'p'.repeat(64), description: 'd'.repeat(300) }
+  const cName = 'c'.repeat(32)
+  const coord = new Plugin(cName, { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' }, { persona })
+  const wk = new Plugin('w'.repeat(32), { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: cName }, { persona })
+  const ci = (await coord.init()).instructions
+  const wi = (await wk.init()).instructions
+  for (const [text, role] of [[ci, 'COORDINATOR ROLE'], [wi, 'WORKER ROLE']]) {
+    assert.ok(text.length <= 4096, `${role}: ${text.length} characters`)
+    assert.match(text, new RegExp(role))
+    assert.match(text, /AUTOMATIC LOGIN/)
+    assert.match(text, /PERSONA\. The skill "p{64}" in your system prompt is this session's persona/)
+    assert.match(text, /ACCESS\. It is managed by the \/squadra:access skill/)
+  }
+  // The coordinator's own rules, not the worker's (and the other way round).
+  assert.doesNotMatch(ci, /WORKER ROLE/)
+  assert.doesNotMatch(wi, /COORDINATOR ROLE/)
+  coord.close()
+  wk.close()
+})
+
+test('personas: a worker opened with one tells its coordinator, ping and the dashboard show it, and a compaction keeps it', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  // A login typed in the session gets its role's rules in the answer.
+  assert.match(await coord.tool('login', { role: 'coordinator', name: 'cp1' }), /COORDINATOR ROLE\. You split the work/)
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'cp1', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('wp1')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const wk = new Plugin('wp1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'cp1' }, { persona: { kind: 'skill', name: 'design', description: 'Designs interfaces\nwith care' } })
+  await wk.init()
+  const hi = await coord.waitChannel(p => p.content.startsWith('👋 wp1 connected as a worker'), 'greeting')
+  assert.match(hi.content, /Persona: skill "design" \(Designs interfaces with care\): give it the tasks that fit\./)
+  assert.match(await wk.tool('status', {}), /Persona: skill "design"/)
+  // The dashboard sees it (what the session says, like its role).
+  const st = await waitFor(async () => (await dash('/api/state')).result.sessions.find(x => x.name === 'wp1' && x.persona), { what: 'persona in the dashboard' })
+  assert.deepEqual(st.persona, { kind: 'skill', name: 'design', description: 'Designs interfaces with care' })
+  // Once they have written to each other, ping shows it to the coordinator.
+  await coord.tool('reply', { chat_id: 'wp1', text: 'Task: the login screen' })
+  await wk.waitChannel(p => p.content === 'Task: the login screen', 'task')
+  await wk.tool('reply', { chat_id: 'cp1', text: 'On it' })
+  await coord.waitChannel(p => p.content === 'On it', 'report')
+  assert.match(await coord.tool('ping', { chat_id: 'wp1' }), /wp1: ALIVE .*persona: skill "design" "Designs interfaces with care"/)
+  // After a compaction the session is reminded of it, with its role's rules.
+  const ctx = JSON.parse(await runHookOut(wk, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.match(ctx, /WORKER ROLE/)
+  assert.match(ctx, /PERSONA\. The skill "design" in your system prompt/)
+  coord.close()
+  wk.close()
+})
+
+test('server: squad templates are saved, listed, replaced and deleted', async () => {
+  const post = (path, body) => fetch(`${URL_}/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVER_TOKEN}` }, body: JSON.stringify(body) }).then(r => r.json())
+  const tpl = {
+    name: 'Marketing team',
+    coordinator: { name: 'mkt', folder: '/srv/mkt', persona: 'agent:project:lead', compact_window: 600000 },
+    workers: [{ name: 'mkt-copy', folder: '/srv/mkt/copy', persona: 'skill:user:copywriting' }, { name: 'mkt-design', folder: '/srv/mkt/design' }],
+  }
+  const r = await post('templates/save', tpl)
+  assert.ok(r.ok, r.description)
+  let list = (await dash('/api/state')).result.templates
+  assert.equal(list.length, 1)
+  assert.equal(list[0].name, 'Marketing team')
+  assert.deepEqual(list[0].coordinator, { name: 'mkt', role: 'coordinator', folder: '/srv/mkt', persona: 'agent:project:lead', compact_window: 600000 })
+  assert.deepEqual(list[0].workers.map(w => [w.name, w.persona]), [['mkt-copy', 'skill:user:copywriting'], ['mkt-design', null]])
+  // Saved again under the same name: replaced.
+  assert.ok((await post('templates/save', { ...tpl, workers: [] })).ok)
+  list = (await dash('/api/state')).result.templates
+  assert.equal(list.length, 1)
+  assert.equal(list[0].workers.length, 0)
+  // Only what a session spec can hold.
+  for (const [bad, re] of [
+    [{ ...tpl, name: '<b>x</b>' }, /template name/],
+    [{ ...tpl, coordinator: { ...tpl.coordinator, name: 'bad name' } }, /invalid session name/],
+    [{ ...tpl, coordinator: { ...tpl.coordinator, folder: 'relative' } }, /absolute folder/],
+    [{ ...tpl, workers: [{ name: 'w', folder: '/x', persona: '../../etc/passwd' }] }, /invalid persona/],
+    [{ ...tpl, workers: [{ name: 'mkt', folder: '/x' }] }, /its own name/],
+  ]) {
+    const b = await post('templates/save', bad)
+    assert.equal(b.ok, false, JSON.stringify(bad))
+    assert.match(b.description, re)
+  }
+  assert.ok((await post('templates/delete', { name: 'Marketing team' })).ok)
+  assert.equal((await dash('/api/state')).result.templates.length, 0)
+  assert.equal((await post('templates/delete', { name: 'Marketing team' })).ok, false)
 })
 
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
