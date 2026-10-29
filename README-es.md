@@ -32,6 +32,15 @@ node server/server.js          # panel en http://127.0.0.1:7787
 
 Entra con el token del servidor que muestra, abre **Máquinas → + Añadir máquina** y ejecuta el comando que te enseña en cada equipo donde quieras agentes. Eso es todo: los detalles, Docker y HTTPS están en los [pasos 1 y 2](#1-instala-el-panel).
 
+**¿Solo quieres probarlo?** Con Docker, un comando arranca el panel *y* una máquina con Claude Code, y lo guarda todo en una carpeta (`deploy/demo/squadra`):
+
+```bash
+docker compose -f deploy/demo/docker-compose.yml up -d --build
+docker compose -f deploy/demo/docker-compose.yml logs    # el token para entrar
+```
+
+Abre http://localhost:7787 y después **+ Nueva sesión** en `/squadra/projects/demo`, un proyecto de ejemplo con tres personas. La primera vez, inicia sesión en Claude desde el terminal de la sesión. Más en [el README de la demo](deploy/demo/README.md).
+
 ![Panel de Squadra: dos escuadras lado a lado, cada coordinador con sus workers](docs/screenshots/mosaic-squads.jpg)
 
 ## Qué puedes hacer con él

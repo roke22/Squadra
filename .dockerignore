@@ -4,3 +4,4 @@ branding/
 test/
 .git/
 node_modules/
+deploy/demo/squadra/
