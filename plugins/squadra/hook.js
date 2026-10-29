@@ -78,10 +78,11 @@ function readStdin() {
 
 const CONTEXT_MODE = process.argv.includes('--context')
 
-// --context (SessionStart "compact" and "clear" hooks, synchronous): ask the
-// plugin for the Squadra context and hand it back to Claude Code as
-// additionalContext, so the session still knows its name, role and task
-// after compacting (or who it is after a /clear).
+// --context (SessionStart "compact" and "clear" hooks, and UserPromptSubmit;
+// synchronous): ask the plugin for the Squadra context and hand it back to
+// Claude Code as additionalContext, so the session still knows its name, role
+// and task after compacting (or who it is after a /clear), and a coordinator
+// learns what its squad is for when the user sets or changes it.
 function askContext(sock, source) {
   return new Promise(resolve => {
     const chunks = []
@@ -100,11 +101,13 @@ async function main() {
   if (!sock) return
   const raw = await readStdin()
   if (CONTEXT_MODE) {
-    let source = 'compact'
-    try { if (JSON.parse(raw)?.source === 'clear') source = 'clear' } catch {}
+    let input = {}
+    try { input = JSON.parse(raw) ?? {} } catch {}
+    const prompt = input.hook_event_name === 'UserPromptSubmit'
+    const source = prompt ? 'prompt' : input.source === 'clear' ? 'clear' : 'compact'
     const context = await askContext(sock, source)
     if (context) {
-      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }))
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: prompt ? 'UserPromptSubmit' : 'SessionStart', additionalContext: context } }))
     }
     return
   }

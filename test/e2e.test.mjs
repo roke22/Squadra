@@ -1321,6 +1321,65 @@ test('fresh start: a coordinator\'s reply with fresh, and what a worker is told 
   wk.close()
 })
 
+test('squad brief: a coordinator learns what its squad is for from the dashboard; its workers never do', async () => {
+  const post = (path, body) => fetch(`${URL_}/api/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVER_TOKEN}` }, body: JSON.stringify(body) }).then(r => r.json())
+  const coord = new Plugin('sbc', { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.waitConnected()
+  const accessFile = join(coord.stateDir, 'access.json')
+  await waitFor(() => existsSync(accessFile), { what: 'access.json' })
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('sbw')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const wk = new Plugin('sbw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'sbc' })
+  await wk.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 sbw connected'), 'greeting')
+  const promptHook = async p => {
+    const out = await runHookOut(p, { hook_event_name: 'UserPromptSubmit', prompt: 'next', session_id: 's', cwd: '/x' }, ['--context'])
+    return out ? JSON.parse(out).hookSpecificOutput : null
+  }
+  // Nothing described yet: nothing said.
+  assert.equal(await promptHook(coord), null)
+
+  assert.ok((await post('org/squad', { coordinator: 'sbc', title: '🎨 Design', goal: 'Design every screen before it is built' })).ok)
+  assert.ok((await post('org/describe', { name: 'sbc', description: 'Head of design' })).ok)
+  assert.ok((await post('org/describe', { name: 'sbw', description: 'Mobile screens' })).ok)
+  // With its next prompt, once.
+  const h = await promptHook(coord)
+  assert.equal(h.hookEventName, 'UserPromptSubmit')
+  assert.match(h.additionalContext, /^\[Squadra\] YOUR SQUAD, as the user described it in the Squadra dashboard \(quoted\):\n- Name: "🎨 Design"\n- Goal: "Design every screen before it is built"\n- What you are for: "Head of design"\nWork toward it/)
+  assert.equal(await promptHook(coord), null)
+  // Changed: said again with the next prompt.
+  assert.ok((await post('org/squad', { coordinator: 'sbc', title: '🎨 Design', goal: 'Design the mobile app first' })).ok)
+  assert.match((await promptHook(coord)).additionalContext, /- Goal: "Design the mobile app first"/)
+  // After a compaction too, and in status.
+  const ctx = JSON.parse(await runHookOut(coord, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.match(ctx, /YOUR SQUAD[\s\S]*- Goal: "Design the mobile app first"/)
+  assert.match(await coord.tool('status', {}), /Your squad \(from the dashboard\): "🎨 Design"; goal "Design the mobile app first"; you are for "Head of design"/)
+
+  // Its worker: none of it, not even its own description, nor in ping.
+  assert.equal(await promptHook(wk), null)
+  const wctx = JSON.parse(await runHookOut(wk, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.doesNotMatch(wctx, /YOUR SQUAD|Design the mobile|Mobile screens/)
+  await coord.tool('reply', { chat_id: 'sbw', text: 'Task: the login screen' })
+  await wk.waitChannel(p => p.content === 'Task: the login screen', 'task')
+  await wk.tool('reply', { chat_id: 'sbc', text: 'On it' })
+  await coord.waitChannel(p => p.content === 'On it', 'report')
+  const wping = await wk.tool('ping', { chat_id: 'sbc' })
+  assert.match(wping, /sbc: ALIVE/)
+  assert.doesNotMatch(wping, /for:|squad|Design/)
+  // …while its coordinator sees what the worker is for.
+  assert.match(await coord.tool('ping', { chat_id: 'sbw' }), /sbw: ALIVE .*; for: "Mobile screens"/)
+
+  // Taken away in the dashboard: said once.
+  assert.ok((await post('org/squad', { coordinator: 'sbc', title: '', goal: '' })).ok)
+  assert.ok((await post('org/describe', { name: 'sbc', description: '' })).ok)
+  assert.match((await promptHook(coord)).additionalContext, /removed the name, goal and description of your squad/)
+  assert.equal(await promptHook(coord), null)
+  coord.close()
+  wk.close()
+})
+
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
   const wk = new Plugin('auto1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'worker', SQUADRA_COORDINATOR: 'boss9' })
   const r = await wk.init()
