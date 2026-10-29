@@ -283,8 +283,9 @@ export function compactPointFor(model, env = process.env) {
 
 // --- observer -----------------------------------------------------------------
 
-// contextProvider: () => text to give back to Claude right after a compaction
-// (asked for by the SessionStart "compact" hook through the same socket).
+// contextProvider(source): text to give back to Claude right after a
+// compaction or a /clear (source "compact" or "clear"), asked for by the
+// SessionStart hook through the same socket.
 // onToolInput(tool, input): the exact input of each tool call, at every level
 // (kept in memory by the plugin to show the coordinator exactly what will run).
 export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null }) {
@@ -494,7 +495,8 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {}
           if (msg?.want === 'context') {
             let context = ''
-            try { context = contextProvider() ?? '' } catch (err) { log(`observe: context provider failed: ${err.message}`) }
+            // (What started the session again: "compact", or "clear".)
+            try { context = contextProvider(msg.source === 'clear' ? 'clear' : 'compact') ?? '' } catch (err) { log(`observe: context provider failed: ${err.message}`) }
             conn.end(JSON.stringify({ context }))
             return
           }

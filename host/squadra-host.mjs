@@ -152,6 +152,8 @@ function writeJson(file, data, mode = 0o600) {
 //   allow_input       whether the dashboard may type in the terminals
 //   permission_relay  whether a session's coordinator may answer its permission
 //                     prompts from another session (default: same as allow_input)
+//   allow_clear       whether a worker's coordinator may have its context cleared
+//                     (/clear) before a new task (default: same as allow_input)
 //   coordinators      if set, the only coordinator names a worker may be given
 //                     (and a coordinator here may be linked with)
 //   claude_command    the Claude Code executable
@@ -173,11 +175,11 @@ function loadSettings() {
     // Settings that exist but can't be read: the strictest ones, never the defaults.
     if (err.code !== 'ENOENT') {
       if (!loadSettings.warned) { loadSettings.warned = true; log(`⚠️  cannot read ${SETTINGS_FILE} (${err.message}): no folders, no typing, no permission relay until it is fixed`) }
-      return { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
+      return { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
     }
   }
   loadSettings.warned = false
-  const strict = { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
+  const strict = { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     warnSettings(`⚠️  ${SETTINGS_FILE} must hold a JSON object: no folders, no typing, no permission relay until it is fixed`)
     return strict
@@ -198,6 +200,7 @@ function loadSettings() {
   }
   s.allow_input = bool('allow_input', true)
   s.permission_relay = bool('permission_relay', s.allow_input)
+  s.allow_clear = bool('allow_clear', s.allow_input)
   s.allow_resume = bool('allow_resume', true)
   s.folders_from_dashboard = bool('folders_from_dashboard', true)
   // A coordinators pin that can't be read refuses every coordinator (it
@@ -1147,6 +1150,26 @@ async function setLinks(name, coordinators) {
   return { name, links }
 }
 
+// /clear typed in a worker's terminal, as the user would, when its
+// coordinator gives it a new task unrelated to the last one (Claude can't
+// clear its own context). Only a worker this machine opened for that very
+// coordinator, and only if this machine allows it (allow_clear).
+async function clearSession(id, coordinator) {
+  if (!NAME_RE.test(String(id)) || !NAME_RE.test(String(coordinator))) throw new Error('invalid session')
+  if (!loadSettings().allow_clear) throw new Error('this machine does not let coordinators clear its sessions ("allow_clear": false in its settings.json)')
+  const t = (await listTerminals()).find(x => x.id === id)
+  if (!t) throw new Error('no such session on this machine')
+  if (t.role !== 'worker' || t.coordinator !== coordinator) throw new Error(`"${id}" is not a worker of "${coordinator}" on this machine`)
+  const target = `=${PREFIX}${id}:`
+  // (Typed, then Enter a moment later: as one burst the menu of commands
+  // could still be completing "/clear" when Enter arrives.)
+  await tmux(['send-keys', '-t', target, '-l', '/clear'])
+  await new Promise(r => setTimeout(r, 300))
+  await tmux(['send-keys', '-t', target, 'Enter'])
+  log(`cleared the context of "${plain(id)}" for its coordinator "${plain(coordinator)}"`)
+  return { cleared: true }
+}
+
 async function killTerminal(id) {
   if (!NAME_RE.test(String(id))) throw new Error('invalid session')
   const list = await listTerminals()
@@ -1420,6 +1443,8 @@ async function connect(creds) {
     async personas(m) { return { personas: listPersonas(checkFolder(m.folder, loadSettings())).map(personaView) } },
     // The dashboard linked or unlinked a coordinator running here.
     async links(m) { return setLinks(m.name, m.coordinators) },
+    // A worker's coordinator wants it to start its next task from a clean context.
+    async clear(m) { return clearSession(m.term, m.coordinator) },
     // The dashboard adds or removes an allowed folder: the same checks as
     // here, unless this machine keeps its folders to itself.
     async folders(m) {
@@ -1614,6 +1639,8 @@ Settings: ${SETTINGS_FILE}
   allow_resume            whether a session may continue its folder's last conversation (default true)
   permission_relay        whether a worker's coordinator may answer its permission prompts
                           from another session (default: same as allow_input)
+  allow_clear             whether a worker's coordinator may have its context cleared (/clear)
+                          before giving it a new task (default: same as allow_input)
   coordinators            if set, the only coordinator names workers here may be given
                           (and coordinators here may be linked with)
   claude_command          the Claude Code executable (default "claude")

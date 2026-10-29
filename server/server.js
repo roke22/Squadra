@@ -1033,7 +1033,13 @@ function applyEvent(name, ev) {
   if (typeof ev.cwd === 'string') a.cwd = ev.cwd
   switch (ev.kind) {
     case 'observe_start': a.observe = ev.level; if (ev.cwd) a.cwd = ev.cwd; if (a.state === 'unknown' || a.state === 'ended') set('idle'); break
-    case 'session_start': if (ev.cwd) a.cwd = ev.cwd; if (ev.model) a.model = ev.model; set('idle'); break
+    case 'session_start':
+      if (ev.cwd) a.cwd = ev.cwd
+      if (ev.model) a.model = ev.model
+      // (Cleared: a fresh context, its size unknown until the next response.)
+      if (ev.source === 'clear') { a.context_tokens = null; a.context_pct = null; a.context_warned = false }
+      set('idle')
+      break
     case 'prompt': set('working'); break
     case 'tool_start':
       if (ev.agent) break // tools run by subagents: the main session is inside its Task/Agent tool
@@ -1130,6 +1136,7 @@ function observe(name, p) {
     const wasWarned = !!before.context_warned
     applyEvent(name, view)
     contextNotices(name, view, wasWarned)
+    if (kind === 'session_start' && rest.source === 'clear') freshWaiters.get(name)?.(true)
     broadcast('event', view)
     stored++
   } })
@@ -1159,8 +1166,50 @@ function contextNotices(name, ev, wasWarned) {
   }
 }
 
+// --- fresh start -------------------------------------------------------------------
+//
+// A coordinator giving one of its workers a new task, unrelated to the last
+// one, can have the worker's context cleared first: lighter (cheaper) turns
+// from then on. Claude can't clear its own context, so the worker's machine
+// types /clear in its terminal, as the user would, and the worker's plugin
+// confirms it (its SessionStart "clear" event). Only the coordinator's own
+// worker, opened from the dashboard, connected and idle, once a minute.
+const FRESH_WAIT_MS = Number(process.env.SQUADRA_FRESH_WAIT_MS ?? 20_000)
+const freshWaiters = new Map() // worker -> resolve(confirmed)
+async function freshStart(name, p) {
+  const worker = String(p.chat_id ?? '')
+  const no = (reason, text) => ({ cleared: false, reason, text })
+  if (!NAME_RE.test(worker)) throw bad('chat_id must be one of your workers')
+  const row = db.prepare('SELECT role, coordinator, host_id FROM identities WHERE name = ?').get(worker)
+  if (roleOf(name) !== 'coordinator' || row?.role !== 'worker' || row.coordinator !== name) return no('not_your_worker', `"${worker}" is not a worker of yours`)
+  if (!row.host_id || !hostLinks.has(row.host_id)) return no('no_machine', `"${worker}" was not opened from the dashboard, or its machine is not connected: nobody can type /clear in its terminal`)
+  if (!isOnline(worker)) return no('offline', `"${worker}" is not connected`)
+  const state = activityOf(worker).state
+  if (state !== 'idle') return no('busy', state === 'unknown' ? `what "${worker}" is doing is not known (its observation is off)` : `"${worker}" is not idle right now (${state})`)
+  if (freshWaiters.has(worker)) return no('busy', `"${worker}" is being cleared already`)
+  if (!allow('fresh', worker, 1, 60_000)) return no('too_soon', `"${worker}" was cleared less than a minute ago`)
+  const confirmed = new Promise(resolve => freshWaiters.set(worker, resolve))
+  const timer = setTimeout(() => freshWaiters.get(worker)?.(false), FRESH_WAIT_MS)
+  try {
+    try {
+      await askHost(row.host_id, { t: 'clear', term: worker, coordinator: name })
+    } catch (err) {
+      return no('machine_refused', `its machine did not clear it: ${err.message.replace(/^(Bad Request|Conflict): /, '')}`)
+    }
+    if (await confirmed) {
+      process.stderr.write(`squadra-server: "${name}" cleared the context of its worker "${worker}"\n`)
+      return { cleared: true }
+    }
+    return no('not_confirmed', `/clear was typed in the terminal of "${worker}" but it didn't confirm it within ${Math.round(FRESH_WAIT_MS / 1000)} s`)
+  } finally {
+    clearTimeout(timer)
+    freshWaiters.delete(worker)
+  }
+}
+
 const methods = {
   observe,
+  freshStart,
 
   getMe(name) {
     readLimit(name)
@@ -3127,7 +3176,7 @@ async function handle(req, res) {
     if (method === 'claimSession' && String(req.headers['x-squadra-instance'] ?? '') !== String(params.instance ?? '')) {
       throw notHolder(name, String(req.headers['x-squadra-instance'] ?? ''))
     }
-    return sendJson(res, 200, { ok: true, result: fn(name, params) })
+    return sendJson(res, 200, { ok: true, result: await fn(name, params) })
   } catch (err) {
     sendError(res, err)
   }

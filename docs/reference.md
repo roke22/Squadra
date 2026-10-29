@@ -301,6 +301,7 @@ The machine's rules live in `~/.config/squadra-host/settings.json`. The dashboar
 | `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch (terminals are read-only) |
 | `allow_resume` | Whether a session may continue the last conversation in its folder (`true`) |
 | `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default; never for sessions in the home folder). For sessions squadra-host opens; for sessions started by hand on the machine, put `SQUADRA_PERMISSION_RELAY=off` in the plugin `.env` |
+| `allow_clear` | Whether a worker's coordinator may have its context cleared (`/clear`, typed in its terminal) before giving it a new task (same as `allow_input` by default) |
 | `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given, and that coordinators it opens may be linked with |
 | `claude_command` | The Claude Code executable (`claude`, looked up on the absolute entries of the `PATH`) |
 
@@ -342,6 +343,14 @@ Each squad works on its own, but two can share work: **link** their coordinators
 - **Add:** **+ Squad** opens a coordinator (with the squad's name and goal); **+ Agent** on a card, a worker for it.
 - **Change:** an agent's ⋯ → *Change persona or squad*. Both are fixed when a session starts (its system prompt, its coordinator), so the session is closed and opened again in the same folder, continuing its conversation if the machine allows it.
 - **Close and delete:** an agent's ⋯ closes its terminal or deletes it once disconnected; a squad's ⋯ closes all its terminals, or deletes the whole squad once none is connected.
+
+### Fresh start for new tasks
+
+A worker that goes from task to task in the same conversation carries all of them in every request: slower and more expensive. When a worker reports a finished task and the next one has nothing to do with it, its coordinator sends the new task with `fresh`: the worker's context is cleared first, and the task arrives to a clean session. For a follow-up or a correction, it sends it as usual and the worker keeps what it knows.
+
+- Claude can't clear its own context, so the worker's machine types `/clear` in its terminal, as you would, and the worker's plugin confirms it before the task is sent. After it, the worker is told who it is and its rules again, but none of the earlier messages.
+- Only for workers opened from the dashboard, connected and idle, by their own coordinator, at most once a minute. Otherwise the task is sent with the earlier context, and the coordinator is told why.
+- A machine turns it off with `"allow_clear": false` in its `settings.json`.
 
 ## Tips: getting the most out of it
 

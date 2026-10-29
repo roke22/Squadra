@@ -1287,6 +1287,40 @@ test('org chart: squads get a name, goal and place, sessions a description, and 
   ca.close()
 })
 
+test('fresh start: a coordinator\'s reply with fresh, and what a worker is told after a /clear', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'frc' })
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'frc', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('frw')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const wk = new Plugin('frw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'frc' })
+  await wk.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 frw connected'), 'greeting')
+  await coord.tool('reply', { chat_id: 'frw', text: 'Task 1: the login screen' })
+  await wk.waitChannel(p => p.content === 'Task 1: the login screen', 'task 1')
+
+  // A worker not opened from the dashboard can't be cleared: the task goes anyway, and that is said.
+  const r = await coord.tool('reply', { chat_id: 'frw', text: 'Task 2: the invoices page', fresh: true })
+  assert.match(r, /^sent \(id: \d+\)\nNot cleared \("frw" was not opened from the dashboard, or its machine is not connected: nobody can type \/clear in its terminal\): it got the task with its earlier context\.$/)
+  await wk.waitChannel(p => p.content === 'Task 2: the invoices page', 'task 2')
+  // Only a coordinator clears; never a group.
+  await assert.rejects(wk.tool('reply', { chat_id: 'frc', text: 'x', fresh: true }), /only a coordinator clears/)
+
+  // After a /clear: who it is and its rules, none of the earlier messages.
+  const ctx = JSON.parse(await runHookOut(wk, { hook_event_name: 'SessionStart', source: 'clear', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.match(ctx, /^\[Squadra\] Your context was just cleared\. You are still in Squadra:\nYou are connected to Squadra as "frw", role WORKER; your coordinator is "frc"\./)
+  assert.match(ctx, /that task arrives next as a channel message/)
+  assert.match(ctx, /WORKER ROLE/)
+  assert.doesNotMatch(ctx, /Task 1|Task 2/)
+  // …and a compaction after it doesn't bring them back either.
+  const after = JSON.parse(await runHookOut(wk, { hook_event_name: 'SessionStart', source: 'compact', session_id: 's', cwd: '/x' }, ['--context'])).hookSpecificOutput.additionalContext
+  assert.doesNotMatch(after, /Task 1|Task 2/)
+  coord.close()
+  wk.close()
+})
+
 test('plugin: a session opened with SQUADRA_NAME knows its role from the instructions', async () => {
   const wk = new Plugin('auto1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'worker', SQUADRA_COORDINATOR: 'boss9' })
   const r = await wk.init()

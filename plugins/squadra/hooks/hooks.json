@@ -1,5 +1,5 @@
 {
-  "description": "Squadra: reports what this session is doing to the Squadra server so it can be watched live, and restores the session's Squadra role and recent instructions after a context compaction. Does nothing unless the session is logged in to Squadra.",
+  "description": "Squadra: reports what this session is doing to the Squadra server so it can be watched live, and restores the session's Squadra role and recent instructions after a context compaction or a /clear. Does nothing unless the session is logged in to Squadra.",
   "hooks": {
     "SessionStart": [
       {
@@ -13,6 +13,16 @@
       },
       {
         "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hook.js\" --context",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "clear",
         "hooks": [
           {
             "type": "command",
