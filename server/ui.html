@@ -96,6 +96,16 @@
   .role-tag.coordinator { color: var(--coord); background: var(--coord-soft); }
   .role-tag.worker { color: var(--worker); background: var(--worker-soft); }
   .role-tag.solo { color: var(--info); background: color-mix(in srgb, var(--info) 14%, var(--panel)); }
+  .persona-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); white-space: nowrap; max-width: 16em; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
+  .persona-hint { font-size: 12px; color: var(--muted); margin: -4px 0 10px; min-height: 1em; }
+  .tpl-list { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+  .tpl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .tpl-row .n { font-weight: 600; }
+  .tpl-row .m { color: var(--muted); font-size: 12px; flex: 1 1 12em; min-width: 0; }
+  .tpl-members { margin: 0 0 10px; padding-left: 18px; font-size: 13px; }
+  .tpl-members li { margin: 2px 0; }
+  .tpl-members .ok { color: var(--ok, inherit); }
+  .tpl-members .bad { color: var(--err); }
   .pane.solo { border-top-color: var(--info); }
   .pane.solo .pane-head { background: color-mix(in srgb, var(--info) 10%, var(--panel)); }
 
@@ -652,6 +662,35 @@
       machineJoined: n => `✓ <b>${n}</b> is connected.`,
       done: 'Done',
       newSessionTitle: 'New session',
+      persona: 'Persona (skill or agent)',
+      personaNone: 'None: plain Claude Code',
+      personaSkill: 'Skill',
+      personaAgent: 'Agent',
+      personaSkillsProject: 'Skills in this project',
+      personaSkillsUser: 'Your skills (~/.claude)',
+      personaAgentsProject: 'Agents in this project',
+      personaAgentsUser: 'Your agents (~/.claude)',
+      personaHint: 'The session follows it for as long as it runs: it goes into its system prompt, so compactions and other skills don\'t replace it.',
+      personaNoDescription: '(no description)',
+      personaLoading: 'Looking for skills and agents in that folder…',
+      personaNoneFound: 'No skills (.claude/skills/<name>/SKILL.md) or agents (.claude/agents/<name>.md) in that folder or in ~/.claude.',
+      personaLoadFailed: 'Could not list the skills and agents',
+      personaNoTools: 'its tools leave out Squadra\'s',
+      templates: 'Templates',
+      saveTemplate: '💾 Template',
+      saveTemplateTitle: n => `Save squad ${n} as a template`,
+      saveTemplateHint: 'Keeps the coordinator and its workers with the folder, persona and auto-compact each one was opened with, to open the whole squad again in one go.',
+      templateName: 'Template name',
+      templateSaved: n => `Template "${n}" saved. Open it from Machines → Templates.`,
+      tplNoFolder: '(folder not known: left out)',
+      tplCoordNoFolder: 'The coordinator\'s folder is not known: open it from the dashboard first.',
+      noTemplates: 'No templates yet. Open a squad (👥) and use 💾 Template to save one.',
+      tplSummary: (c, n) => `coordinator ${c} · ${n} worker${n === 1 ? '' : 's'}`,
+      tplLaunch: 'Open squad',
+      tplLaunchTitle: n => `Open the squad of template "${n}"`,
+      tplLaunchHint: 'The coordinator opens first, then each worker. Sessions already running are left as they are.',
+      tplAlready: 'already running',
+      tplRetry: 'Retry',
       machine: 'Machine',
       noOnlineMachines: 'No machine is connected. Add one, or start squadra-host on it.',
       role: 'Role',
@@ -903,6 +942,35 @@
       machineJoined: n => `✓ <b>${n}</b> está conectada.`,
       done: 'Hecho',
       newSessionTitle: 'Nueva sesión',
+      persona: 'Persona (skill o agente)',
+      personaNone: 'Ninguna: Claude Code normal',
+      personaSkill: 'Skill',
+      personaAgent: 'Agente',
+      personaSkillsProject: 'Skills de este proyecto',
+      personaSkillsUser: 'Tus skills (~/.claude)',
+      personaAgentsProject: 'Agentes de este proyecto',
+      personaAgentsUser: 'Tus agentes (~/.claude)',
+      personaHint: 'La sesión la sigue mientras esté abierta: va en su system prompt, así que ni las compactaciones ni otras skills la sustituyen.',
+      personaNoDescription: '(sin descripción)',
+      personaLoading: 'Buscando skills y agentes en esa carpeta…',
+      personaNoneFound: 'No hay skills (.claude/skills/<nombre>/SKILL.md) ni agentes (.claude/agents/<nombre>.md) en esa carpeta ni en ~/.claude.',
+      personaLoadFailed: 'No se pudieron listar las skills y agentes',
+      personaNoTools: 'sus herramientas no incluyen las de Squadra',
+      templates: 'Plantillas',
+      saveTemplate: '💾 Plantilla',
+      saveTemplateTitle: n => `Guardar la escuadra ${n} como plantilla`,
+      saveTemplateHint: 'Guarda el coordinador y sus workers con la carpeta, la persona y el auto-compact con que se abrió cada uno, para volver a abrir toda la escuadra de una vez.',
+      templateName: 'Nombre de la plantilla',
+      templateSaved: n => `Plantilla "${n}" guardada. Ábrela desde Máquinas → Plantillas.`,
+      tplNoFolder: '(carpeta desconocida: se queda fuera)',
+      tplCoordNoFolder: 'No se conoce la carpeta del coordinador: ábrelo antes desde el dashboard.',
+      noTemplates: 'Aún no hay plantillas. Abre una escuadra (👥) y usa 💾 Plantilla para guardar una.',
+      tplSummary: (c, n) => `coordinador ${c} · ${n} worker${n === 1 ? '' : 's'}`,
+      tplLaunch: 'Abrir escuadra',
+      tplLaunchTitle: n => `Abrir la escuadra de la plantilla "${n}"`,
+      tplLaunchHint: 'Primero se abre el coordinador y después cada worker. Las sesiones que ya estén abiertas se dejan como están.',
+      tplAlready: 'ya abierta',
+      tplRetry: 'Reintentar',
       machine: 'Máquina',
       noOnlineMachines: 'No hay ninguna máquina conectada. Añade una o arranca squadra-host en ella.',
       role: 'Rol',
@@ -952,6 +1020,8 @@
   const sessions = new Map()      // name -> session view (from server)
   const hosts = new Map()         // host id -> host view (machines running squadra-host)
   let groups = []                  // [{id, members}]
+  let templates = []               // squad templates [{name, host, coordinator, workers}]
+  const templateListeners = new Set()
   let serverSkew = 0
   let streamAbort = null
   const unread = new Map()         // name -> count (while not visible)
@@ -1617,6 +1687,10 @@
   function roleTag(role) {
     return role ? `<span class="role-tag ${role}">${role === 'coordinator' ? T.roleCoordinator : role === 'solo' ? T.roleSolo : T.roleWorker}</span>` : ''
   }
+  // The persona (skill or agent) a session follows.
+  function personaTag(p) {
+    return p?.name ? `<span class="persona-tag" title="${esc(`${p.kind === 'agent' ? T.personaAgent : T.personaSkill} ${p.name}${p.description ? ` — ${p.description}` : ''}`)}">🎭 ${esc(p.name)}</span>` : ''
+  }
 
   function renderTop() {
     const r = currentRoute()
@@ -1636,7 +1710,7 @@
         const ws = sortedSessions().filter(s => s.role !== 'coordinator' && s.coordinator === r.squad)
         setHtml($('topTitle'), `<span class="dot ${c ? status(c).dot : ''}"></span>👥 ${esc(T.squadOf(r.squad))}`)
         $('topSub').textContent = T.squadCount(ws.filter(w => w.online).length, ws.length)
-        setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
+        setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-savetpl="${esc(r.squad)}" title="${esc(T.saveTemplateTitle(r.squad))}">${T.saveTemplate}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
         return
       }
       setHtml($('topTitle'), T.allSessions)
@@ -1646,12 +1720,12 @@
       const h = r.host && hosts.get(r.host)
       setHtml($('topTitle'), h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines)
       $('topSub').textContent = h ? hostLine(h) : T.machinesSub
-      setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn primary" data-hact="new">${T.newSession}</button>`)
+      setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn" data-hact="templates">${T.templates}</button><button class="btn primary" data-hact="new">${T.newSession}</button>`)
     } else if (r.view === 'terminal') {
       const h = hosts.get(r.host)
       const t = h?.info?.terminals?.find(x => x.id === r.term)
       const s = sessionOn(r.host, r.term)
-      setHtml($('topTitle'), `<span class="dot ${s ? status(s).dot : ''}"></span>⌨ ${esc(r.term)} ${roleTag(s?.role ?? t?.role)}`)
+      setHtml($('topTitle'), `<span class="dot ${s ? status(s).dot : ''}"></span>⌨ ${esc(r.term)} ${roleTag(s?.role ?? t?.role)} ${personaTag(s?.persona ?? t?.persona)}`)
       $('topSub').textContent = [h ? T.onHost(h.name) : '', t?.folder ?? '', h?.info && !t ? T.notListed : ''].filter(Boolean).join(' · ')
       const acts = []
       if (s) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.term)}">${T.chat}</button>`)
@@ -1666,7 +1740,7 @@
     } else {
       const s = sessions.get(r.name)
       const a = s?.activity ?? {}
-      setHtml($('topTitle'), `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)}${s?.archived_at ? ` <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>` : ''}`)
+      setHtml($('topTitle'), `<span class="dot ${status(s).dot}"></span>${esc(r.name)} ${roleTag(s?.role)} ${personaTag(s?.persona)}${s?.archived_at ? ` <span class="role-tag" style="background:var(--panel-2);color:var(--muted)">${T.archivedTag}</span>` : ''}`)
       $('topSub').textContent = [a.cwd, a.context_tokens ? T.context(kfmt(a.context_tokens)) + (a.context_pct != null ? ` (${T.contextPct(a.context_pct)})` : '') : '', s?.role === 'worker' && s.coordinator ? T.coordinatorOf(s.coordinator) : ''].filter(Boolean).join(' · ')
       const acts = []
       const where = terminalOf(r.name)
@@ -1708,6 +1782,8 @@
     if (hact) hostAction(hact.dataset.hact, hact.dataset.h)
     const aw = e.target.closest('[data-addworker]')
     if (aw) addWorkerTo(aw.dataset.addworker)
+    const stp = e.target.closest('[data-savetpl]')
+    if (stp) saveTemplateDialog(stp.dataset.savetpl)
     const tact = e.target.closest('[data-tact]')
     if (tact) {
       const r = currentRoute()
@@ -1719,7 +1795,7 @@
 
   function paneHead(s) {
     const a = s.activity ?? {}
-    return `<span class="dot ${status(s).dot}"></span><button class="title" data-go="#/s/${encodeURIComponent(s.name)}">${esc(s.name)}</button>${roleTag(s.role)}
+    return `<span class="dot ${status(s).dot}"></span><button class="title" data-go="#/s/${encodeURIComponent(s.name)}">${esc(s.name)}</button>${roleTag(s.role)}${personaTag(s.persona)}
       <span class="meta" title="${esc(a.cwd ?? '')}">${esc(base(a.cwd))}</span>${ctxBadge(a)}
       <button class="more" data-menu="${esc(s.name)}" title="${esc(T.actions(s.name))}" aria-label="${esc(T.actions(s.name))}">⋯</button>`
   }
@@ -2025,7 +2101,7 @@
     const rank = { waiting: 0, idle: 1, working: 2, offline: 3 }
     ws.sort((a, b) => (rank[a.st.k] - rank[b.st.k]) || ((a.st.since ?? 0) - (b.st.since ?? 0)) || COLLATOR.compare(a.w.name, b.w.name))
     const n = k => ws.filter(x => x.st.k === k).length
-    const chips = ws.map(({ w, st }) => `<span class="wchip ${st.k}"><button class="wname" data-go="#/s/${encodeURIComponent(w.name)}"><span class="dot ${st.dot}"></span>${esc(w.name)}</button><span class="wst">${esc(st.text)}</span>${st.k === 'idle' ? `<button class="give" data-givework="${esc(c.name)}" title="${esc(T.giveWorkTitle(w.name, c.name))}">${T.giveWork}</button>` : ''}</span>`).join('')
+    const chips = ws.map(({ w, st }) => `<span class="wchip ${st.k}"><button class="wname" data-go="#/s/${encodeURIComponent(w.name)}"><span class="dot ${st.dot}"></span>${esc(w.name)}</button>${personaTag(w.persona)}<span class="wst">${esc(st.text)}</span>${st.k === 'idle' ? `<button class="give" data-givework="${esc(c.name)}" title="${esc(T.giveWorkTitle(w.name, c.name))}">${T.giveWork}</button>` : ''}</span>`).join('')
     return `<div class="team-sum">${ws.length ? esc(T.teamSummary(ws.length, n('working'), n('idle'), n('waiting'))) : T.noWorkers}</div>
       <div class="team-list">${chips}<button class="btn addw" data-addworker="${esc(c.name)}" title="${esc(T.addWorkerTo(c.name))}">${T.addWorker}</button></div>`
   }
@@ -2166,7 +2242,7 @@
       const rows = terms.map(t => {
         const s = sessionOn(h.id, t.id)
         return `<div class="term-row">
-          <span class="dot ${s ? status(s).dot : ''}" title="${esc(s ? status(s).text : '')}"></span><span class="n">${esc(t.name)}</span>${roleTag(t.role)}
+          <span class="dot ${s ? status(s).dot : ''}" title="${esc(s ? status(s).text : '')}"></span><span class="n">${esc(t.name)}</span>${roleTag(t.role)}${personaTag(t.persona)}
           <span class="m" title="${esc(t.folder ?? '')}">${esc(t.folder ?? '')}${t.role === 'worker' && t.coordinator ? ` · ${esc(T.coordinatorOf(t.coordinator))}` : ''}</span>
           <span class="acts">
             ${h.online ? `<button class="btn" data-go="#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(t.id)}">${T.terminal}</button>` : ''}
@@ -2228,6 +2304,7 @@
     const h = hosts.get(id)
     if (action === 'add') return addMachineDialog()
     if (action === 'new') return newSessionDialog(id)
+    if (action === 'templates') return templatesDialog()
     if (action === 'rename' && h) {
       const d = dialog(`<h3>${T.renameTitle}</h3><label class="field"><span>${T.name}</span><input type="text" maxlength="40" value="${esc(h.name)}"></label><div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
         <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.save}</button></div>`)
@@ -2372,11 +2449,112 @@
     const s = sessions.get(name)
     if (!reopenable(s)) return
     const role = s.opened_role ?? s.role
-    newSessionDialog(s.host_id, { reopen: true, name, role, coordinator: role === 'worker' ? s.coordinator ?? undefined : undefined, folder: s.activity?.cwd ?? null })
+    newSessionDialog(s.host_id, { reopen: true, name, role, coordinator: role === 'worker' ? s.coordinator ?? undefined : undefined, folder: s.activity?.cwd ?? null, persona: s.opened_persona ?? '' })
   }
 
   function addWorkerTo(coord) {
     newSessionDialog(terminalOf(coord)?.host.id, { coordinator: coord })
+  }
+
+  // ---------------------------------------------------------------------------
+  // squad templates: a coordinator and its workers (folder, persona and compact
+  // window each), saved to open the whole squad again in one go. Each session
+  // is opened like any other: its machine checks it against its own rules.
+  function squadMembers(coord) {
+    const member = (s, role) => {
+      const t = terminalOf(s.name)?.term
+      return { name: s.name, role, folder: t?.folder ?? s.activity?.cwd ?? null, persona: t?.persona?.id ?? s.opened_persona ?? null, compact_window: t?.compact_window ?? null }
+    }
+    const c = sessions.get(coord)
+    const ws = sortedSessions().filter(s => s.role === 'worker' && s.coordinator === coord)
+    return { coordinator: c ? member(c, 'coordinator') : null, workers: ws.map(w => member(w, 'worker')) }
+  }
+  const personaName = id => String(id ?? '').split(':')[2] ?? ''
+  const memberLine = m => `<b>${esc(m.name)}</b> ${roleTag(m.role)} ${m.folder ? `<code>${esc(m.folder)}</code>` : esc(T.tplNoFolder)}${m.persona ? ` · 🎭 ${esc(personaName(m.persona))}` : ''}`
+
+  function saveTemplateDialog(coord) {
+    const { coordinator, workers } = squadMembers(coord)
+    if (!coordinator) return
+    const d = dialog(`<h3>${esc(T.saveTemplateTitle(coord))}</h3><p class="hint" style="font-size:12.5px;margin:-2px 0 12px">${T.saveTemplateHint}</p>
+      <label class="field"><span>${T.templateName}</span><input type="text" name="tname" maxlength="40" value="${esc(coord)}" autocomplete="off"></label>
+      <ul class="tpl-members">${[coordinator, ...workers].map(m => `<li class="${m.folder ? '' : 'bad'}">${memberLine(m)}</li>`).join('')}</ul>
+      <div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.save}</button></div>`, { wide: true })
+    const input = d.el.querySelector('[name=tname]')
+    input.focus(); input.select()
+    d.el.querySelector('[data-ok]').addEventListener('click', async () => {
+      const err = d.el.querySelector('.err')
+      if (!coordinator.folder) { err.textContent = T.tplCoordNoFolder; return }
+      // (Workers whose folder isn't known are left out: said in the list above.)
+      try {
+        await postJson('/api/templates/save', { name: input.value.trim(), host: sessions.get(coord)?.host_id ?? null, coordinator, workers: workers.filter(w => w.folder) })
+        d.close()
+        alertBox(T.templateSaved(input.value.trim()))
+      } catch (e) { err.textContent = e.message }
+    })
+  }
+
+  function templatesDialog() {
+    const list = () => templates.length
+      ? `<div class="tpl-list">${templates.map(t => `<div class="tpl-row"><span class="n">${esc(t.name)}</span><span class="m">${esc(T.tplSummary(t.coordinator?.name ?? '?', t.workers.length))}</span><button class="btn primary" data-launch="${esc(t.name)}">${T.tplLaunch}</button><button class="btn danger" data-del="${esc(t.name)}">${T.delete}</button></div>`).join('')}</div>`
+      : `<p class="hint">${T.noTemplates}</p>`
+    const d = dialog(`<h3>${T.templates}</h3><div data-list>${list()}</div><div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div><div class="actions"><button class="btn" data-cancel>${T.done}</button></div>`, { wide: true })
+    const refresh = () => setHtml(d.el.querySelector('[data-list]'), list())
+    templateListeners.add(refresh)
+    const closed = d.el.onclose
+    d.el.onclose = () => { templateListeners.delete(refresh); closed?.() }
+    d.el.addEventListener('click', e => {
+      const l = e.target.closest('[data-launch]')
+      if (l) { d.close(); return launchTemplateDialog(l.dataset.launch) }
+      const x = e.target.closest('[data-del]')
+      if (x) postJson('/api/templates/delete', { name: x.dataset.del }).catch(err => { d.el.querySelector('.err').textContent = err.message })
+    })
+  }
+
+  // Open a template's squad: the coordinator first, then its workers, one at
+  // a time (each machine opens one session at a time anyway).
+  function launchTemplateDialog(name) {
+    const t = templates.find(x => x.name === name)
+    if (!t?.coordinator) return
+    const online = [...hosts.values()].filter(h => h.online)
+    if (!online.length) return alertBox(T.noOnlineMachines)
+    const members = [t.coordinator, ...t.workers.map(w => ({ ...w, role: 'worker' }))]
+    const d = dialog(`<h3>${esc(T.tplLaunchTitle(name))}</h3><p class="hint" style="font-size:12.5px;margin:-2px 0 12px">${T.tplLaunchHint}</p>
+      <label class="field"><span>${T.machine}</span><select name="host">${online.map(h => `<option value="${esc(h.id)}" ${h.id === t.host ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></label>
+      <ul class="tpl-members">${members.map((m, i) => `<li data-i="${i}">${memberLine({ ...m, role: i ? 'worker' : 'coordinator' })} <span class="st"></span></li>`).join('')}</ul>
+      <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary" data-ok>${T.tplLaunch}</button></div>`, { wide: true })
+    const ok = d.el.querySelector('[data-ok]')
+    ok.addEventListener('click', async () => {
+      ok.disabled = true
+      ok.textContent = T.opening
+      const host = d.el.querySelector('[name=host]').value
+      let failed = false
+      for (const [i, m] of members.entries()) {
+        const li = d.el.querySelector(`[data-i="${i}"]`)
+        const st = li.querySelector('.st')
+        li.className = ''
+        // Already running (this machine or another): left as it is.
+        if (terminalOf(m.name) || sessions.get(m.name)?.online) { st.textContent = `· ${T.tplAlready}`; li.className = 'ok'; continue }
+        st.textContent = '…'
+        const spec = { name: m.name, role: i ? 'worker' : 'coordinator', folder: m.folder }
+        if (i) spec.coordinator = t.coordinator.name
+        if (m.compact_window) spec.compact_window = m.compact_window
+        if (m.persona) spec.persona = m.persona
+        try {
+          await postJson('/api/terminals/open', { host, spec })
+          st.textContent = '✓'
+          li.className = 'ok'
+        } catch (e) {
+          st.textContent = `✗ ${e.message}`
+          li.className = 'bad'
+          failed = true
+          if (!i) break // without its coordinator, the workers would have no one to report to
+        }
+      }
+      if (!failed) { d.close(); location.hash = `#/q/${encodeURIComponent(t.coordinator.name)}`; return }
+      ok.disabled = false
+      ok.textContent = T.tplRetry
+    })
   }
 
   function newSessionDialog(hostId, preset = {}) {
@@ -2413,6 +2591,8 @@
         <label class="field"><span>${T.folder}</span><select name="folder"></select></label>
         <label class="field"><span>${T.subfolder}</span><input type="text" name="sub" placeholder="${esc(T.subfolderHint)}" autocomplete="off"></label>
       </div>
+      <label class="field"><span>${T.persona}</span><select name="persona"><option value="">${T.personaNone}</option></select></label>
+      <div class="persona-hint"></div>
       <label class="field"><span>${T.compact}</span><select name="compact">
         <option value="600000" selected>${T.compactRec}</option>
         <option value="">${T.compactDefault}</option>
@@ -2462,6 +2642,57 @@
       const editable = h?.info?.folders_from_dashboard === true
       if (!(h?.info?.folders ?? []).length) folderHint.innerHTML = `${T.noFoldersHere}${editable ? ` <button type="button" class="btn" data-addf>${T.addFolder}</button>` : ''}`
       else folderHint.innerHTML = h?.info?.home && f('folder').value === h.info.home && !f('sub').value.trim() ? `⚠ ${T.homeSession}` : ''
+      loadPersonas()
+    }
+    // The persona: a skill or agent the machine finds for that folder (the
+    // project's and the user's ~/.claude). Picked from a list, never typed (a
+    // misspelled name would load nothing); the machine looks it up again.
+    const personaHint = d.el.querySelector('.persona-hint')
+    let personaKey = null, personaList = [], personaTimer = null, personaSeq = 0
+    let wantPersona = preset.persona ?? ''
+    const folderNow = () => {
+      const base = f('folder').value
+      const sub = f('sub').value.trim().replace(/^\/+|\/+$/g, '')
+      return base ? (sub ? `${base.replace(/\/+$/, '')}/${sub}` : base) : ''
+    }
+    const notePersona = () => {
+      const p = personaList.find(x => x.id === f('persona').value)
+      personaHint.textContent = p ? (p.description || T.personaNoDescription) : personaList.length ? T.personaHint : ''
+    }
+    const renderPersonas = () => {
+      const want = f('persona').value || wantPersona
+      const solo = f('role').value === 'solo'
+      const groups = [['skill', 'project', T.personaSkillsProject], ['skill', 'user', T.personaSkillsUser], ['agent', 'project', T.personaAgentsProject], ['agent', 'user', T.personaAgentsUser]]
+      f('persona').innerHTML = `<option value="">${T.personaNone}</option>` + groups.map(([kind, scope, label]) => {
+        const xs = personaList.filter(p => p.kind === kind && p.scope === scope)
+        // (An agent limited to tools that aren't Squadra's can't message its squad.)
+        return xs.length ? `<optgroup label="${esc(label)}">${xs.map(p => { const off = p.no_squadra_tools && !solo; return `<option value="${esc(p.id)}" ${p.id === want && !off ? 'selected' : ''} ${off ? 'disabled' : ''}>${esc(p.name)}${off ? ` — ${esc(T.personaNoTools)}` : ''}</option>` }).join('')}</optgroup>` : ''
+      }).join('')
+      notePersona()
+    }
+    function loadPersonas() {
+      clearTimeout(personaTimer)
+      personaTimer = setTimeout(async () => {
+        const host = f('host').value, folder = folderNow()
+        const key = `${host}\0${folder}`
+        if (key === personaKey) return
+        personaKey = key
+        const seq = ++personaSeq
+        if (f('persona').value) wantPersona = f('persona').value
+        personaList = []
+        renderPersonas()
+        if (!host || !folder) return
+        personaHint.textContent = T.personaLoading
+        try {
+          const r = await postJson('/api/hosts/personas', { host, folder })
+          if (seq !== personaSeq) return
+          personaList = r.personas ?? []
+          renderPersonas()
+          if (!personaList.length) personaHint.textContent = T.personaNoneFound
+        } catch (e) {
+          if (seq === personaSeq) personaHint.textContent = `${T.personaLoadFailed}: ${e.message}`
+        }
+      }, 300)
     }
     folderHint.addEventListener('click', e => { if (e.target.closest('[data-addf]')) addFolderDialog(f('host').value, folder => { shownFolders = null; syncFolders(); if (folder) f('folder').value = folder; noteFolder(); renderHosts(currentRoute().host) }) })
     const soloHint = document.createElement('p')
@@ -2478,7 +2709,8 @@
     hostListeners.add(onHost)
     const closed = d.el.onclose
     d.el.onclose = () => { hostListeners.delete(onHost); closed?.() }
-    f('role').addEventListener('change', () => { f('name').value = suggestName(); sync() })
+    f('role').addEventListener('change', () => { f('name').value = suggestName(); sync(); renderPersonas() })
+    f('persona').addEventListener('change', notePersona)
     f('host').addEventListener('change', sync)
     f('folder').addEventListener('change', noteFolder)
     f('sub').addEventListener('input', noteFolder)
@@ -2514,6 +2746,7 @@
       }
       if (!base) { err.textContent = T.folderRequired; f('folder').focus(); return }
       if (f('compact').value) spec.compact_window = Number(f('compact').value)
+      if (f('persona').value) spec.persona = f('persona').value
       if (!/^[A-Za-z0-9_-]{1,32}$/.test(spec.name)) { err.textContent = T.sessionName + ': A-Z a-z 0-9 _ -'; f('name').focus(); return }
       ok.disabled = true
       ok.textContent = T.opening
@@ -2795,6 +3028,8 @@
       sessions.clear()
       for (const s of data.sessions) sessions.set(s.name, s)
       groups = data.groups ?? []
+      templates = data.templates ?? []
+      for (const fn of templateListeners) fn()
       hosts.clear()
       for (const h of data.hosts ?? []) hosts.set(h.id, h)
       // After a reconnect, what happened in between isn't in the open chats:
@@ -2835,6 +3070,11 @@
       soon(renderNav)
       // The top bar shows one session (or one squad): only its changes matter.
       if ((r.view === 'session' && r.name === data.name) || r.view === 'terminal' || r.squad) soon(renderTop)
+      return
+    }
+    if (type === 'templates') {
+      templates = Array.isArray(data) ? data : []
+      for (const fn of templateListeners) fn()
       return
     }
     if (type === 'cleared') {

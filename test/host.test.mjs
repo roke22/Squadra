@@ -466,6 +466,77 @@ test('a standalone session starts plain Claude Code: no development channel, no 
   assert.ok((await dash('terminals/kill', { host: hostId, term: 'solo1' })).ok)
 })
 
+test('personas: the machine lists a folder\'s skills and agents, and opens a session with the one picked by id', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const proj = join(allowed, 'team')
+  mkdirSync(join(proj, '.claude', 'skills', 'design'), { recursive: true })
+  mkdirSync(join(proj, '.claude', 'skills', 'leak'), { recursive: true })
+  mkdirSync(join(proj, '.claude', 'agents'), { recursive: true })
+  mkdirSync(join(claudeDir, 'skills', 'marketing'), { recursive: true })
+  mkdirSync(join(claudeDir, 'agents'), { recursive: true })
+  writeFileSync(join(proj, '.claude', 'skills', 'design', 'SKILL.md'), '---\nname: design\ndescription: >\n  Designs interfaces\n  with care\n---\nFollow the style guide in references/style.md.\n')
+  writeFileSync(join(proj, '.claude', 'agents', 'hr.md'), '---\nname: hr\ndescription: "Human resources"\ntools: Read, Grep\n---\nYou work in HR.\n')
+  writeFileSync(join(claudeDir, 'agents', 'dev.md'), '---\nname: dev\ndescription: Developer\n---\nYou write code.\n')
+  // (The project's agent wins over the user's with the same name, as in Claude Code.)
+  writeFileSync(join(claudeDir, 'agents', 'hr.md'), '---\nname: hr\ndescription: never used\n---\nx\n')
+  writeFileSync(join(claudeDir, 'skills', 'marketing', 'SKILL.md'), 'Write like marketing.\n')
+  // A skill that is a link out of the project is never read (nor listed).
+  writeFileSync(join(outside, 'secret.md'), '---\nname: leak\ndescription: secret\n---\nsecret\n')
+  symlinkSync(join(outside, 'secret.md'), join(proj, '.claude', 'skills', 'leak', 'SKILL.md'))
+
+  const list = await dash('hosts/personas', { host: hostId, folder: proj })
+  assert.ok(list.ok, list.description)
+  assert.deepEqual(list.result.personas.map(p => p.id), ['skill:project:design', 'agent:project:hr', 'skill:user:marketing', 'agent:user:dev'])
+  assert.equal(list.result.personas[0].description, 'Designs interfaces with care')
+  assert.equal(list.result.personas[1].description, 'Human resources')
+  assert.equal(list.result.personas[1].no_squadra_tools, true)
+  assert.equal(list.result.personas[3].no_squadra_tools, false)
+  assert.ok(!JSON.stringify(list.result).includes(claudeDir), 'no paths for the dashboard')
+  // Only in the folders this machine allows.
+  const out = await dash('hosts/personas', { host: hostId, folder: outside })
+  assert.equal(out.ok, false)
+  assert.match(out.description, /not inside the folders this machine allows/)
+
+  const screenOf = name => waitFor(() => {
+    const s = execFileSync('tmux', ['-L', SOCKET, 'capture-pane', '-p', '-J', '-t', `=sq-${name}:`], { encoding: 'utf8' })
+    return s.includes('ARGS:') ? s : null
+  }, { what: `${name} started` })
+
+  // A skill: its text goes into the system prompt, from a private copy.
+  const r = await dash('terminals/open', { host: hostId, spec: { name: 'des1', role: 'worker', coordinator: 'boss', folder: proj, persona: 'skill:project:design' } })
+  assert.ok(r.ok, r.description)
+  const promptFile = join(claudeDir, 'channels', 'squadra', 'des1', 'persona.md')
+  assert.ok((await screenOf('des1')).includes(`--append-system-prompt-file ${promptFile}`))
+  const prompt = readFileSync(promptFile, 'utf8')
+  assert.match(prompt, /Persona of this session: the "design" skill/)
+  assert.match(prompt, /Follow the style guide in references\/style\.md\./)
+  assert.ok(prompt.includes(realpathSync(join(proj, '.claude', 'skills', 'design'))), 'where its files are')
+  assert.doesNotMatch(prompt, /description: >/)
+  assert.equal(lstatSync(promptFile).mode & 0o777, 0o600)
+  const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'des1', 'launch.json'), 'utf8'))
+  assert.deepEqual(launch.persona, { kind: 'skill', name: 'design', description: 'Designs interfaces with care' })
+  await waitFor(async () => (await dash('hosts')).result.find(h => h.id === hostId)?.info?.terminals?.some(t => t.id === 'des1' && t.persona?.id === 'skill:project:design' && t.persona.name === 'design'), { what: 'listed with its persona' })
+  // The dashboard remembers it, to open the session again the same way.
+  assert.equal((await dash('state')).result.sessions.find(s => s.name === 'des1')?.opened_persona, 'skill:project:design')
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'des1' })).ok)
+
+  // An agent: by its name, and no copy of a skill left from before.
+  mkdirSync(join(claudeDir, 'channels', 'squadra', 'dev1'), { recursive: true })
+  writeFileSync(join(claudeDir, 'channels', 'squadra', 'dev1', 'persona.md'), 'stale')
+  const a = await dash('terminals/open', { host: hostId, spec: { name: 'dev1', role: 'worker', coordinator: 'boss', folder: proj, persona: 'agent:user:dev' } })
+  assert.ok(a.ok, a.description)
+  assert.ok((await screenOf('dev1')).includes('--agent dev'))
+  assert.ok(!existsSync(join(claudeDir, 'channels', 'squadra', 'dev1', 'persona.md')))
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'dev1' })).ok)
+
+  // An agent whose tools leave out Squadra's can't message its squad: refused
+  // for a worker; a persona not there (any more), or not an id, too.
+  for (const [persona, re] of [['agent:project:hr', /none of them Squadra's/], ['skill:project:nope', /is not in/], ['skill:project:leak', /is not in/], ['../../etc/passwd', /invalid persona/]]) {
+    const x = await dash('terminals/open', { host: hostId, spec: { name: 'px1', role: 'worker', coordinator: 'boss', folder: proj, persona } })
+    assert.equal(x.ok, false, persona)
+    assert.match(x.description, re)
+  }
+})
+
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const r = await dash('hosts/remove', { host: hostId })
   assert.ok(r.ok, r.description)

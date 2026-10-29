@@ -88,7 +88,9 @@ Cada agente es un `claude` interactivo normal en un terminal, así que puedes in
 - **Sesiones abiertas desde el panel.**
   - Añade una máquina con un comando, generado por el panel, que instala y da de alta `squadra-host` en ella.
   - Abre allí coordinadores y workers desde el navegador y usa sus terminales en directo: ves a Claude, le escribes, aceptas sus diálogos e incluso haces `/login` con la suscripción de esa máquina.
-  - La máquina solo acepta una *especificación* de sesión (nombre, rol, una carpeta permitida y la ventana de autocompactación), nunca un comando; sus límites viven en la propia máquina.
+  - La máquina solo acepta una *especificación* de sesión (nombre, rol, una carpeta permitida, la ventana de autocompactación y el id de una persona), nunca un comando; sus límites viven en la propia máquina.
+  - **Personas:** cada sesión puede seguir una skill o un agente de su proyecto o de `~/.claude`, elegido de una lista; se queda en su system prompt toda la sesión, y su coordinador sabe cuál sigue cada worker.
+  - **Plantillas de escuadra:** guarda una escuadra (coordinador y workers, con sus carpetas y personas) y vuelve a abrirla de una vez.
   - Las sesiones solo las abres tú, nunca Claude: si un coordinador necesita más workers, te los pide.
 
 ## Galería
@@ -271,7 +273,7 @@ En vez de arrancar `claude` a mano en cada terminal, deja que lo haga el panel e
 
    Instala lo que falte (tmux, Node.js 22, Claude Code), comprueba el squadra-host que descarga, cambia el código de un solo uso (válido 15 minutos; guarda el comando en privado hasta entonces) por la credencial propia de la máquina, e instala el plugin de Squadra, el comando `squadra-host` y un servicio que la mantiene en marcha en segundo plano y arranca con el equipo (systemd en Linux y WSL, launchd en macOS). Los instaladores están en [`install/`](../install/): `linux.sh`, `macos.sh` y `windows.bat` (en Windows, Squadra funciona dentro de WSL; si hace falta, el comando te dice cómo instalarlo). Después ejecuta `claude` una vez en la máquina e inicia sesión. Ejecuta el comando con tu usuario; para que Claude pueda modificar el sistema operativo, puede funcionar como root con `--allow-root` (una casilla del diálogo): las sesiones tienen entonces control total de esa máquina, y se instala como servicio del sistema.
 2. **Elige sus carpetas.** En la tarjeta de la máquina, **+ Carpeta** permite una carpeta donde se pueden abrir sesiones (y todo lo que contiene), y ✕ la quita. La máquina comprueba cada una: nunca una carpeta del sistema, temporal o de credenciales, ni tu carpeta personal entera, salvo que squadra-host se arrancara con `--allow-home` (márcalo en el diálogo «+ Añadir máquina»), para que Claude administre el equipo. Las sesiones en la carpeta personal acceden a todos tus ficheros, así que sus permisos se aprueban solo en su propia terminal, nunca desde un coordinador.
-3. **Abre una sesión.** **+ Nueva sesión**: máquina, rol, nombre, coordinador (elegido entre los que existen), carpeta (una de las permitidas en la máquina, más una subcarpeta opcional), cuándo autocompactar (600K tokens por defecto, lo recomendado para modelos de 1M de contexto) y si continuar la última conversación. Arranca `claude` con el canal de Squadra en tmux y hace login sola.
+3. **Abre una sesión.** **+ Nueva sesión**: máquina, rol, nombre, coordinador (elegido entre los que existen), carpeta (una de las permitidas en la máquina, más una subcarpeta opcional), una persona (ver más abajo), cuándo autocompactar (600K tokens por defecto, lo recomendado para modelos de 1M de contexto) y si continuar la última conversación. Arranca `claude` con el canal de Squadra en tmux y hace login sola.
 4. **Usa su terminal.** La sesión se abre en una terminal web en vivo. La primera vez, acepta el aviso de canales en desarrollo y, si lo pide, confía en la carpeta y haz `/login`. Desde ahí puedes verla o escribirle desde cualquier navegador; el chat y el mosaico siguen funcionando igual.
 
 En la máquina (`squadra-host help` lo muestra todo):
@@ -300,6 +302,21 @@ Las reglas de la máquina están en `~/.config/squadra-host/settings.json`. El p
 | `claude_command` | El ejecutable de Claude Code (`claude`, buscado solo en las entradas absolutas del `PATH`) |
 
 La máquina se conecta solo por HTTPS: `http` sin cifrar solo se acepta para `localhost`, o con `--insecure` en el alta, en una red privada de confianza. **Eliminar** (en la tarjeta de una máquina desconectada, o en su menú ⋯) revoca su credencial y la quita de la lista; una máquina que se dio de alta pero nunca llegó a conectarse aparece como *Pendiente de conectar* y se elimina igual. **Actualizar:** actualiza el servidor y después ejecuta `squadra-host update` en cada máquina (el panel dice cuáles son más antiguas); reinicia las sesiones que abrió para que usen el plugin nuevo. Actualiza también el plugin en las máquinas que configuraste a mano (`claude plugin marketplace update squadra && claude plugin update squadra@squadra`). **Desde 0.0.2:** las máquinas aún no tienen `squadra-host update`: vuelve a añadir cada una con «+ Añadir máquina» y elimina su entrada antigua. **Desde 0.0.1:** lo mismo, y además: con `SQUADRA_STATE_DIR`, mueve los ficheros de cada sesión a `<dir>/<nombre>/`; los scripts con `SQUADRA_ROLE`/`SQUADRA_COORDINATOR` necesitan un launch.json o un `/squadra:login`; reinicia todas las sesiones. El primer arranque de un servidor 0.0.2 o posterior limpia una vez los datos guardados por una versión anterior (dice en el log por dónde va).
+
+### Personas y plantillas de escuadra
+
+Una **persona** es una skill o un agente que una sesión sigue mientras esté abierta: diseño, redacción, RR. HH., revisión de código, la forma de trabajar de tu empresa. En **+ Nueva sesión**, la lista **Persona** muestra lo que la máquina encuentra para la carpeta elegida:
+
+- skills: `<carpeta>/.claude/skills/<nombre>/SKILL.md` y `~/.claude/skills/<nombre>/SKILL.md`;
+- agentes: `<carpeta>/.claude/agents/<nombre>.md` y `~/.claude/agents/<nombre>.md` (el agente del proyecto gana al tuyo con el mismo nombre, como en Claude Code).
+
+Se elige de la lista, nunca se escribe, y el panel solo envía su id: la máquina la vuelve a buscar al abrir la sesión. Una **skill** va al system prompt de la sesión (`--append-system-prompt-file`, desde una copia privada que la máquina escribe junto al estado de la sesión, con la carpeta de los ficheros de la skill); un **agente** arranca la sesión con `--agent <nombre>`, así que se aplican su prompt, sus herramientas y su modelo. Al ir en el system prompt, la persona se mantiene tras las compactaciones, y las skills que Claude cargue después se suman a ella sin sustituirla. Nunca pasa por encima de las reglas de Squadra ni de lo que pidas en la terminal.
+
+- El coordinador conoce la persona de cada worker por su saludo y por `ping`, y da cada tarea al worker cuya persona encaja. Un coordinador también puede tener persona (un jefe de proyecto, una directora de marketing…).
+- Un agente cuya lista `tools` deja fuera las herramientas de Squadra no podría escribir a su escuadra: el panel lo muestra desactivado para coordinadores y workers (añade `mcp__plugin_squadra_squadra__reply` y las demás herramientas de Squadra a sus `tools`, o ábrelo como sesión independiente).
+- Solo se leen ficheros que de verdad están dentro del proyecto (o de `~/.claude`) y son tuyos, de 256 KB como mucho: una skill que es un enlace a otro sitio no aparece. Como un `CLAUDE.md`, la persona de un proyecto que no escribiste es texto que Claude seguirá: abre proyectos de confianza.
+
+Una **plantilla de escuadra** guarda una escuadra para volver a abrirla de una vez. En la vista de una escuadra (👥), **💾 Plantilla** guarda su coordinador y sus workers con la carpeta, la persona y el autocompactado con que se abrió cada uno. **🖥️ Máquinas → Plantillas** las lista: **Abrir escuadra** elige una máquina y abre primero el coordinador y después cada worker (las sesiones que ya estén abiertas se dejan como están). Cada sesión se abre como cualquier otra, y su máquina la comprueba con sus propias reglas.
 
 ## Consejos: cómo sacarle el máximo partido
 

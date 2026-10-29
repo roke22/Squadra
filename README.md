@@ -41,6 +41,7 @@ Sign in with the server token it prints, open **Machines → + Add machine** and
 - **Leave it working unattended:** workers decide the technical details and the coordinator approves their safe actions, so the squad keeps going while you are away.
 - **Keep watch from anywhere:** every agent live in your browser, and a "Needs you" bar for whoever is waiting for an answer.
 - **Use all your computers and accounts:** each agent runs on any machine you add, with that machine's Claude Code login.
+- **Build teams with your own skills:** give each agent a skill or agent from its project (design, marketing, HR, code review…) as its persona, and save the whole squad as a template to open it again in one click.
 
 ## How it works
 
@@ -127,6 +128,7 @@ Then, still in the dashboard:
 - **Use HTTPS** (a domain, step 1) when other computers connect to your dashboard, and keep the server token to yourself: it's the key to the dashboard.
 - **Give your coordinator its own repository** with a `CLAUDE.md` describing your team: which worker handles which repository, what counts as done, and what it must always ask you first. Every coordinator you open from it then works the same way.
 - **Name workers after what they do** (`api`, `web`, `docs`): the coordinator uses the names to decide who gets each task.
+- **Give each worker a persona:** in **+ New session**, pick one of the skills (`.claude/skills/<name>/SKILL.md`) or agents (`.claude/agents/<name>.md`) the machine finds in that folder or in `~/.claude`. It goes into the agent's system prompt, so it holds through compactions, and its coordinator is told which persona each worker follows.
 - **One worker per repository or area,** so they don't edit the same files. For parallel work in one repository, give each worker its own [git worktree](https://git-scm.com/docs/git-worktree).
 - **Open your own projects,** or repositories you trust, in the agents' folders.
 - **Leave room in the context:** with 1M-context models, the dashboard's default of auto-compacting at 600K tokens keeps agents sharp.
