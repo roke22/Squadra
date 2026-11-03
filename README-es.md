@@ -13,7 +13,7 @@
   <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="Estrellas en GitHub"></a>
 </p>
 
-<p align="center"><a href="README.md">Read in English</a> · <a href="https://roke22.github.io/Squadra/">Web</a> · <a href="docs/referencia.md">Referencia</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.5</p>
+<p align="center"><a href="README.md">Read in English</a> · <a href="https://roke22.github.io/Squadra/">Web</a> · <a href="https://roke22.github.io/Squadra/es/ejemplos.html">Ejemplos</a> · <a href="docs/referencia.md">Referencia</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.5</p>
 
 ---
 
@@ -143,10 +143,27 @@ En el panel, abre **🖥️ Máquinas → + Añadir máquina**, elige el sistema
 Después, desde el panel:
 
 1. **+ Carpeta** en la tarjeta de la máquina: elige las carpetas donde pueden trabajar los agentes (tus proyectos).
-2. **+ Nueva sesión**: abre un **coordinador** y luego sus **workers**. Cada uno se abre en una terminal en directo en tu navegador. La primera vez, acepta los avisos de Claude Code (para el canal de desarrollo, elige *"I am using this for local development"*).
+2. **Abre tu primera escuadra** ([paso 3](#3-monta-tus-escuadras)), o una sesión suelta con **+ Nueva sesión**. Cada una se abre en una terminal en directo en tu navegador. La primera vez, acepta los avisos de Claude Code (para el canal de desarrollo, elige *"I am using this for local development"*).
 3. **Habla con el coordinador** en su terminal y dile lo que quieres hacer.
 
 ![Una escuadra en el panel: el coordinador y sus workers, cada uno en una terminal web en directo](docs/screenshots/squad-view.jpg)
+
+## 3. Monta tus escuadras
+
+Una escuadra es un coordinador y sus workers, como un departamento. Se montan en **🏢 Organigrama**, en la barra lateral:
+
+1. **+ Escuadra** abre el coordinador de la escuadra. Elige el equipo y la carpeta, ponle nombre a la sesión (`mkt-lead`) y dale a la escuadra un **nombre** y un **objetivo**: el coordinador recibe los dos y pone su esfuerzo ahí. Si la carpeta tiene skills o agentes, elige uno como su **persona**.
+
+   ![El diálogo de nueva escuadra: equipo, rol, nombre de la sesión, nombre y objetivo de la escuadra](docs/screenshots/new-squad.jpg)
+
+2. **+ Agente** en la tarjeta de la escuadra abre un worker para ella. Abre uno por área o repositorio (`copy`, `design`, `ads`), cada uno con su persona.
+3. **Enlaza las escuadras que se necesitan:** arrastra el punto del borde derecho de una tarjeta hasta otra. Los coordinadores enlazados se piden trabajo entre ellos (marketing le pide la landing a producto, producto le cuenta a marketing qué sale), y cada uno pasa lo que asume a sus propios workers.
+4. **Guarda cada escuadra como plantilla:** su menú ⋯ → *Guardar la escuadra … como plantilla*. **🖥️ Máquinas → Plantillas → Abrir escuadra** la vuelve a abrir entera, primero el coordinador.
+5. **Habla con cada coordinador** en su terminal.
+
+![El organigrama: las escuadras Personal brand, Marketing y Product, cada una con su coordinador y sus workers, enlazadas entre sí](docs/screenshots/org-chart.jpg)
+
+Los **[ejemplos](https://roke22.github.io/Squadra/es/ejemplos.html)** muestran organizaciones completas montadas así: una agencia de marketing, una marca personal en redes sociales, una empresa de software y el lanzamiento de un producto, con las escuadras, las personas, los enlaces y el primer mensaje de cada una. Todo lo que hace el organigrama está en la [referencia](docs/referencia.md#organigrama).
 
 ## Buenos consejos
 
@@ -187,6 +204,7 @@ Los Channels son la función de Claude Code que entrega mensajes dentro de una s
 
 ## Saber más
 
+- [Ejemplos](https://roke22.github.io/Squadra/es/ejemplos.html): organizaciones de marketing, redes sociales, software y lanzamiento, escuadra a escuadra.
 - [docs/referencia.md](docs/referencia.md): configurar agentes a mano sin el panel, todas las opciones del servidor y cómo funciona todo por dentro.
 - [PLAN.md](PLAN.md): la guía técnica completa.
 

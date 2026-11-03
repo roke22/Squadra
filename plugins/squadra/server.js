@@ -1280,7 +1280,8 @@ async function login({ name, role, coordinator, staticAccess = false, seedAllow 
     send: events => call('observe', { events }, { s }),
     log,
     contextProvider: source => (S !== s ? '' : source === 'prompt' ? briefOnPrompt(s) : withBrief(s, source === 'clear' ? clearedContext(s) : recoveryContext(s))),
-    onPrompt: prompt => { if (S === s) tasksStarting(s, prompt) },
+    onPrompt: prompt => { if (S === s) tasksStarting(s, channelIds(prompt)) },
+    onChannelSeen: ids => { if (S === s) tasksStarting(s, ids) },
     stopCheck: active => stopCheck(s, active),
     onToolInput: (tool, input) => {
       const now = Date.now()
@@ -1369,14 +1370,19 @@ function recoveryContext(s) {
 // a turn, the plugin puts 👀 on it (a reaction wakes nobody). That it ends is
 // not left to Claude: the Stop hook keeps the turn from ending without the
 // report, once; if it still ends without one, the coordinator is told.
+// Only tasks Claude has seen count: one that arrives after the turn's last
+// step waits for the next turn, and asking for its report now would only get
+// the previous report again.
 const REPORTS = ['done', 'blocked', 'failed', 'question']
-const pendingTasks = s => [...s.tasks.keys()]
+const pendingTasks = s => [...s.tasks].filter(([, t]) => t.started).map(([id]) => id)
 
-// A prompt about to be sent (UserPromptSubmit): the tasks it brings start now.
-function tasksStarting(s, prompt) {
+const channelIds = prompt => [...String(prompt).matchAll(/<channel\b([^>]*)>/g)].map(m => Number(/\bmessage_id="(\d+)"/.exec(m[1])?.[1]))
+
+// A prompt about to be sent (UserPromptSubmit), or the transcript showing a
+// message reached Claude in a turn already going: the tasks it brings start now.
+function tasksStarting(s, ids) {
   if (s.role !== 'worker' || !s.tasks.size) return
-  for (const m of String(prompt).matchAll(/<channel\b([^>]*)>/g)) {
-    const id = Number(/\bmessage_id="(\d+)"/.exec(m[1])?.[1])
+  for (const id of ids) {
     const t = s.tasks.get(id)
     // (Only a task this plugin delivered: a tag typed in a prompt counts for nothing.)
     if (!t || t.started) continue
@@ -1388,15 +1394,16 @@ function tasksStarting(s, prompt) {
 // The turn is about to end (Stop hook): a reason to go on, or '' to let it.
 // active: the hook already kept this turn going once.
 async function stopCheck(s, active) {
-  if (S !== s || s.role !== 'worker' || !s.tasks.size) return ''
+  if (S !== s || s.role !== 'worker') return ''
   const ids = pendingTasks(s)
+  if (!ids.length) return ''
   const list = ids.map(i => `#${i}`).join(', ')
   if (!active && !s.stopAsked) {
     s.stopAsked = true
     return `[Squadra] Before you finish: your coordinator "${s.coordinator}" is waiting for your final report on its task ${list}. Send it now with reply (chat_id "${s.coordinator}", report: done, blocked, failed or question): what you did or what stopped you, and only the decisions that matter, in up to 3 lines. It is required: nobody can waive it, not even your coordinator.`
   }
   // Asked once already: the turn ends, and the coordinator is told.
-  s.tasks.clear()
+  for (const id of ids) s.tasks.delete(id)
   s.stopAsked = false
   await call('sendMessage', {
     chat_id: s.coordinator,
@@ -1673,6 +1680,9 @@ function describePresence(name, c) {
   if (c.online) {
     return `${name}: ALIVE (connected ${ago(c.connected_since)}; ${lastMsg}${pending}${ctx}${persona}${about})`
   }
+  if (Number.isFinite(c.down_in)) {
+    return `${name}: NOT RESPONDING (last seen ${ago(c.last_seen_at)}; messages to it are queued; announced DOWN in ${c.down_in}s unless it comes back; ${lastMsg}${pending}${persona}${about})`
+  }
   return `${name}: DOWN or closed (last seen ${ago(c.last_seen_at)}; ${lastMsg}${pending}${persona}${about})`
 }
 
@@ -1707,7 +1717,7 @@ async function ping(chatId) {
 
 function offlineError(chatId) {
   return new Error(
-    `NOT SENT: worker "${chatId}" is disconnected right now, and workers only receive messages while connected (nothing is queued for them). ` +
+    `NOT SENT: worker "${chatId}" is disconnected (it left, closed, or was announced DOWN), and nothing is queued for it. ` +
     'Nobody is going to do this task: tell the user and, if you like, assign it to another active worker (check which ones with ping).',
   )
 }
@@ -1770,7 +1780,7 @@ async function callTool(name, args) {
       const sentIds = []
       // The server reports recipients that aren't connected right now.
       const offline = new Map()
-      const noteOffline = sent => { for (const o of Array.isArray(sent.squadra_offline_recipients) ? sent.squadra_offline_recipients : []) if (NAME_RE.test(String(o?.name))) offline.set(String(o.name), { name: String(o.name), last_seen_at: Number.isFinite(o.last_seen_at) ? o.last_seen_at : null, queued: o.queued === true }) }
+      const noteOffline = sent => { for (const o of Array.isArray(sent.squadra_offline_recipients) ? sent.squadra_offline_recipients : []) if (NAME_RE.test(String(o?.name))) offline.set(String(o.name), { name: String(o.name), last_seen_at: Number.isFinite(o.last_seen_at) ? o.last_seen_at : null, queued: o.queued === true, ...(Number.isFinite(o.down_in) ? { down_in: o.down_in } : {}) }) }
 
       try {
         for (let i = 0; i < chunks.length; i++) {
@@ -1807,15 +1817,24 @@ async function callTool(name, args) {
         noteOffline(sent)
       }
 
-      // The final report closes this worker's tasks from its coordinator.
-      if (report && S.role === 'worker' && chat_id === S.coordinator) { S.tasks.clear(); S.stopAsked = false }
+      // The final report closes the tasks from its coordinator that this worker
+      // has seen (one still on its way is not reported on yet).
+      if (report && S.role === 'worker' && chat_id === S.coordinator) {
+        S.observer?.sync()
+        for (const id of pendingTasks(S)) S.tasks.delete(id)
+        S.stopAsked = false
+      }
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
         (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '')
       if (offline.size === 0) return result + freshNote
       const label = o => `${o.name} (last seen ${ago(o.last_seen_at)})`
-      const queued = [...offline.values()].filter(o => o.queued)
+      const queued = [...offline.values()].filter(o => o.queued && o.down_in == null)
+      const waiting = [...offline.values()].filter(o => o.queued && o.down_in != null)
       const skipped = [...offline.values()].filter(o => !o.queued)
       const notes = [result]
+      for (const o of waiting) {
+        notes.push(`⚠️ ${label(o)} is not responding right now (a network cut, or its machine went down). The message is queued: it gets it if it comes back in the next ${o.down_in}s. If not, you will get a notice that it is DOWN, listing this message as dropped; only then give the work to another worker.`)
+      }
       if (queued.length) {
         notes.push(`⚠️ ${queued.map(label).join(', ')} ${queued.length === 1 ? 'is DISCONNECTED' : 'are DISCONNECTED'} right now. Coordinators always receive: the message is queued and arrives when it reconnects.`)
       }

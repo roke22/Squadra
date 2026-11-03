@@ -86,7 +86,10 @@ echo "ARGS: $*"
 echo "ENV: $SQUADRA_NAME/$SQUADRA_ROLE/$SQUADRA_COORDINATOR/$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
 echo "PWD: $(pwd)"
 echo "TMUX=\${TMUX:-none}"
-while IFS= read -r line; do echo "GOT:$line"; done
+# FULLSCREEN: switches on what Claude Code's full-screen view does.
+while IFS= read -r line; do
+  if [ "$line" = FULLSCREEN ]; then printf '\\033[?1049h\\033[?1000h\\033[?1002h\\033[?1003h\\033[?1006h\\033[?1hFULL VIEW'; else echo "GOT:$line"; fi
+done
 `)
   chmodSync(fakeClaude, 0o755)
   // The machine's own rules, written before enrolling.
@@ -277,6 +280,23 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   v2.send({ t: 'attach', host: hostId, term: 'w1', cols: 100, rows: 30 })
   await waitFor(() => v2.text.includes('GOT:hello squadra'), { what: 'second viewer screen' })
   v2.ws.close()
+  const first = Buffer.from(v.msgs.find(m => m.t === 'screen').data, 'base64').toString('utf8')
+  assert.ok(!first.includes('\x1b[?1049h') && !first.includes('\x1b[?1000h'), JSON.stringify(first.slice(0, 40)))
+
+  // A viewer arriving at a full-screen program gets its modes too (they go
+  // when the dashboard resets its terminal): its mouse wheel goes to it, and
+  // pastes are bracketed.
+  v.send({ t: 'in', host: hostId, term: 'w1', data: 'FULLSCREEN\r' })
+  await waitFor(() => v.text.includes('FULL VIEW'), { what: 'full view' })
+  const v3 = await viewer()
+  await v3.open()
+  await waitFor(() => v3.msgs.some(m => m.t === 'ready'), { what: 'ready 3' })
+  v3.send({ t: 'attach', host: hostId, term: 'w1', cols: 100, rows: 30 })
+  await waitFor(() => v3.text.includes('FULL VIEW'), { what: 'full view screen' })
+  const full = Buffer.from(v3.msgs.find(m => m.t === 'screen').data, 'base64').toString('utf8')
+  assert.ok(full.startsWith('\x1b[?1049h'), JSON.stringify(full.slice(0, 40)))
+  assert.ok(full.endsWith('\x1b[?1003h\x1b[?1006h\x1b[?1h\x1b[?2004h'), JSON.stringify(full.slice(-60)))
+  v3.ws.close()
 
   // Closing the session from the dashboard ends it and tells the viewer.
   const k = await dash('terminals/kill', { host: hostId, term: 'w1' })
