@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squadra examples: squads of Claude Code agents for marketing, social media and software</title>
+<meta name="description" content="Whole organisations built with Squadra: a marketing agency, a personal brand on social media, a software company and a product launch, each with its squads of Claude Code agents, their personas, the links between squads and the first prompt to give them.">
+<link rel="canonical" href="https://roke22.github.io/Squadra/examples.html">
+<link rel="alternate" hreflang="en" href="https://roke22.github.io/Squadra/examples.html">
+<link rel="alternate" hreflang="es" href="https://roke22.github.io/Squadra/es/ejemplos.html">
+<link rel="alternate" hreflang="x-default" href="https://roke22.github.io/Squadra/examples.html">
+<link rel="icon" href="squadra-logo.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Squadra examples: departments of Claude Code agents that work together">
+<meta property="og:description" content="A marketing agency, a personal brand, a software company and a product launch, built as linked squads of Claude Code agents.">
+<meta property="og:url" content="https://roke22.github.io/Squadra/examples.html">
+<meta property="og:image" content="https://roke22.github.io/Squadra/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{--accent:#C15F3C;--ink:#1F1E1C;--muted:#5d5955;--bg:#FBF7F3;--card:#fff;--line:#eadfd7;--soft:#f6efe9;--lead:#efe9f7;--leadink:#6b46a8}
+@media (prefers-color-scheme:dark){:root{--ink:#f3efe9;--muted:#b3aca4;--bg:#17150f;--card:#221f19;--line:#3a342c;--soft:#2a261f;--lead:#2d2638;--leadink:#c3a8f0}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent)}
+code{font-size:.9em;background:var(--soft);padding:1px 5px;border-radius:5px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+nav.top{display:flex;gap:18px;align-items:center;padding:18px 0;font-size:15px;flex-wrap:wrap}
+nav.top .home{display:flex;gap:8px;align-items:center;font-weight:700;color:var(--ink);text-decoration:none;margin-right:auto}
+nav.top img{width:26px;height:26px}
+header{padding:28px 0 8px}
+h1{font-size:clamp(28px,5vw,42px);line-height:1.15;margin:0 0 12px;letter-spacing:-.5px}
+.lead{font-size:clamp(18px,2.4vw,21px);color:var(--muted);max-width:780px;margin:0 0 20px}
+.toc{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;padding:0;list-style:none}
+.toc a{display:inline-block;padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--card);text-decoration:none;font-size:15px;color:var(--ink)}
+.shot{display:block;width:100%;border-radius:14px;border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.12);margin:28px 0 8px}
+.caption{color:var(--muted);font-size:15px;margin:0 0 8px}
+h2{font-size:clamp(24px,3.4vw,32px);margin:64px 0 6px;letter-spacing:-.3px;scroll-margin-top:16px}
+h3{font-size:19px;margin:28px 0 8px}
+.for{color:var(--muted);margin:0 0 18px}
+.org{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:18px 0 6px}
+.squad{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.squad .head{background:var(--lead);padding:10px 14px}
+.squad .name{font-weight:700}
+.squad .goal{font-size:14px;color:var(--muted);line-height:1.45}
+.squad ul{list-style:none;margin:0;padding:10px 14px 12px;font-size:15px}
+.squad li{padding:2px 0}
+.squad li.coord{color:var(--leadink);font-weight:600}
+.squad li .p{color:var(--muted);font-size:13px}
+.squad li::before{content:"●";color:#2f8a57;font-size:10px;margin-right:7px;vertical-align:2px}
+.links{list-style:none;padding:0;margin:10px 0 0;font-size:15px}
+.links li{padding:6px 0;border-bottom:1px dashed var(--line)}
+.links b{color:var(--leadink)}
+pre{background:#1F1E1C;color:#f3efe9;padding:16px 18px;border-radius:12px;overflow:auto;font-size:14.5px;line-height:1.5}
+pre code{background:none;padding:0;font-size:inherit}
+.note{background:var(--soft);border-left:4px solid var(--accent);border-radius:8px;padding:12px 16px;margin:16px 0;font-size:15.5px}
+ol.steps li{margin:6px 0}
+details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin:12px 0}
+summary{cursor:pointer;font-weight:600}
+footer{color:var(--muted);text-align:center;padding:56px 0 40px;font-size:15px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="top">
+  <a class="home" href="./"><img src="squadra-logo.svg" alt="" onerror="this.style.display='none'">Squadra</a>
+  <a href="./">Home</a>
+  <a href="https://github.com/roke22/Squadra#3-build-your-squads">Build squads</a>
+  <a href="https://github.com/roke22/Squadra">GitHub</a>
+  <a href="es/ejemplos.html">Español</a>
+</nav>
+
+<header>
+  <h1>Examples: departments of Claude Code agents that work together</h1>
+  <p class="lead">Each example is a whole organisation built with Squadra: its squads (a coordinator and its workers), the persona each agent follows, the links between squads and the first message to give each coordinator. Copy the one closest to yours and adapt it.</p>
+  <ul class="toc">
+    <li><a href="#agency">Marketing agency</a></li>
+    <li><a href="#brand">Personal brand on social media</a></li>
+    <li><a href="#software">Software company</a></li>
+    <li><a href="#launch">Product launch</a></li>
+    <li><a href="#build">How to build one</a></li>
+  </ul>
+</header>
+
+<img class="shot" src="screenshots/org-chart.jpg" alt="Squadra org chart with three linked squads: Personal brand, Marketing and Product, each with its coordinator and three workers" width="1433" height="401">
+<p class="caption">The org chart of the <a href="#launch">product launch</a> example: three squads, each with its coordinator and workers, and the links between them.</p>
+
+<div class="note"><b>How the pieces fit.</b> Each agent is a Claude Code session in its own folder, with a <b>persona</b>: a skill (<code>.claude/skills/&lt;name&gt;/SKILL.md</code>) or an agent (<code>.claude/agents/&lt;name&gt;.md</code>) from that folder. Workers only talk to their own coordinator; <b>linked coordinators</b> ask each other for work, and each hands what it takes on to its own workers. A squad's <b>goal</b> is told to its coordinator, which puts its effort there.</div>
+
+<!-- ============================================================== -->
+<h2 id="agency">Marketing agency</h2>
+<p class="for">For an agency, or a marketing team, that turns each client brief into a campaign: strategy, content and paid ads, with the account lead as the only point of contact.</p>
+
+<div class="org">
+  <div class="squad"><div class="head"><div class="name">Accounts</div><div class="goal">Turn each client brief into a campaign plan, and deliver it on time</div></div>
+    <ul><li class="coord">accounts-lead <span class="p">account-director</span></li><li>strategist <span class="p">brand-strategist</span></li><li>research <span class="p">market-researcher</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Content</div><div class="goal">Write and design everything a campaign publishes</div></div>
+    <ul><li class="coord">content-lead <span class="p">creative-director</span></li><li>copy <span class="p">copywriter</span></li><li>design <span class="p">designer</span></li><li>video <span class="p">video-scripts</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Performance</div><div class="goal">Run paid campaigns and SEO, and report what works</div></div>
+    <ul><li class="coord">perf-lead <span class="p">growth-lead</span></li><li>ads <span class="p">ads-analyst</span></li><li>seo <span class="p">seo-specialist</span></li><li>reports <span class="p">data-analyst</span></li></ul></div>
+</div>
+<ul class="links">
+  <li><b>Accounts ↔ Content:</b> accounts asks for the pieces the plan needs (landing page, emails, posts); content sends them back for review.</li>
+  <li><b>Accounts ↔ Performance:</b> accounts sets budget and targets; performance sends the weekly figures for the client report.</li>
+  <li><b>Content ↔ Performance:</b> performance asks for ad variants and landing tweaks when a test shows what converts.</li>
+</ul>
+
+<h3>Folders</h3>
+<pre><code>~/agency/
+  accounts/      # briefs, plans, client reports
+  content/       # copy, designs, scripts
+  performance/   # ad plans, SEO audits, figures
+  clients/acme/  # one folder per client: brief.md, brand.md, assets/
+
+Each squad's folder has its personas in .claude/skills/&lt;name&gt;/SKILL.md.</code></pre>
+
+<h3>First message to accounts-lead</h3>
+<pre><code>New client: Acme (read clients/acme/brief.md and brand.md). Launch campaign for
+their new app in 4 weeks, budget €8,000. Have the strategist write the plan and
+research check three competitors. When the plan is ready, ask Content for the
+landing page, 3 emails and 10 posts, and Performance for the ads plan within the
+budget. Send me the plan before anything is commissioned, and everything before
+it goes to the client.</code></pre>
+
+<!-- ============================================================== -->
+<h2 id="brand">Personal brand on social media</h2>
+<p class="for">For a founder, consultant or creator who wants a post a day on LinkedIn, X and YouTube, a weekly newsletter, and to know what the audience asks for.</p>
+
+<div class="org">
+  <div class="squad"><div class="head"><div class="name">Content studio</div><div class="goal">A post a day and a newsletter a week, in my voice</div></div>
+    <ul><li class="coord">editor <span class="p">editor-in-chief</span></li><li>writer <span class="p">ghostwriter</span></li><li>video <span class="p">video-scripts</span></li><li>visuals <span class="p">carousel-designer</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Audience</div><div class="goal">Learn what the audience wants, and grow it</div></div>
+    <ul><li class="coord">audience-lead <span class="p">growth-lead</span></li><li>community <span class="p">community-manager</span></li><li>analytics <span class="p">social-analyst</span></li></ul></div>
+</div>
+<ul class="links">
+  <li><b>Content studio ↔ Audience:</b> the editor asks what topics to cover this week; audience sends the questions people asked and the posts that worked best, and asks for replies to the most common questions.</li>
+</ul>
+
+<h3>Folders</h3>
+<pre><code>~/brand/
+  voice.md      # who I am, how I write, topics I cover and avoid, posts I liked
+  calendar.md   # the plan for the next two weeks (the editor keeps it)
+  studio/       # drafts/ and approved/
+  audience/     # exports/ (comments, analytics CSVs) and insights.md
+
+studio/ and audience/ have their squad's personas in .claude/skills/.</code></pre>
+
+<h3>First message to editor</h3>
+<pre><code>Plan the next two weeks in calendar.md: one LinkedIn post a day, two X threads and
+one YouTube short a week, and Friday's newsletter. Ask Audience which topics to
+pick. Writer drafts the posts and newsletter in drafts/ following voice.md, video
+writes the short's script, visuals the carousel for Tuesday. Show me each day's
+drafts together; I approve, and only approved ones go to approved/.</code></pre>
+
+<div class="note">Agents write drafts in files. <b>Publishing is up to you</b>, or to a tool you give them (an MCP server or CLI for your scheduler): Squadra's coordinator asks you before anything is published, and the agents only see the analytics you export into <code>audience/exports/</code>.</div>
+
+<!-- ============================================================== -->
+<h2 id="software">Software company</h2>
+<p class="for">For a team with several repositories (API, web, mobile) that wants features built in parallel, every pull request tested and reviewed, and releases kept boring.</p>
+
+<div class="org">
+  <div class="squad"><div class="head"><div class="name">Product</div><div class="goal">Build the features on the roadmap across API, web and mobile</div></div>
+    <ul><li class="coord">tech-lead <span class="p">tech-lead</span></li><li>api <span class="p">backend</span></li><li>web <span class="p">frontend</span></li><li>mobile <span class="p">mobile</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Quality</div><div class="goal">No pull request merged without tests, review and docs</div></div>
+    <ul><li class="coord">qa-lead <span class="p">qa-lead</span></li><li>tests <span class="p">test-engineer</span></li><li>review <span class="p">code-reviewer</span></li><li>docs <span class="p">tech-writer</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Platform</div><div class="goal">CI, environments and releases</div></div>
+    <ul><li class="coord">platform-lead <span class="p">devops</span></li><li>ci <span class="p">ci-engineer</span></li><li>release <span class="p">release-manager</span></li></ul></div>
+</div>
+<ul class="links">
+  <li><b>Product ↔ Quality:</b> each finished pull request goes to Quality with what to test; Quality answers OK or KO with the link, and the docs it updated.</li>
+  <li><b>Product ↔ Platform:</b> product asks for a new environment or config; platform asks product to fix what breaks the pipeline.</li>
+  <li><b>Quality ↔ Platform:</b> quality asks for a test environment for a branch; platform asks for the go-ahead before a release.</li>
+</ul>
+
+<h3>Folders</h3>
+<pre><code>~/company/
+  api/  web/  mobile/  # one repository and one worker each
+  quality/             # test plans, review checklists
+  platform/            # infrastructure repository
+
+Two workers in one repository? Give each its own git worktree.</code></pre>
+
+<h3>First message to tech-lead</h3>
+<pre><code>Next on the roadmap: team invitations (docs/roadmap.md, item 3). Split it: api adds
+the endpoints and emails, web the settings screen, mobile the accept screen. One
+branch and pull request per repository, linked to issue #142. When each pull
+request is ready, send it to Quality with what to test. Ask me before changing the
+database schema or anything about billing.</code></pre>
+
+<div class="note">Put the fixed rules (branch names, how to run the tests, what counts as done) in each repository's <code>CLAUDE.md</code> or in the persona, not in every task: they are read once per session instead of being repeated in each message.</div>
+
+<!-- ============================================================== -->
+<h2 id="launch">Product launch: product, marketing and personal brand</h2>
+<p class="for">For a small company launching a product: the product squad builds it, marketing runs the campaign, and the founder's personal brand tells the story. This is the org chart in the screenshot above.</p>
+
+<div class="org">
+  <div class="squad"><div class="head"><div class="name">Personal brand</div><div class="goal">Grow the founder's audience on LinkedIn, X and YouTube, a post a day</div></div>
+    <ul><li class="coord">brand-lead <span class="p">editor-in-chief</span></li><li>writer <span class="p">writer</span></li><li>video <span class="p">video-scripts</span></li><li>community <span class="p">community</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Marketing</div><div class="goal">Plan and run the launch campaign: landing page, emails and ads</div></div>
+    <ul><li class="coord">mkt-lead <span class="p">campaign-lead</span></li><li>copy <span class="p">copywriter</span></li><li>design <span class="p">designer</span></li><li>ads <span class="p">ads-analyst</span></li></ul></div>
+  <div class="squad"><div class="head"><div class="name">Product</div><div class="goal">Build the app the campaign sells: web front end, API and tests</div></div>
+    <ul><li class="coord">product-lead <span class="p">tech-lead</span></li><li>frontend <span class="p">frontend</span></li><li>backend <span class="p">backend</span></li><li>qa <span class="p">qa</span></li></ul></div>
+</div>
+<ul class="links">
+  <li><b>Personal brand ↔ Marketing:</b> marketing shares the launch dates and key messages; the brand squad turns them into the founder's story and sends back the posts that got the most reach.</li>
+  <li><b>Marketing ↔ Product:</b> marketing asks for the landing page to be built and the features to be screenshotted; product tells marketing what ships and when.</li>
+</ul>
+
+<h3>First messages</h3>
+<pre><code>To mkt-lead:  Launch is on the 15th. Plan the campaign in launch/plan.md: landing page,
+              3 emails and ads for two audiences. Ask Product what ships and for
+              screenshots, and tell Personal brand the key messages and dates.
+
+To product-lead: The launch is on the 15th with invitations and the new dashboard.
+              Tell Marketing what is ready and when, and build the landing page they
+              send you in web/.
+
+To brand-lead: Two weeks of posts building up to the launch on the 15th: the story
+              behind the product, from my voice (voice.md). Get the key messages
+              from Marketing.</code></pre>
+
+<!-- ============================================================== -->
+<h2 id="build">How to build one in Squadra</h2>
+<ol class="steps">
+  <li><b>Write the personas</b> in each folder, one skill per role (below). The dashboard lists them in the session dialog.</li>
+  <li><b>🏢 Org chart → + Squad</b> for each squad: the machine and folder, the coordinator's name, the squad's <b>name</b> and <b>goal</b>, and its persona.</li>
+  <li><b>+ Agent</b> on each squad's card, once per worker, each with its persona.</li>
+  <li><b>Link the squads</b> that need each other: drag the dot on a card's right edge onto the other card.</li>
+  <li><b>Save each squad as a template</b> (its ⋯ menu), to open it again in one click from <b>🖥️ Machines → Templates</b>.</li>
+  <li><b>Talk to each coordinator</b> in its terminal, with the first messages above.</li>
+</ol>
+<p>The step-by-step with screenshots is in the <a href="https://github.com/roke22/Squadra#3-build-your-squads">README</a>, and every option is in the <a href="https://github.com/roke22/Squadra/blob/main/docs/reference.md#org-chart">reference</a>.</p>
+
+<details>
+<summary>A persona: <code>content/.claude/skills/copywriter/SKILL.md</code></summary>
+<pre><code>---
+name: copywriter
+description: Writes landing pages, emails and ad copy in the client's voice
+---
+
+You are the agency's copywriter.
+
+- Before writing, read the client's brand.md and the campaign plan you are given.
+- Write in the client's voice and language. Short sentences, one idea each.
+- Deliver each piece as a Markdown file in the campaign's folder, with two
+  headline options and the call to action.
+- Never invent figures, prices or customer quotes: ask your coordinator.</code></pre>
+</details>
+
+<details>
+<summary>A coordinator persona: <code>accounts/.claude/skills/account-director/SKILL.md</code></summary>
+<pre><code>---
+name: account-director
+description: Runs each client account: plans, commissions work and reviews it
+---
+
+You run client accounts.
+
+- Every campaign starts with a plan in clients/&lt;client&gt;/plan.md, reviewed by
+  the user before anything is commissioned.
+- Ask the Content and Performance squads for what the plan needs, with the brief,
+  the deadline and where to leave it. Check what comes back against the plan.
+- Ask the user before sending anything to a client, publishing, or spending
+  budget.</code></pre>
+</details>
+
+<div class="note"><b>Keep it lean.</b> Each message wakes the agent that gets it, and each wake rereads its context. Few squads with clear goals, fixed rules in the persona or <code>CLAUDE.md</code>, and results batched into one message cost far fewer tokens than many small hops.</div>
+
+<footer>
+  <p><a href="./">Home</a> · <a href="https://github.com/roke22/Squadra">GitHub</a> · <a href="https://github.com/roke22/Squadra/blob/main/docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a></p>
+  <p>Squadra is open source under the MIT license, by <a href="https://github.com/roke22">Jose J. Anton</a>. Claude and Claude Code are trademarks of Anthropic; Squadra is an independent project.</p>
+</footer>
+</div>
+</body>
+</html>

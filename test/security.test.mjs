@@ -103,6 +103,42 @@ test('server notices cannot be edited by the worker they name', async () => {
   assert.equal(ed.ok, false)
 })
 
+test('a worker that stops responding keeps what it is sent until it is announced down', async () => {
+  const c = (await call('register', { name: 'gc' }, ADMIN)).result.secret
+  const w = (await call('register', { name: 'gw' }, ADMIN)).result.secret
+  await call('claimSession', { instance: 'inst-gc-0001', role: 'coordinator' }, c)
+  await call('claimSession', { instance: 'inst-gw-0001', role: 'worker', coordinator: 'gc' }, w)
+  await call('sendMessage', { chat_id: 'gw', text: 'first task' }, c, 'inst-gc-0001')
+  await call('sendMessage', { chat_id: 'gc', text: 'on it' }, w, 'inst-gw-0001')
+  const seen = await call('getUpdates', { timeout: 0, instance: 'inst-gw-0001' }, w)
+  // A network cut: its long poll drops.
+  const cut = new AbortController()
+  const poll = fetch(`${URL_}/getUpdates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${w}`, 'X-Squadra-Instance': 'inst-gw-0001' },
+    body: JSON.stringify({ timeout: 30, instance: 'inst-gw-0001', offset: seen.result.at(-1).update_id + 1 }),
+    signal: cut.signal,
+  }).catch(() => {})
+  await sleep(200)
+  cut.abort()
+  await poll
+  const chat = await waitFor(async () => { const r = (await call('getChat', { chat_id: 'gw' }, c, 'inst-gc-0001')).result; return r.online === false && r }, { what: 'gw offline' })
+  assert.ok(chat.down_in > 100 && chat.down_in <= 120, `announced in ${chat.down_in}s`)
+  // Sent to meanwhile: queued, not refused.
+  const sent = await call('sendMessage', { chat_id: 'gw', text: 'task during the cut' }, c, 'inst-gc-0001')
+  assert.ok(sent.ok, sent.description)
+  const o = sent.result.squadra_offline_recipients[0]
+  assert.equal(o.name, 'gw')
+  assert.equal(o.queued, true)
+  assert.ok(o.down_in > 100)
+  // It comes back (same session): it gets it, and its coordinator was told nothing.
+  const back = await call('getUpdates', { timeout: 0, instance: 'inst-gw-0001', offset: seen.result.at(-1).update_id + 1 }, w)
+  assert.deepEqual(back.result.map(u => u.message?.text), ['task during the cut'])
+  const notices = (await get('api/messages?session=gc', ADMIN)).result.filter(m => m.system && m.from === 'gw')
+  assert.deepEqual(notices, [])
+  assert.equal((await call('getChat', { chat_id: 'gw' }, c, 'inst-gc-0001')).result.down_in, undefined)
+})
+
 test('observation events are typed: no markup through numeric fields, no fake messages', async () => {
   const s = (await call('register', { name: 'xss1' }, ADMIN)).result.secret
   const payload = '<img src=x onerror=alert(1)>'

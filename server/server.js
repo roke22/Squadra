@@ -215,6 +215,10 @@ const VERSION = (() => {
 const POLL_MAX_TIMEOUT_S = 50
 const RATE_LIMIT_PER_MIN = 120             // messages per sender per minute
 const ONLINE_GRACE_MS = 15 * 1000          // gap allowed between two polls of a live plugin
+// A session that stops polling (lost network, its machine asleep) is announced
+// DOWN only after this long: a short network cut doesn't wake its coordinator
+// twice (DOWN, then back online) nor drop what was waiting for it.
+const LOST_GRACE_MS = Number(process.env.SQUADRA_LOST_GRACE_MS ?? 2 * 60_000)
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const GROUP_RE = /^#[A-Za-z0-9_-]{1,32}$/
 // A persona: a skill or an agent a session follows (its machine found it in
@@ -944,11 +948,17 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
   }
   const recipients = recipientsOf(target, from)
   // (When it was last seen only for a session it is related to, as getChat.)
-  const offline = recipients.filter(r => !isOnline(r)).map(r => ({
-    name: r,
-    last_seen_at: presence.get(r)?.lastPollAt && related(from, r) ? unix(presence.get(r).lastPollAt) : null, // (no queue count per member)
-    queued: roleOf(r) !== 'worker',
-  }))
+  // A worker that stopped responding is sent to until it is announced DOWN:
+  // it gets the message when it comes back, or the notice lists it as dropped.
+  const offline = recipients.filter(r => !isOnline(r)).map(r => {
+    const left = downIn(r)
+    return {
+      name: r,
+      last_seen_at: presence.get(r)?.lastPollAt && related(from, r) ? unix(presence.get(r).lastPollAt) : null, // (no queue count per member)
+      queued: roleOf(r) !== 'worker' || left != null,
+      ...(left != null && related(from, r) ? { down_in: left } : {}),
+    }
+  })
   const dropped = offline.filter(o => !o.queued)
   if (!system && !target.startsWith('#') && dropped.length) {
     const o = dropped[0]
@@ -1613,7 +1623,7 @@ function nowServing() {
 function sweepLeases() {
   if (!serving) return
   for (const [name, lease] of leases) {
-    if (!lease.downNotified && !holdsName(name, lease)) {
+    if (!lease.downNotified && !holdsName(name, lease) && now() - (presence.get(name)?.lastPollAt ?? 0) >= LOST_GRACE_MS) {
       announceDown(name, 'lost')
       // Gone: a server restart doesn't keep the name for it any more (the same
       // session can still come back: its instance is still known here).
@@ -1638,8 +1648,19 @@ function isOnline(name) {
   return !!p && !p.disconnected && now() - p.lastPollAt < ONLINE_GRACE_MS
 }
 
+// A worker that stopped responding and isn't announced DOWN yet: seconds
+// until it is (unless it comes back), or null.
+function downIn(name) {
+  if (isOnline(name) || roleOf(name) !== 'worker') return null
+  const lease = leases.get(name)
+  if (!lease || lease.downNotified) return null
+  const at = Math.max((presence.get(name)?.lastPollAt ?? 0) + LOST_GRACE_MS, lease.restoredUntil ?? 0)
+  return Math.max(0, Math.ceil((at - now()) / 1000))
+}
+
 function presenceOf(name) {
   const online = isOnline(name)
+  const left = downIn(name)
   const p = presence.get(name)
   const lastMsg = db.prepare('SELECT MAX(created_at) AS t FROM messages WHERE from_name = ?').get(name)?.t
   const pending = db.prepare('SELECT COUNT(*) AS n FROM updates WHERE recipient = ?').get(name)?.n ?? 0
@@ -1649,6 +1670,7 @@ function presenceOf(name) {
     last_seen_at: p?.lastPollAt ? unix(p.lastPollAt) : null,
     last_message_at: lastMsg ? unix(lastMsg) : null,
     pending_updates: pending,
+    ...(left != null ? { down_in: left } : {}),
   }
 }
 

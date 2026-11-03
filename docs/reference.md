@@ -70,7 +70,7 @@ Every agent is a normal interactive `claude` running in a terminal, so you can s
   - Messages to the coordinator are queued until it returns (for up to 24 h; at most 500 per sender and 10 000 in all, oldest dropped first).
 - **Presence.**
   - `ping` tells whether a session you have exchanged messages with (or share a group with) is alive, without waking it; it shows no presence for others.
-  - The coordinator is notified when a worker leaves, closes, or crashes, together with any work it never picked up (once the coordinator has written to that worker).
+  - The coordinator is notified when a worker leaves, closes, or crashes, together with any work it never picked up (once the coordinator has written to that worker). A worker that just stops responding (its network dropped, its machine went to sleep) is announced only after 2 minutes (`SQUADRA_LOST_GRACE_MS`), so a short network cut doesn't wake the coordinator. Meanwhile `ping` shows it as NOT RESPONDING, and what it is sent is queued: it gets it if it comes back in time; if not, the notice lists it as dropped.
 - **Context that survives compaction.**
   - When an agent auto-compacts, Squadra hands its role, its coordinator and the latest messages it received back to it, so it keeps working on the same task.
   - The coordinator is told when a worker compacts, and gets one warning when a worker passes 80% of its context (once the coordinator has written to that worker).
@@ -353,7 +353,7 @@ Each squad works on its own, but two can share work: **link** their coordinators
 Every message from a coordinator to its worker is a task, and every task ends with the worker's **final report**: `reply` with `report` set to `done`, `blocked`, `failed` or `question`, in up to three lines. It doesn't depend on what the worker or the coordinator decide:
 
 - **Starting needs no message:** when a task starts the worker's turn, the plugin puts 👀 on it. A reaction wakes nobody, so it costs no tokens.
-- **Finishing without the report isn't possible:** a `Stop` hook keeps the turn from ending and tells Claude to send it first. Nobody can waive it, not even the coordinator ("only tell me if something goes wrong" doesn't count).
+- **Finishing without the report isn't possible:** a `Stop` hook keeps the turn from ending and tells Claude to send it first. Nobody can waive it, not even the coordinator ("only tell me if something goes wrong" doesn't count). It only asks about tasks Claude has already seen: one that arrives as the turn ends is left for the next turn.
 - **If it still ends without one** (asked once already, or something went wrong), the coordinator gets an automatic notice: *"w1 ended its turn without a final report on your task #123"*.
 - **Information that needs no answer:** the coordinator sends it with `fyi: true`, and no report is expected.
 - The coordinator sees in `ping` whether each worker is **BUSY** or **free**, and the dashboard marks each report (✓ done, ⛔ blocked, ✗ failed, ? question) and each fyi message in the chat.

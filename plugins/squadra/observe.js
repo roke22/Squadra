@@ -290,9 +290,11 @@ export function compactPointFor(model, env = process.env) {
 // onToolInput(tool, input): the exact input of each tool call, at every level
 // (kept in memory by the plugin to show the coordinator exactly what will run).
 // onPrompt(prompt): each prompt about to be sent, whole (a worker's tasks start).
+// onChannelSeen(ids): message_ids of channel messages the transcript shows
+// reached Claude, also those put into a turn already going (no prompt for them).
 // stopCheck(active): when the turn is about to end, a reason to go on, or ''
 // (asked for by the Stop hook through the same socket).
-export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null, onPrompt = null, stopCheck = null }) {
+export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null, onPrompt = null, onChannelSeen = null, stopCheck = null }) {
   level = normalizeLevel(level) ?? 'full'
   const limits = LIMITS[level]
   let server = null
@@ -356,11 +358,16 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
       if (!line.trim()) continue
       let entry
       try { entry = JSON.parse(line) } catch { continue }
-      onTranscriptEntry(entry)
+      onTranscriptEntry(entry, line)
     }
   }
 
-  function onTranscriptEntry(e) {
+  function onTranscriptEntry(e, line) {
+    if (e.type !== 'assistant' && !e.isSidechain && onChannelSeen && line.includes('<channel')) {
+      // (The tag as Claude Code writes it, inside a JSON string: quotes escaped.)
+      const ids = [...line.matchAll(/<channel\b([^>]*)>/g)].map(m => Number(/\bmessage_id=\\"(\d+)\\"/.exec(m[1])?.[1])).filter(Boolean)
+      if (ids.length) try { onChannelSeen(ids) } catch (err) { log(`observe: channel callback failed: ${err.message}`) }
+    }
     if (e.type !== 'assistant' || e.isSidechain || !e.message) return
     const ts = Date.parse(e.timestamp) || Date.now()
     const usage = e.message.usage
@@ -499,6 +506,8 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           let msg = null
           try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {}
           if (msg?.want === 'stop') {
+            // Up to date first: what reached Claude in this turn counts.
+            readTail()
             Promise.resolve().then(() => stopCheck?.(msg.active === true))
               .catch(err => { log(`observe: stop check failed: ${err.message}`); return '' })
               .then(block => conn.end(JSON.stringify({ block: typeof block === 'string' ? block : '' })))
@@ -533,6 +542,8 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
       if (socketPath) try { rmSync(socketPath, { force: true }) } catch {}
       await flush().catch(() => {})
     },
+    // Reads what the transcript has added so far, right now.
+    sync: readTail,
     // for tests
     _onHook: onHook,
   }

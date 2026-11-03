@@ -47,8 +47,9 @@ async function api(method, params = {}, auth, instance) {
 
 before(async () => {
   serverProc = spawn(process.execPath, [join(ROOT, 'server/server.js')], {
-    // No cooldown between context notices, so the test needn't wait 5 minutes.
-    env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SQUADRA_SERVER_TOKEN: SERVER_TOKEN, SQUADRA_NOTICE_COOLDOWN_MS: '0' },
+    // No cooldown between context notices, so the test needn't wait 5 minutes,
+    // and a session that stops responding is announced down after 3 s, not 2 min.
+    env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SQUADRA_SERVER_TOKEN: SERVER_TOKEN, SQUADRA_NOTICE_COOLDOWN_MS: '0', SQUADRA_LOST_GRACE_MS: '3000' },
     stdio: ['ignore', 'inherit', 'pipe'],
   })
   serverProc.stderr.on('data', d => { if (process.env.DEBUG) process.stderr.write(d) })
@@ -385,9 +386,23 @@ test('plugin: login / logout / rename with tools', async () => {
   await boss.tool('login', { role: 'coordinator', name: 'jefe' })
   await boss.waitChannel(p => p.content === 'informe final', 'queued message for the coordinator')
 
-  // A worker that dies without warning (no logout, no clean exit) is announced as down.
+  // A worker that dies without warning (no logout, no clean exit) is announced
+  // as down, but only once it has been silent for the grace: a network cut
+  // shorter than that wakes nobody.
   wk.proc.kill('SIGKILL')
-  await boss.waitChannel(p => p.meta.kind === 'squadra_notice' && p.content.includes('worker9 is DOWN'), 'crash notice', 10000)
+  const killedAt = Date.now()
+  await waitFor(async () => /^worker9: NOT RESPONDING .*messages to it are queued; announced DOWN in \d+s/.test(await boss.tool('ping', { chat_id: 'worker9' })), { what: 'worker9 not responding' })
+  // Meanwhile what it is sent waits for it.
+  const meanwhile = await boss.tool('reply', { chat_id: 'worker9', text: 'tarea durante el corte' })
+  assert.match(meanwhile, /worker9 \(last seen .*\) is not responding right now .* The message is queued: it gets it if it comes back in the next \d+s/)
+  assert.equal(boss.channel(p => p.content.includes('worker9 is DOWN')).length, 0, 'not announced before the grace')
+  // It doesn't come back: announced, and the notice lists what it never got.
+  const down = await boss.waitChannel(p => p.meta.kind === 'squadra_notice' && p.content.includes('worker9 is DOWN'), 'crash notice', 10000)
+  assert.ok(Date.now() - killedAt >= 2900, 'announced after the grace')
+  assert.match(down.content, /It never picked up 1 message\(s\), which were dropped: "tarea durante el corte"/)
+  // From then on: DOWN, and refused.
+  assert.match(await boss.tool('ping', { chat_id: 'worker9' }), /^worker9: DOWN or closed/)
+  await assert.rejects(boss.tool('reply', { chat_id: 'worker9', text: 'otra' }), /NOT SENT: worker "worker9" is disconnected/)
   assert.equal(boss.channel(p => p.meta.kind === 'pairing_request').length, before)
 
   // Login under another name switches identity in place.
@@ -1476,6 +1491,32 @@ test('task reports: a worker can\'t end a task without its final report, and its
   assert.equal(items.find(m => m.text === 'FYI: the API moved to v2')?.fyi, true)
   // ping tells the coordinator whether its worker is busy or free.
   assert.match(await coord.tool('ping', { chat_id: 'trw' }), /trw: ALIVE .*; (free|BUSY)/)
+
+  // A task that arrives as the turn ends hasn't reached Claude yet: nothing is
+  // asked about it now (it would only get the previous report again), and the
+  // coordinator isn't told the turn ended without its report.
+  const transcript = join(wk.configDir, 'tr.jsonl')
+  writeFileSync(transcript, '')
+  await runHook(wk, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {}, session_id: 's', transcript_path: transcript, cwd: '/x' })
+  const t3 = idOf(await coord.tool('reply', { chat_id: 'trw', text: 'Task: the reports page' }))
+  await wk.waitChannel(p => p.content === 'Task: the reports page', 'task 3')
+  assert.equal(await stopHook(), null)
+  assert.equal(await stopHook(true), null)
+  // Put into a turn already going (no prompt for it, only the transcript shows
+  // it): now it is asked for, and only that task.
+  appendFileSync(transcript, JSON.stringify({ type: 'attachment', attachment: { type: 'queued_command', prompt: `<channel source="squadra" chat_id="trc" message_id="${t3}" user="trc"> Task: the reports page </channel>` } }) + '\n')
+  const t4 = idOf(await coord.tool('reply', { chat_id: 'trw', text: 'Task: the export button' }))
+  await wk.waitChannel(p => p.content === 'Task: the export button', 'task 4')
+  const b3 = await stopHook()
+  assert.equal(b3.decision, 'block')
+  assert.match(b3.reason, new RegExp(`final report on its task #${t3}\\. `))
+  // The report closes the task it has seen; the one still on its way stays.
+  await wk.tool('reply', { chat_id: 'trc', text: 'Reports page done', report: 'done' })
+  assert.equal(await stopHook(), null)
+  await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: `<channel source="squadra" chat_id="trc" message_id="${t4}" user="trc">Task: the export button</channel>`, session_id: 's', cwd: '/x' })
+  assert.match((await stopHook()).reason, new RegExp(`final report on its task #${t4}\\. `))
+  await sleep(300)
+  assert.equal(coord.channel(p => p.content.includes('ended its turn without a final report')).length, 1, 'only the first missing report was announced')
   coord.close()
   wk.close()
 })

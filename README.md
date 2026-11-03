@@ -13,7 +13,7 @@
   <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="GitHub stars"></a>
 </p>
 
-<p align="center"><a href="README-es.md">Leer en español</a> · <a href="https://roke22.github.io/Squadra/">Website</a> · <a href="docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.5</p>
+<p align="center"><a href="README-es.md">Leer en español</a> · <a href="https://roke22.github.io/Squadra/">Website</a> · <a href="https://roke22.github.io/Squadra/examples.html">Examples</a> · <a href="docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.5</p>
 
 ---
 
@@ -143,10 +143,27 @@ In the dashboard, open **🖥️ Machines → + Add machine**, choose the comput
 Then, still in the dashboard:
 
 1. **+ Folder** on the machine's card: choose the folders where agents may work (your projects).
-2. **+ New session**: open a **coordinator**, then its **workers**. Each one opens in a live terminal in your browser. The first time, accept Claude Code's prompts (for the development channel, choose *"I am using this for local development"*).
+2. **Open your first squad** ([step 3](#3-build-your-squads)), or a single session with **+ New session**. Each one opens in a live terminal in your browser. The first time, accept Claude Code's prompts (for the development channel, choose *"I am using this for local development"*).
 3. **Talk to the coordinator** in its terminal and tell it what you want done.
 
 ![A squad in the dashboard: the coordinator and its workers, each in a live web terminal](docs/screenshots/squad-view.jpg)
+
+## 3. Build your squads
+
+A squad is a coordinator and its workers, like a department. Build them in **🏢 Org chart**, in the sidebar:
+
+1. **+ Squad** opens the squad's coordinator. Choose the machine and the folder, name the session (`mkt-lead`) and give the squad a **name** and a **goal**: the coordinator is told both, and puts its effort there. If the folder has skills or agents, pick one as its **persona**.
+
+   ![The new squad dialog: machine, role, session name, squad name and goal](docs/screenshots/new-squad.jpg)
+
+2. **+ Agent** on the squad's card opens a worker for it. Open one per area or repository (`copy`, `design`, `ads`), each with its own persona.
+3. **Link the squads that need each other:** drag the dot on a card's right edge onto another card. Linked coordinators ask each other for work (marketing asks product for the landing page, product tells marketing what ships), and each hands what it takes on to its own workers.
+4. **Save each squad as a template:** its ⋯ menu → *Save squad … as a template*. **🖥️ Machines → Templates → Open squad** opens it all again, coordinator first.
+5. **Talk to each coordinator** in its terminal.
+
+![The org chart: Personal brand, Marketing and Product squads, each with its coordinator and workers, linked to each other](docs/screenshots/org-chart.jpg)
+
+The **[examples](https://roke22.github.io/Squadra/examples.html)** show whole organisations built this way: a marketing agency, a personal brand on social media, a software company and a product launch, with the squads, personas, links and first message for each. Everything the org chart does is in the [reference](docs/reference.md#org-chart).
 
 ## Good tips
 
@@ -187,6 +204,7 @@ Channels are the Claude Code feature that delivers messages into a session. Unti
 
 ## Learn more
 
+- [Examples](https://roke22.github.io/Squadra/examples.html): marketing, social media, software and launch organisations, squad by squad.
 - [docs/reference.md](docs/reference.md): setting agents up by hand without the dashboard, every server option, and how it all works.
 - [PLAN.md](PLAN.md): the full technical guide (Spanish).
 

@@ -70,7 +70,7 @@ Cada agente es un `claude` interactivo normal en un terminal, así que puedes in
   - Los mensajes al coordinador se guardan hasta que vuelve (hasta 24 h; como mucho 500 por remitente y 10 000 en total, descartando primero los más antiguos).
 - **Presencia.**
   - `ping` dice si está viva, sin despertarla, una sesión con la que ya has intercambiado mensajes (o compartes grupo); de las demás no muestra presencia.
-  - El coordinador recibe un aviso cuando un worker sale, se cierra o se cae, junto con el trabajo que no llegó a recoger (una vez que el coordinador le ha escrito a ese worker).
+  - El coordinador recibe un aviso cuando un worker sale, se cierra o se cae, junto con el trabajo que no llegó a recoger (una vez que el coordinador le ha escrito a ese worker). Si un worker solo deja de responder (se le cayó la red, su equipo entró en reposo), el aviso llega a los 2 minutos (`SQUADRA_LOST_GRACE_MS`), para que un corte corto de red no despierte al coordinador. Mientras tanto `ping` lo muestra como NOT RESPONDING y lo que se le envía queda en cola: le llega si vuelve a tiempo; si no, el aviso lo lista como descartado.
 - **Contexto que sobrevive a la compactación.**
   - Cuando un agente se autocompacta, Squadra le devuelve su rol, su coordinador y los últimos mensajes que recibió, para que siga con la misma tarea.
   - El coordinador recibe un aviso cuando un worker compacta, y otro, uno solo, cuando un worker pasa del 80 % de su contexto (una vez que el coordinador le ha escrito a ese worker).
@@ -353,7 +353,7 @@ Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaz
 Cada mensaje de un coordinador a su worker es una tarea, y cada tarea termina con el **informe final** del worker: `reply` con `report` en `done`, `blocked`, `failed` o `question`, en tres líneas como mucho. No depende de lo que decidan el worker o el coordinador:
 
 - **Empezar no necesita mensaje:** cuando una tarea arranca el turno del worker, el plugin le pone 👀. Una reacción no despierta a nadie, así que no gasta tokens.
-- **Terminar sin el informe no es posible:** un hook `Stop` impide que el turno acabe y le dice a Claude que lo envíe antes. Nadie puede dispensarlo, ni siquiera el coordinador ("avísame solo si algo va mal" no cuenta).
+- **Terminar sin el informe no es posible:** un hook `Stop` impide que el turno acabe y le dice a Claude que lo envíe antes. Nadie puede dispensarlo, ni siquiera el coordinador ("avísame solo si algo va mal" no cuenta). Solo pide el de las tareas que Claude ya ha visto: una que llega justo cuando el turno acaba queda para el turno siguiente.
 - **Si aun así termina sin él** (ya se le pidió una vez, o algo falló), el coordinador recibe un aviso automático: *"w1 ended its turn without a final report on your task #123"*.
 - **Información que no necesita respuesta:** el coordinador la envía con `fyi: true`, y no se espera informe.
 - El coordinador ve en `ping` si cada worker está **BUSY** (ocupado) o **free** (libre), y el panel marca en el chat cada informe (✓ hecho, ⛔ bloqueado, ✗ fallido, ? pregunta) y cada mensaje informativo.

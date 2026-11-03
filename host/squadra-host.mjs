@@ -1205,6 +1205,27 @@ function decodeOutput(buf) {
 // up to 8 MB per message; base64 adds a third).
 const SCREEN_MAX_BYTES = 1024 * 1024
 
+// The pane's modes that tmux knows (its format, then what sets the mode on and
+// off in a terminal that was just reset), so the dashboard's terminal behaves
+// as the program asked: with Claude Code's full-screen view, the mouse wheel
+// goes to Claude Code instead of scrolling an empty buffer. The first one,
+// the alternate screen, goes before the screen is drawn.
+const MODE_FLAGS = [
+  ['alternate_on'],
+  ['mouse_standard_flag', '\x1b[?1000h', ''],
+  ['mouse_button_flag', '\x1b[?1002h', ''],
+  ['mouse_all_flag', '\x1b[?1003h', ''],
+  ['mouse_sgr_flag', '\x1b[?1006h', ''],
+  ['mouse_utf8_flag', '\x1b[?1005h', ''],
+  ['keypad_cursor_flag', '\x1b[?1h', ''],
+  ['keypad_flag', '\x1b=', ''],
+  ['cursor_flag', '', '\x1b[?25l'],
+]
+// tmux doesn't say whether the program asked for bracketed paste. Claude Code
+// always does, and without it a text of several lines pasted in the dashboard
+// would reach it one line (one Enter) at a time.
+const PASTE_MODE = '\x1b[?2004h'
+
 class Viewer {
   constructor(id, send, congested = () => false) {
     // congested(): the connection to the server isn't keeping up (it stopped
@@ -1296,8 +1317,8 @@ class Viewer {
     this.held = [] // what came before the capture is in it; what comes during it is sent after
     this.heldBytes = 0
     try {
-      const { stdout: info } = await tmux(['display-message', '-p', '-t', `=${this.tname}:`, '#{history_size} #{pane_height} #{cursor_x} #{cursor_y}'])
-      const [hist, height, cx, cy] = info.trim().split(' ').map(Number)
+      const { stdout: info } = await tmux(['display-message', '-p', '-t', `=${this.tname}:`, `#{history_size} #{pane_height} #{cursor_x} #{cursor_y} ${MODE_FLAGS.map(([f]) => `#{${f}}`).join(' ')}`])
+      const [hist, height, cx, cy, ...flags] = info.trim().split(' ').map(Number)
       const back = Math.min(hist, 1000)
       const { stdout } = await tmux(['capture-pane', '-p', '-e', '-t', `=${this.tname}:`, '-S', String(-back), '-E', String(height - 1)], { encoding: 'buffer' })
       let lines = stdout.toString('utf8').split('\n')
@@ -1308,7 +1329,11 @@ class Viewer {
       let start = 0
       while (size > SCREEN_MAX_BYTES && start < lines.length - 1) size -= Buffer.byteLength(lines[start++]) + 6
       lines = lines.slice(start).map(l => (Buffer.byteLength(l) > SCREEN_MAX_BYTES ? Buffer.from(l).subarray(0, SCREEN_MAX_BYTES).toString('utf8') : l))
-      const data = '\x1b[0m\x1b[H\x1b[2J\x1b[3J' + lines.join('\x1b[0m\r\n') + `\x1b[${cy + 1};${cx + 1}H`
+      // (The dashboard resets its terminal before drawing this: the program's
+      // modes go too, so they are set again after it.)
+      const alt = flags[0] === 1
+      const modes = MODE_FLAGS.slice(1).map(([, on, off], i) => (flags[i + 1] === 1 ? on : off)).join('')
+      const data = (alt ? '\x1b[?1049h' : '') + '\x1b[0m\x1b[H\x1b[2J\x1b[3J' + lines.join('\x1b[0m\r\n') + `\x1b[${cy + 1};${cx + 1}H` + modes + PASTE_MODE
       if (this.congested()) this.stale = true
       else this.send({ t: 'screen', term: this.id, data: Buffer.from(data, 'utf8').toString('base64'), cols: this.cols, rows: this.rows })
     } finally {
