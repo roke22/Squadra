@@ -73,7 +73,29 @@ Open the pull request to `main`, titled `Squadra X.Y.Z`. CI runs the tests and c
 
 If anything changes `host/squadra-host.mjs` after this point, run step 3 again with the same version and commit the new signature. Do the same if `main` moved and you merged it in.
 
-### 5. Merge, check and tag
+### 5. Try it with Claude Code
+
+The tests use a stand-in for Claude Code, and a tag can't be moved, so try the branch with the real one first, on a server and a Claude Code config of their own:
+
+```bash
+mkdir -p ~/.squadra-test/data ~/.squadra-test/claude/channels/squadra
+git clone --branch release-X.Y.Z . ~/.squadra-test/clone
+export CLAUDE_CONFIG_DIR=~/.squadra-test/claude
+claude plugin marketplace add ~/.squadra-test/clone
+claude plugin install squadra@squadra
+PORT=7801 DATA_DIR=~/.squadra-test/data node ~/.squadra-test/clone/server/server.js
+```
+
+Put `SQUADRA_URL=http://127.0.0.1:7801` and `SQUADRA_SERVER_TOKEN=<join token>` in `channels/squadra/.env` of that config. Open two sessions with the `claude-squadra` alias, in the same `CLAUDE_CONFIG_DIR`, and check that:
+
+- a coordinator logs in, and asks to be approved in the dashboard;
+- a worker logs in and pairs, and isn't asked for a report on that;
+- a task goes to the worker, its permission prompts reach the coordinator, and its final report comes back;
+- the dashboard shows both, live.
+
+`/reload-plugins` doesn't restart the plugin's process: after changing the plugin, close the sessions and open them again. When it all works, delete `~/.squadra-test`.
+
+### 6. Merge, check and tag
 
 Merge the pull request, then:
 
@@ -86,7 +108,7 @@ git push origin vX.Y.Z
 
 Don't tag if the check fails: see [If something goes wrong](#if-something-goes-wrong). CI checks again on the tag, and the `release` job must be green before you go on.
 
-### 6. Publish the GitHub Release
+### 7. Publish the GitHub Release
 
 Create it from the tag, titled `Squadra vX.Y.Z`, either on GitHub or with:
 
@@ -96,7 +118,7 @@ gh release create vX.Y.Z --title "Squadra vX.Y.Z" --notes-file <notes-file> --ve
 
 Start the notes with a sentence on what the release brings, then a section per change, then what the note from step 2 says about updating. The README's release badge reads from here.
 
-### 7. Try it for real
+### 8. Try it for real
 
 On a server you run:
 
