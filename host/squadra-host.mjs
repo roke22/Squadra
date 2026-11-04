@@ -2288,7 +2288,9 @@ async function main() {
   await connect(creds)
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+// (Node runs a program by its real path: reached through a link, like anything
+// in /var on macOS, it is still this one.)
+if (process.argv[1] && realOr(process.argv[1]) === realOr(fileURLToPath(import.meta.url))) {
   // A bad message must never take the host down.
   process.on('unhandledRejection', err => log(`error: ${err?.message ?? err}`))
   process.on('uncaughtException', err => log(`error: ${err?.stack ?? err}`))

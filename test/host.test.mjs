@@ -693,6 +693,16 @@ test('a settings.json from 0.0.2 gets the new defaults once (continuing a conver
 
 // --- squadra-host update ---------------------------------------------------------------
 
+test('squadra-host runs when it is reached through a link', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'squadra-link-')))
+  mkdirSync(join(dir, 'real'))
+  writeFileSync(join(dir, 'real', 'program.mjs'), readFileSync(join(ROOT, 'host/squadra-host.mjs')))
+  symlinkSync(join(dir, 'real'), join(dir, 'link'))
+  const out = execFileSync(process.execPath, [join(dir, 'link', 'program.mjs'), 'help'], { env: { ...process.env, SQUADRA_HOST_DIR: join(dir, 'home') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  assert.match(out, /squadra-host/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('update: only a signed release, and not an older one', async t => {
   const { generateKeyPairSync, createPublicKey, sign } = await import('node:crypto')
   const { createServer } = await import('node:http')
