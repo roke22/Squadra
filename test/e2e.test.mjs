@@ -1508,6 +1508,37 @@ test('a coordinator with no workers connected does its squad\'s work itself, and
   coord.close()
 })
 
+test('task reports: being asked to pair is not a task', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'prc' })
+  const wk = new Plugin('prw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'prc' })
+  await wk.init()
+  await coord.waitChannel(p => p.meta.kind === 'pairing_request' && p.meta.user === 'prw', 'pairing request')
+  const asked = await wk.waitChannel(p => p.content.startsWith('Pairing required'), 'pairing code on the worker')
+  assert.equal(asked.meta.fyi, 'true')
+  // It ends its turn: nothing to report, and its coordinator isn't told it didn't.
+  const stopHook = () => runHookOut(wk, { hook_event_name: 'Stop', stop_hook_active: false, session_id: 's', cwd: '/x' }, ['--stop'])
+  assert.equal(await stopHook(), '')
+  // The same when the user approves it.
+  const coordDir = join(coord.configDir, 'channels', 'squadra', 'prc')
+  const access = JSON.parse(readFileSync(join(coordDir, 'access.json'), 'utf8'))
+  const code = Object.keys(access.pending)[0]
+  const entry = access.pending[code]
+  access.allowFrom.push(entry.senderId)
+  delete access.pending[code]
+  writeFileSync(join(coordDir, 'access.json'), JSON.stringify(access, null, 2))
+  mkdirSync(join(coordDir, 'approved'), { recursive: true })
+  writeFileSync(join(coordDir, 'approved', entry.senderId), entry.chatId)
+  const paired = await wk.waitChannel(p => p.content.startsWith('Paired with'), 'paired confirmation')
+  assert.equal(paired.meta.fyi, 'true')
+  assert.equal(await stopHook(), '')
+  await sleep(300)
+  assert.equal(coord.channel(p => p.content.includes('without a final report')).length, 0)
+  wk.close()
+  coord.close()
+})
+
 test('task reports: a worker can\'t end a task without its final report, and its coordinator is told if it does', async () => {
   const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
   await coord.init()

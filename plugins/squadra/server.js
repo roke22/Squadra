@@ -1038,7 +1038,7 @@ function checkApprovals(s) {
     const file = join(s.approvedDir, senderId)
     drop(file)
     if (!NAME_RE.test(senderId) || !allowed.includes(senderId)) continue
-    void call('sendMessage', { chat_id: senderId, text: `Paired with "${s.name}". You can now message each other.` }, { s })
+    void call('sendMessage', { chat_id: senderId, text: `Paired with "${s.name}". You can now message each other.`, squadra_fyi: true }, { s })
       .catch(err => log(`failed to send approval confirm: ${err.message}`))
   }
 }
@@ -2716,6 +2716,7 @@ async function handleInbound(s, msg, { edited = false } = {}) {
       chat_id,
       text: `${lead}: the user must run this in the terminal of session "${s.name}":\n\n/squadra:access pair ${result.code}`,
       squadra_auto: true, // an automatic reply: not a conversation with the sender
+      squadra_fyi: true, // and not a task for a worker: it reports nothing back
     }, { s }).catch(err => log(`pairing reply failed: ${err.message}`))
     // Also tell our own Claude, so the user sees the request in this terminal.
     // Claude must not approve it itself (see instructions).
@@ -2869,7 +2870,7 @@ async function handleCommand(s, msg, command) {
         : `Not paired. Send me a message to get a code.`
     }
   }
-  await call('sendMessage', { chat_id, text, squadra_auto: true }, { s }).catch(err => log(`command reply failed: ${err.message}`))
+  await call('sendMessage', { chat_id, text, squadra_auto: true, squadra_fyi: true }, { s }).catch(err => log(`command reply failed: ${err.message}`))
 }
 
 // --- polling loop ------------------------------------------------------------------------
