@@ -472,7 +472,10 @@ test('plugin: full coordinator/worker flow', async () => {
   assert.deepEqual(ci.capabilities.experimental, { 'claude/channel': {}, 'claude/channel/permission': {} })
   assert.match(ci.instructions, /Do NOT answer them/)
   assert.notEqual(ci.protocolVersion, '2026-07-28')
-  await w1.init()
+  const wi = await w1.init()
+  // Opened from the dashboard, no user has said anything to it: it must still know its tasks are wanted.
+  assert.match(wi.instructions, /opening it from the dashboard, so the coordinator's tasks are the work the user wants done: start on them without asking the user to confirm them/)
+  assert.match(wi.instructions, /permission prompts still apply/)
   await coord.waitConnected()
   await w1.waitConnected()
 
