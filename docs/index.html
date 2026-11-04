@@ -115,6 +115,7 @@ footer{color:var(--muted);text-align:center;padding:56px 0 40px;font-size:15px}
 
 <h2>Install in two steps</h2>
 <pre><code>git clone https://github.com/roke22/Squadra.git squadra &amp;&amp; cd squadra
+git checkout "$(git tag --sort=-v:refname | head -1)"   # the latest release
 node server/server.js        # dashboard at http://127.0.0.1:7787</code></pre>
 <p>Then open <strong>Machines → Add machine</strong> in the dashboard and run the one command it shows on each computer where agents should work. Full instructions, Docker and HTTPS setup are in the <a href="https://github.com/roke22/Squadra#readme">README</a>.</p>
 

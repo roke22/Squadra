@@ -2,7 +2,8 @@
 #
 #   cp .env.example .env      # set SQUADRA_DOMAIN
 #   docker compose up -d
-#   docker compose logs squadra-server   # prints the server token and the /squadra:configure command
+#   docker compose logs squadra-server   # the first time: the server token and the /squadra:configure command
+#   (later: docker compose exec squadra-server cat /data/server-token /data/join-token)
 #
 # Only Caddy publishes ports; squadra-server is reachable only through it.
 
@@ -20,7 +21,8 @@ services:
       - squadra-data:/data
 
   caddy:
-    image: caddy:2.8.4
+    # (Fixed by digest, here and in the Dockerfiles: to update, change both the tag and the digest.)
+    image: caddy:2.8.4@sha256:226d1f059b75399fe19182893c7184591c07b97afc8dfcf44eeb80c9a77a530f
     restart: unless-stopped
     depends_on:
       - squadra-server

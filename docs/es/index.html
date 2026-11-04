@@ -117,6 +117,7 @@ footer{color:var(--muted);text-align:center;padding:56px 0 40px;font-size:15px}
 
 <h2>Instalación en dos pasos</h2>
 <pre><code>git clone https://github.com/roke22/Squadra.git squadra &amp;&amp; cd squadra
+git checkout "$(git tag --sort=-v:refname | head -1)"   # la última versión
 node server/server.js        # panel en http://127.0.0.1:7787</code></pre>
 <p>Después abre <strong>Máquinas → Añadir máquina</strong> en el panel y ejecuta el comando que te muestra en cada equipo donde quieras agentes. Las instrucciones completas, Docker y HTTPS están en el <a href="https://github.com/roke22/Squadra/blob/main/README-es.md">README en español</a>.</p>
 

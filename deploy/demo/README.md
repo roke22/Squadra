@@ -34,6 +34,6 @@ Put your own projects in `projects/` (or mount another folder there). Delete `de
 
 - Only this computer reaches it (`127.0.0.1:7787`). The server's warning about plain HTTP is about the network: with this setup nothing leaves the computer.
 - Claude Code works only on what is in `projects/`: the rest of your computer is not in the container.
-- Updating: `git pull`, then `docker-compose up -d --build`. The plugin is the one in this repository, installed again when the image changes; restart open sessions to use it.
+- Updating: `git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"`, then `docker-compose up -d --build`. The plugin is the one in this repository, installed again when the image changes; restart open sessions to use it.
 - Another port: change `127.0.0.1:7787:7787` to, say, `127.0.0.1:8080:7787` and open http://localhost:8080.
 - To stop it: `docker-compose down` (the folder stays).

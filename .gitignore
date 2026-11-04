@@ -6,6 +6,9 @@ data/
 # Local notes, never committed
 *.local.md
 
+# Your deployment's settings (see deploy/.env.example)
+deploy/.env
+
 # Claude Code local config and secrets (not .claude-plugin, which is the marketplace manifest)
 .claude/
 # (except the demo project's personas)

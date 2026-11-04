@@ -27,18 +27,24 @@
  */
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
+import { appendFileSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
 import { homedir, hostname, platform, arch, userInfo, tmpdir } from 'node:os'
 import { join, resolve, sep, isAbsolute, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, sign, verify } from 'node:crypto'
 import { promisify } from 'node:util'
 
-const VERSION = '0.0.6'
+const VERSION = '0.0.7'
+// Who signs releases (scripts/release-sign.mjs): `update` only installs what
+// this key signed. Empty: this copy has no key to check with.
+const RELEASE_PUBLIC_KEY = 'MCowBQYDK2VwAyEA49ojJq4r4KLiWcRJiDxui2HzSZYpZA1qCBI4LLtOOyo'
 const run = promisify(execFile)
+// Never talk to the server without checking its certificate.
+delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
 
 const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')
 const CREDENTIALS_FILE = join(CONFIG_DIR, 'credentials.json')
+const HOST_KEY_FILE = join(CONFIG_DIR, 'host-key.json')
 const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json')
 const INSTALLED_SCRIPT = join(CONFIG_DIR, 'squadra-host.mjs')
 
@@ -923,6 +929,15 @@ function pluginEnv() {
   } catch {}
   return out
 }
+// A machine enrolled with --insecure before the plugin asked to be told too.
+function acceptPlainHttpInPlugin(server) {
+  if (!server.startsWith('http://') || pluginEnv().SQUADRA_INSECURE === '1' || pluginServerUrl() !== server.replace(/\/+$/, '')) return
+  let fd
+  try {
+    fd = openSync(join(claudeHome(), 'channels', 'squadra', '.env'), FS.O_WRONLY | FS.O_APPEND | (FS.O_NOFOLLOW ?? 0))
+    appendFileSync(fd, 'SQUADRA_INSECURE=1\n')
+  } catch {} finally { if (fd !== undefined) closeSync(fd) }
+}
 const pluginServerUrl = () => { const u = pluginEnv().SQUADRA_URL; return u && /^https?:\/\/\S+$/.test(u) ? u.replace(/\/+$/, '') : null }
 // The plugin's rule for its own folders (paths.js safeChain): the folder is
 // this user's and nobody else can write to it (a private group is fine), and
@@ -1394,6 +1409,7 @@ async function connect(creds) {
   const viewers = new Map() // terminal id -> Viewer
   const reattaches = new Map() // terminal id -> recent automatic re-attaches
   let ws = null
+  let link = null // the encrypted link with the server (see openLink)
   let backoff = 1000
   let connectedAt = 0
   let termMsgs = []
@@ -1411,7 +1427,8 @@ async function connect(creds) {
   const send = msg => {
     if (ws?.readyState !== 1) return
     if (ws.bufferedAmount > 16 * 1024 * 1024) return dropConnection('the server is not reading')
-    ws.send(JSON.stringify(msg))
+    const text = JSON.stringify(msg)
+    ws.send(link ? link.seal(text) : text)
   }
   // Give up on this connection and reconnect: closed, and the loop moves on
   // even if the close never completes (a server that stopped reading).
@@ -1561,7 +1578,50 @@ async function connect(creds) {
   }, 1000).unref()
 
   for (;;) {
-    const closed = await new Promise(resolveOnce => {
+    // The secret goes in an Authorization header, for a ticket of one use: what
+    // travels in the WebSocket's own headers can end up in a proxy's logs.
+    // (A server older than this program has no tickets, and takes the secret.)
+    let credential = creds.secret
+    let refused = null
+    link = null
+    try {
+      // First of all, before its secret goes anywhere: is this our server?
+      const proved = await serverIdentity(creds.server)
+      if (creds.server_key && proved?.key !== creds.server_key) {
+        refused = { code: 0, reason: `⚠️ this is not the server this machine knows (it expects the key ${serverFingerprint(creds.server_key)}, and this ${proved ? `one has ${serverFingerprint(proved.key)}` : 'one proves none'}). Its secret was not sent. It may be an impostor; if the server's key was really replaced, add this machine again from the dashboard` }
+      } else {
+        if (proved && !creds.server_key) {
+          creds.server_key = proved.key
+          writeJson(CREDENTIALS_FILE, creds)
+          log(`this server's key is ${serverFingerprint(proved.key)}: remembered`)
+        }
+        if (proved) pinServerKeyForPlugin(creds.server, proved.key)
+        const exchange = proved ? startLink(creds.id, proved) : null
+        const res = await fetch(`${creds.server}/host/ticket`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${creds.secret}`, ...(exchange ? { 'Content-Type': 'application/json' } : {}) },
+          ...(exchange ? { body: JSON.stringify(exchange.request) } : {}),
+          redirect: 'error',
+          signal: AbortSignal.timeout(20_000),
+        })
+        // (A server older than this program has no tickets, and takes the secret:
+        // it answers 401 or 404, and only says who it knows on the socket.)
+        if (!proved && (res.status === 401 || res.status === 404)) credential = creds.secret
+        else if (res.status === 401) refused = { code: 4001, reason: 'unknown or disconnected host' }
+        else if (res.ok) {
+          const answer = (await res.json()).result
+          credential = answer.ticket
+          if (exchange) {
+            link = openLink(exchange, proved, answer)
+            if (!link) refused = { code: 0, reason: '⚠️ the answer to the ticket request is not from this server: nothing was opened' }
+          }
+        } else if (res.status === 403) refused = { code: 0, reason: plain((await res.json().catch(() => ({}))).description ?? 'the server refuses this machine\'s key') }
+        else refused = { code: 0, reason: `the server answered HTTP ${res.status} to the ticket request` }
+      }
+    } catch (err) {
+      refused = { code: 0, reason: await diagnose(creds.server).catch(() => err.message) }
+    }
+    const closed = refused ?? await new Promise(resolveOnce => {
       // Settled once, by whichever comes first: a failed handshake fires only
       // "error" (never "close") in Node 22's WebSocket, and nothing else would
       // keep this program alive — it would end quietly and never reconnect.
@@ -1571,19 +1631,23 @@ async function connect(creds) {
       lastFromServer = Date.now()
       // The credential goes with the request (as a subprotocol): the server
       // accepts no socket it can't authenticate first.
-      try { ws = new WebSocket(wsUrl(creds.server), ['squadra', `auth.${creds.secret}`]) } catch (err) { return resolveClose({ code: 0, reason: err.message }) }
+      try { ws = new WebSocket(wsUrl(creds.server), ['squadra', `auth.${credential}`]) } catch (err) { return resolveClose({ code: 0, reason: err.message }) }
       ws.onopen = async () => {
         // A server that doesn't speak this protocol (older than this program).
         if (ws.protocol !== 'squadra') { try { ws.close(1000) } catch {} ; return resolveClose({ code: 0, reason: 'the server is older than this squadra-host: update the server' }) }
         // A small hello: the full info follows the server's welcome.
-        ws.send(JSON.stringify({ t: 'hello', id: creds.id }))
+        send({ t: 'hello', id: creds.id })
       }
+      const thisLink = link
       ws.onmessage = ev => {
         lastFromServer = Date.now()
-        // Nothing the server legitimately sends is this big.
-        if (typeof ev.data !== 'string' || ev.data.length > 1024 * 1024) { try { ws.close(4009, 'message too big') } catch {} ; return }
+        // Nothing the server legitimately sends is this big (once encrypted, a third more).
+        if (typeof ev.data !== 'string' || ev.data.length > (thisLink ? 1.5 : 1) * 1024 * 1024) { try { ws.close(4009, 'message too big') } catch {} ; return }
+        const text = thisLink ? thisLink.open(ev.data) : ev.data
+        // Changed, repeated or dropped on the way: this connection can't be trusted any more.
+        if (text === null) { log('⚠️  a message from the server does not check: reconnecting'); try { ws.close(4003, 'a message that does not check') } catch {} ; return }
         let m
-        try { m = JSON.parse(ev.data) } catch { return }
+        try { m = JSON.parse(text) } catch { return }
         onMessage(m).catch(err => log(`${plain(m?.t)}: ${err.message}`))
       }
       ws.onerror = ev => {
@@ -1640,11 +1704,14 @@ const USAGE = `Usage: squadra-host [command] [options]
   squadra-host folders               Folders where sessions may be opened (also from the dashboard)
   squadra-host folders add <path>    Allow one more (folders remove <path> to take one away)
   squadra-host update                Update squadra-host and the plugin to the server's version
+                                     (only a release signed with this program's key, and not an older
+                                     one; --allow-unsigned and --allow-downgrade to override that)
   squadra-host plugin                Install or update the Squadra plugin in Claude Code
   squadra-host service               Run in the background and start with the computer
                                      (service remove: stop doing that; service print: show the file)
   squadra-host forget                Delete this machine's credential
   squadra-host enroll <server> <code>  Join a Squadra server: the dashboard gives you this
+                                     (with --server-key=<hash>, the key that server must prove)
                                      command in Machines → + Add machine. It also installs the
                                      plugin, this command and the service
 
@@ -1683,11 +1750,110 @@ function checkScheme(server, insecure) {
   }
 }
 
+// --- this server and this machine, each proving who it is -----------------------------------
+
+const serverKeyHash = key => createHash('sha256').update(String(key)).digest('hex')
+const serverFingerprint = key => serverKeyHash(key).slice(0, 16).replace(/(.{4})(?=.)/g, '$1 ')
+
+// The server proves it holds its key, on a nonce of ours. Null: a server older
+// than this program, which has none to prove.
+async function serverIdentity(server) {
+  const nonce = randomBytes(18).toString('base64url')
+  const res = await fetch(`${server}/server-identity?nonce=${nonce}`, { redirect: 'error', signal: AbortSignal.timeout(20_000) })
+  if (res.status === 401 || res.status === 404) return null
+  if (!res.ok) throw new Error(`the server answered HTTP ${res.status} when asked for its key`)
+  const { key, challenge, sig } = (await res.json()).result ?? {}
+  if (typeof key !== 'string' || typeof challenge !== 'string' || !serverSigned(key, ['squadra-server-identity-1', nonce, challenge], sig)) throw new Error('the server did not prove its key')
+  return { key, challenge }
+}
+function serverSigned(key, fields, sig) {
+  try {
+    const publicKey = createPublicKey({ key: Buffer.from(key, 'base64url'), format: 'der', type: 'spki' })
+    return publicKey.asymmetricKeyType === 'ed25519' && verify(null, Buffer.from(JSON.stringify(fields)), publicKey, Buffer.from(String(sig), 'base64url'))
+  } catch {
+    return false
+  }
+}
+
+// This machine's own key: made once, and only ever used from here.
+function hostKey() {
+  const saved = readJson(HOST_KEY_FILE, null)
+  try {
+    const privateKey = createPrivateKey({ key: Buffer.from(String(saved.private), 'base64url'), format: 'der', type: 'pkcs8' })
+    if (privateKey.asymmetricKeyType === 'ed25519') return { privateKey, public: createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64url') }
+  } catch {}
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  const pub = publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+  writeJson(HOST_KEY_FILE, { private: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64url'), public: pub })
+  return { privateKey, public: pub }
+}
+
+// The link with the server is encrypted between the two of them, whatever is on
+// the way, even something with a certificate for its name that passes everything
+// along: the keys come from an exchange each side signs. Only the server's
+// signature opens it, and only this machine's gets it a ticket.
+function startLink(id, proved) {
+  const me = hostKey()
+  const ephemeral = generateKeyPairSync('x25519')
+  const eph = ephemeral.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+  const proof = sign(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', proved.key, 'host-ticket', id, proved.challenge, eph])), me.privateKey).toString('base64url')
+  return { ephemeral, eph, request: { key: me.public, challenge: proved.challenge, eph, proof } }
+}
+// What the two sides share, or null if the answer isn't the server's.
+function openLink(exchange, proved, answer) {
+  if (typeof answer?.ticket !== 'string' || typeof answer.eph !== 'string') return null
+  if (!serverSigned(proved.key, ['squadra-link-1', exchange.eph, answer.eph, proved.challenge, answer.ticket], answer.sig)) return null
+  let shared
+  try {
+    const peer = createPublicKey({ key: Buffer.from(answer.eph, 'base64url'), format: 'der', type: 'spki' })
+    shared = diffieHellman({ privateKey: exchange.ephemeral.privateKey, publicKey: peer })
+  } catch { return null }
+  const okm = Buffer.from(hkdfSync('sha256', shared, proved.challenge, `squadra-link-1|${exchange.eph}|${answer.eph}`, 64))
+  const toServer = okm.subarray(0, 32), fromServer = okm.subarray(32)
+  // AES-256-GCM, numbered by its place in each direction (the server's encryptSocket).
+  const iv = n => { const b = Buffer.alloc(12); b.writeBigUInt64BE(n, 4); return b }
+  let sent = 0n, received = 0n
+  return {
+    seal(text) {
+      const c = createCipheriv('aes-256-gcm', toServer, iv(sent++))
+      const body = Buffer.concat([c.update(text, 'utf8'), c.final()])
+      return Buffer.concat([body, c.getAuthTag()]).toString('base64')
+    },
+    open(raw) {
+      try {
+        const all = Buffer.from(raw, 'base64')
+        const d = createDecipheriv('aes-256-gcm', fromServer, iv(received++))
+        d.setAuthTag(all.subarray(-16))
+        return Buffer.concat([d.update(all.subarray(0, -16)), d.final()]).toString('utf8')
+      } catch { return null }
+    },
+  }
+}
+
+// The plugin on this machine remembers the same key (it does so by itself on a
+// machine with no squadra-host), per server. Never over one it already has.
+function pinServerKeyForPlugin(server, key) {
+  if (pluginServerUrl() !== server.replace(/\/+$/, '')) return
+  const dir = join(claudeHome(), 'channels', 'squadra', '.server-keys')
+  const file = join(dir, serverKeyHash(server.replace(/\/+$/, '')).slice(0, 16))
+  if (existsSync(file)) return
+  try {
+    ensurePrivateDir(dir)
+    writeFileSync(file, `${key}\n`, { mode: 0o600, flag: 'wx' })
+  } catch (err) { if (err.code !== 'EEXIST') log(`could not tell the plugin this server's key: ${err.message}`) }
+}
+
 // Returns true when it left squadra-host running in the background (service).
-async function enroll(server, code, { plugin = true, insecure = false, service = true } = {}) {
+async function enroll(server, code, { plugin = true, insecure = false, service = true, serverKey = null } = {}) {
   if (!server || !code) die(`enroll needs the server URL and a code.\n\n${USAGE}`, 2)
   server = server.replace(/\/+$/, '')
   checkScheme(server, insecure)
+  // The dashboard's command says which server this should be: with it, nothing
+  // here depends on who answers first.
+  let proved = null
+  try { proved = await serverIdentity(server) } catch (err) { die(`cannot check ${server}: ${err.cause?.message ?? err.message}`) }
+  if (serverKey && serverKeyHash(proved?.key ?? '') !== serverKey) die(`this is not the server the dashboard's command is for: ${proved ? `its key is ${serverFingerprint(proved.key)}` : 'it proves no key'}. Nothing was sent to it. Check the address, and that you copied the whole command`)
   const info = await hostInfo()
   let res
   try {
@@ -1704,7 +1870,7 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   if (typeof r.id !== 'string' || !/^h_[0-9a-f]{8,64}$/.test(r.id) || typeof r.secret !== 'string' || !/^sh_[A-Za-z0-9_-]{20,200}$/.test(r.secret)) {
     die('the server answered the enrollment with something unexpected')
   }
-  writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure })
+  writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure, ...(proved ? { server_key: proved.key } : {}) })
   // No folder is allowed until the user says which (folders add): enrolling
   // from wherever the script was downloaded must not open that place up.
   if (!existsSync(SETTINGS_FILE)) writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS, settings_version: SETTINGS_VERSION })
@@ -1724,9 +1890,11 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
     // The server address always; the join token only if the dashboard
     // offered it (sessions opened from the dashboard don't need it).
     ensurePrivateDir(join(pluginEnv, '..'))
-    writeFileSync(pluginEnv, `SQUADRA_URL=${pu}\n${pt ? `SQUADRA_SERVER_TOKEN=${pt}\n` : ''}`, { mode: 0o600, flag: 'wx' }) // never through a symlink
+    // (Enrolled with --insecure: the plugin needs to be told the same, or it refuses plain http.)
+    writeFileSync(pluginEnv, `SQUADRA_URL=${pu}\n${pt ? `SQUADRA_SERVER_TOKEN=${pt}\n` : ''}${insecure ? 'SQUADRA_INSECURE=1\n' : ''}`, { mode: 0o600, flag: 'wx' }) // never through a symlink
     log(`Squadra plugin configured for ${pu} (${pluginEnv})${pt ? '' : ', without a join token: only sessions opened from the dashboard can join'}`)
   }
+  if (proved) pinServerKeyForPlugin(server, proved.key)
   // Install the plugin itself, so sessions opened from the dashboard work unattended.
   if (plugin && info.claude) {
     try {
@@ -1988,7 +2156,20 @@ function claimInstance() {
 
 // squadra-host update: this program as the server has it now, then the
 // plugin that goes with it and the service restarted (the sessions stay).
-async function update() {
+// Why a program from the server isn't a release signed with our key, or ''.
+function unsignedReason(body, signature) {
+  if (!RELEASE_PUBLIC_KEY) return 'this squadra-host has no release key to check it with'
+  if (!signature) return 'the server has no signature for it'
+  try {
+    const key = createPublicKey({ key: Buffer.from(RELEASE_PUBLIC_KEY, 'base64url'), format: 'der', type: 'spki' })
+    // (One per line: while a new key takes over, a release is signed with both.)
+    return signature.split(/\s+/).some(s => verify(null, body, key, Buffer.from(s, 'base64url'))) ? '' : 'its signature does not match'
+  } catch {
+    return 'its signature can\'t be read'
+  }
+}
+
+async function update({ allowUnsigned = false, allowDowngrade = false } = {}) {
   const creds = readJson(CREDENTIALS_FILE, null)
   if (!creds?.server) die('this machine is not enrolled: there is no server to update from', 2)
   checkScheme(creds.server, creds.insecure === true)
@@ -1998,8 +2179,19 @@ async function update() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     body = Buffer.from(await res.arrayBuffer())
   } catch (err) { die(`cannot download squadra-host from ${creds.server}: ${err.cause?.message ?? err.message}`) }
+  // What is about to run here comes from the server: only a signed release,
+  // and not an older one (it could bring back what a later one fixed).
+  let signature = ''
+  try {
+    const res = await fetch(`${creds.server}/host/squadra-host.mjs.sig`, { redirect: 'error', signal: AbortSignal.timeout(60_000) })
+    if (res.ok) signature = (await res.text()).slice(0, 1024).trim()
+  } catch {}
+  const unsigned = unsignedReason(body, signature)
+  if (unsigned && !allowUnsigned) die(`not installing what ${creds.server} sent: ${unsigned}. Nothing was changed. If you built or trust this server's copy yourself, run: squadra-host update --allow-unsigned`)
+  if (unsigned) log(`⚠️  installing an unsigned squadra-host because you asked to: ${unsigned}`)
   const v = body.length < 4 * 1024 * 1024 ? /^const VERSION = '([0-9][0-9A-Za-z.-]{0,30})'$/m.exec(body.toString('utf8'))?.[1] : null
   if (!v) die('the server did not send squadra-host: nothing was changed')
+  if (olderVersion(v, VERSION) && !allowDowngrade) die(`the server has squadra-host ${plain(v)}, older than this one (${VERSION}): nothing was changed. If you did mean to go back, run: squadra-host update --allow-downgrade`)
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
   const tmp = `${INSTALLED_SCRIPT}.${process.pid}.tmp`
   writeFileSync(tmp, body, { mode: 0o600, flag: 'wx' })
@@ -2046,8 +2238,10 @@ async function main() {
   migrateSettings()
   const flags = new Set(argv.filter(a => a.startsWith('--')))
   const [cmd = 'run', ...rest] = argv.filter(a => !a.startsWith('--'))
-  const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service']
-  for (const f of flags) if (!known.includes(f)) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
+  const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade']
+  const serverKeyArg = argv.find(a => a.startsWith('--server-key='))?.slice('--server-key='.length)
+  if (serverKeyArg !== undefined && !/^[0-9a-f]{64}$/.test(serverKeyArg)) die('--server-key must be the 64 hex characters the dashboard gives', 2)
+  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
   if (flags.has('--allow-home') && flags.has('--no-allow-home')) die('--allow-home or --no-allow-home, not both', 2)
   if (flags.has('--allow-home') || flags.has('--no-allow-home')) {
     try { setAllowHome(flags.has('--allow-home')) } catch (err) { die(err.message, 2) }
@@ -2057,7 +2251,7 @@ async function main() {
   }
   if (cmd === 'folders') return folders(rest[0], rest[1])
   if (cmd === 'service') return service(rest[0])
-  if (cmd === 'update') return update()
+  if (cmd === 'update') return update({ allowUnsigned: flags.has('--allow-unsigned'), allowDowngrade: flags.has('--allow-downgrade') })
   if (cmd === 'forget') { rmSync(CREDENTIALS_FILE, { force: true }); return log('credential deleted') }
   if (cmd === 'status') {
     const creds = readJson(CREDENTIALS_FILE, null)
@@ -2074,7 +2268,7 @@ async function main() {
   }
   if (cmd === 'enroll') {
     // Enrolled and left running as a service: nothing more to do here.
-    if (await enroll(rest[0], rest[1], { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service') })) return
+    if (await enroll(rest[0], rest[1], { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service'), serverKey: serverKeyArg ?? null })) return
   }
   else if (cmd !== 'run') die(`unknown command "${plain(cmd)}"\n\n${USAGE}`, 2)
   {
@@ -2084,6 +2278,7 @@ async function main() {
   }
   const creds = readJson(CREDENTIALS_FILE, null)
   if (creds?.server) checkScheme(creds.server, creds.insecure === true)
+  if (creds?.insecure) acceptPlainHttpInPlugin(creds.server)
   if (!creds?.server || !creds?.secret) die(`this machine is not enrolled yet. In the dashboard, open Machines → + Add machine and run the command it shows.\n\n${USAGE}`, 2)
   if (!tv) log(`⚠️  tmux is not installed: sessions cannot be opened until it is (${TMUX_INSTALL}).`)
   PLUGIN = await pluginStatus()

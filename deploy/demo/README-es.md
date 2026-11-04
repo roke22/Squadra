@@ -34,6 +34,6 @@ Pon tus proyectos en `projects/` (o monta otra carpeta ahí). Borra `deploy/demo
 
 - Solo este equipo llega a ella (`127.0.0.1:7787`). El aviso del servidor sobre HTTP sin cifrar habla de la red: con esta configuración nada sale del equipo.
 - Claude Code solo trabaja con lo que hay en `projects/`: el resto de tu equipo no está en el contenedor.
-- Para actualizar: `git pull` y después `docker-compose up -d --build`. El plugin es el de este repositorio y se reinstala cuando cambia la imagen; reinicia las sesiones abiertas para usarlo.
+- Para actualizar: `git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"` y después `docker-compose up -d --build`. El plugin es el de este repositorio y se reinstala cuando cambia la imagen; reinicia las sesiones abiertas para usarlo.
 - Otro puerto: cambia `127.0.0.1:7787:7787` por, por ejemplo, `127.0.0.1:8080:7787` y abre http://localhost:8080.
 - Para pararla: `docker-compose down` (la carpeta se queda).

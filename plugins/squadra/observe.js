@@ -19,6 +19,7 @@
 import { createServer } from 'node:net'
 import { mkdirSync, rmSync, statSync, openSync, readSync, closeSync, existsSync } from 'node:fs'
 import { relative, isAbsolute, dirname } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 export const LEVELS = ['off', 'activity', 'full']
 
@@ -145,7 +146,7 @@ export function maskOutgoing(text) {
 
 // Commands and files whose content is likely to be secrets: their output (or,
 // for writes, their content) is not sent at all, whatever the level.
-const SECRET_FILE = /(^|[\/\s'"=~<])(\.env(\.[\w.*?{},-]{0,40})?|\.envrc|id_(rsa|dsa|ecdsa|ed25519)[\w.-]{0,20}|[\w.-]{1,100}\.(pem|key|p12|pfx|tfvars|tfstate)|\.netrc|\.git-credentials|\.git\/config|\.npmrc|\.pypirc|\.pgpass|\.vault-token|[\w.-]{0,60}credentials(\.(json|ya?ml|toml|ini|csv|txt|xml|conf|cfg|env|enc))?|\.aws\/|\.ssh\/|\.kube\/config|\.docker\/config\.json|[\w-]{0,60}secrets?\.(json|ya?ml|toml|ini|txt|env|enc|conf|cfg|properties|xml)|\.claude\.json|\.claude\/settings\.local\.json|\.yarnrc\.yml|\.htpasswd|wp-config\.php|\.gitconfig|[\w.-]{0,40}_history|\.local\/share\/keyrings\/|\.password-store\/|\/proc\/[\w]{1,10}\/environ|vault\.ya?ml|master\.key|[\w.-]{1,100}\.(asc|gpg|ppk|ovpn)|\.my\.cnf|\.s3cfg|\.boto|auth\.json|rclone\.conf|\.terraformrc|\.secrets|client_secret[\w.-]{0,120}\.json|[\w.-]{1,60}\.env|\.dev\.vars|kubeconfig|[\w.-]{1,60}\.p8|service[-_]?account[\w.-]{0,40}\.json|channels\/squadra\/[^\s'";|&)]{0,200}identity\.json)(?=$|[\s'";|&)*?[{,>:`$~\\/])/i
+const SECRET_FILE = /(^|[\/\s'"=~<])(\.env(\.[\w.*?{},-]{0,40})?|\.envrc|id_(rsa|dsa|ecdsa|ed25519)[\w.-]{0,20}|[\w.-]{1,100}\.(pem|key|p12|pfx|tfvars|tfstate)|\.netrc|\.git-credentials|\.git\/config|\.npmrc|\.pypirc|\.pgpass|\.vault-token|[\w.-]{0,60}credentials(\.(json|ya?ml|toml|ini|csv|txt|xml|conf|cfg|env|enc))?|\.aws\/|\.ssh\/|\.kube\/config|\.docker\/config\.json|[\w-]{0,60}secrets?\.(json|ya?ml|toml|ini|txt|env|enc|conf|cfg|properties|xml)|signing-key\.json|server-key|\.peer-keys\/|\.claude\.json|\.claude\/settings\.local\.json|\.yarnrc\.yml|\.htpasswd|wp-config\.php|\.gitconfig|[\w.-]{0,40}_history|\.local\/share\/keyrings\/|\.password-store\/|\/proc\/[\w]{1,10}\/environ|vault\.ya?ml|master\.key|[\w.-]{1,100}\.(asc|gpg|ppk|ovpn)|\.my\.cnf|\.s3cfg|\.boto|auth\.json|rclone\.conf|\.terraformrc|\.secrets|client_secret[\w.-]{0,120}\.json|[\w.-]{1,60}\.env|\.dev\.vars|kubeconfig|[\w.-]{1,60}\.p8|service[-_]?account[\w.-]{0,40}\.json|channels\/squadra\/[^\s'";|&)]{0,200}identity\.json)(?=$|[\s'";|&)*?[{,>:`$~\\/])/i
 const SECRET_COMMAND = /(^|[\s;|&(])(printenv|env|set|export|export\s+-p|declare\s+-[xp])(?=\s*($|[;|&)>]))|(^|[\s;|&(])printenv\s|\/proc\/[^\s\/]{1,20}\/environ|\bprocess\.env\b|\bos\.environ\b|\bENV\b\s*\[|\bps\s+[a-z-]{0,10}e[a-z]{0,10}w|\becho\s[^\n;|&]{0,200}\$\{?[A-Za-z0-9_]{0,40}(SECRET|TOKEN|PASS|KEY|PWD)|\b(op|bw)\s+(item\s+)?get\b|\bpass\s+show\b|\bkeyring\s+get\b|\bgit\s+credential\b|\bgh\s+auth\s+status\b[^\n]{0,100}--show-token|\bgcloud\s+auth\s+(print-access-token|print-identity-token|application-default\s+print-access-token)\b|\baz\s+account\s+get-access-token\b|\baws\s+(sts\s+get-session-token|configure\s+(export-credentials|list)|ecr\s+get-login-password)\b|\bgit\s+config\b[^\n]{0,100}remote\.[^\n\s]{1,100}\.url|\bkubectl\s+config\s+view\b|\bterraform\s+(output|show)\b|\bsops\s+(-d|--decrypt)\b|\bansible-vault\s+(view|decrypt)\b|\bdirenv\s+export\b|\bnpm\s+config\s+get\s+[^\n]{0,100}_auth|\bsecurity\s+find-[a-z-]{1,40}password\b|\bgpg\b[^\n]{0,200}--export-secret|\bkubectl\s+get\s+secrets?\b|\bgh\s+auth\s+token\b|\baws\s+configure\s+get\b|\bdocker\s+inspect\b|\bsource\s+[^\s;|&]*\.env/i
 // Folders whose files are all secrets (keyrings, password stores, keys).
 const SECRET_DIR = /(^|[\/\s'"=~])(\.local\/share\/keyrings|secrets|\.secrets|run\/secrets|\.config\/gh|\.config\/squadra-host|\.password-store|\.gnupg|\.ssh|\.aws|\.azure|\.config\/gcloud|Library\/Keychains)\//i
@@ -283,6 +284,8 @@ export function compactPointFor(model, env = process.env) {
 
 // --- observer -----------------------------------------------------------------
 
+const MAX_HOOK_BYTES = 64 * 1024 * 1024
+
 // contextProvider(source): text (or a promise of it) to give Claude right
 // after a compaction or a /clear (source "compact" or "clear", from the
 // SessionStart hook), or with a prompt ("prompt", from UserPromptSubmit),
@@ -302,7 +305,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
   let outbox = []
   let flushing = false
   let flushTimer = null
-  let tail = null // { path, offset, rest, timer }
+  let tail = null // { path, offset, rest, decoder, timer }
   let cwd = process.cwd()
   let stopped = false
 
@@ -334,24 +337,29 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
     let offset = 0
     // Start at the current end: this is a live view, not a replay.
     try { offset = statSync(path).size } catch {}
-    tail = { path, offset, rest: '', timer: setInterval(readTail, 700) }
+    tail = { path, offset, rest: '', decoder: new StringDecoder('utf8'), timer: setInterval(readTail, 700) }
   }
 
   function readTail() {
     if (!tail) return
     let size
     try { size = statSync(tail.path).size } catch { return }
-    if (size < tail.offset) tail.offset = 0 // rewritten
+    if (size < tail.offset) { // rewritten: nothing pending from before is valid
+      tail.offset = 0
+      tail.rest = ''
+      tail.decoder = new StringDecoder('utf8')
+    }
     if (size === tail.offset) return
     const len = Math.min(size - tail.offset, 4 * 1024 * 1024)
     const buf = Buffer.alloc(len)
-    let fd
+    let fd, got
     try {
       fd = openSync(tail.path, 'r')
-      readSync(fd, buf, 0, len, tail.offset)
+      got = readSync(fd, buf, 0, len, tail.offset) // (less than len if it shrank since the stat)
     } catch { return } finally { if (fd !== undefined) closeSync(fd) }
-    tail.offset += len
-    const chunk = tail.rest + buf.toString('utf8')
+    tail.offset += got
+    // (A read can end inside a character: the decoder keeps its first bytes for the next one.)
+    const chunk = tail.rest + tail.decoder.write(buf.subarray(0, got))
     const parts = chunk.split('\n')
     tail.rest = parts.pop() ?? ''
     for (const line of parts) {
@@ -501,7 +509,13 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
       try { rmSync(path, { force: true }) } catch {}
       server = createServer({ allowHalfOpen: true }, conn => {
         const chunks = []
-        conn.on('data', c => chunks.push(c))
+        let size = 0
+        conn.on('data', c => {
+          size += c.length
+          // (More than any hook sends: whatever else writes here can't fill the memory.)
+          if (size > MAX_HOOK_BYTES) { chunks.length = 0; conn.destroy(); return }
+          chunks.push(c)
+        })
         conn.on('end', () => {
           let msg = null
           try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch {}

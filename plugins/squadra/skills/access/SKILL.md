@@ -167,6 +167,10 @@ warned that its messages are being ignored).
 4. If `<session-name>` is this worker's own coordinator, it is also pinned in
    `<state-dir>/coordinator-pin.json`: tell the user to delete that file too
    and log in again (`/squadra:logout`, then `/squadra:login …`).
+5. If the channel warned about its signing key (a new key, or a message that
+   isn't signed), the machine also remembers that key in
+   `<root>/.peer-keys/<server>/<session-name>`: tell the user to delete that
+   file themselves, only if they know that session really has a new key.
 
 ### `policy <mode>`
 
