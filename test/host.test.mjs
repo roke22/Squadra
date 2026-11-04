@@ -7,7 +7,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync, readdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir, homedir, userInfo } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -136,7 +136,8 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.ok(en.ok, en.description)
   assert.match(en.result.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
   assert.ok(en.result.command.includes(`'${URL_}/host/squadra-host.mjs'`))
-  assert.ok(en.result.command.includes(`enroll '${URL_}' ${en.result.code}`))
+  assert.ok(en.result.command.includes(`enroll '${URL_}' ${en.result.code} --server-key=${en.result.server_key}`))
+  for (const system of ['linux', 'macos']) assert.ok(en.result.install[system].endsWith(`--server-key=${en.result.server_key}`))
 
   // The program is served by the server, as the command expects, and the
   // command checks its sha256 before running it (a tampered copy fails).
@@ -178,6 +179,10 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   const creds = JSON.parse(readFileSync(join(hostDir, 'credentials.json'), 'utf8'))
   assert.equal(creds.server, URL_)
   assert.match(creds.secret, /^sh_/)
+  // It remembers the server's key, and so does the plugin next to it.
+  const { createHash } = await import('node:crypto')
+  assert.equal(createHash('sha256').update(creds.server_key).digest('hex'), en.result.server_key)
+  assert.equal(readFileSync(join(claudeDir, 'channels', 'squadra', '.server-keys', createHash('sha256').update(URL_).digest('hex').slice(0, 16)), 'utf8').trim(), creds.server_key)
   const env = readFileSync(join(claudeDir, 'channels', 'squadra', '.env'), 'utf8')
   assert.match(env, new RegExp(`SQUADRA_URL=${URL_}`))
   // The machine gets the join token (register new sessions only), never the admin token.
@@ -684,4 +689,435 @@ test('a settings.json from 0.0.2 gets the new defaults once (continuing a conver
   writeFileSync(join(dir, 'settings.json'), JSON.stringify({ ...s, allow_resume: false }))
   run()
   assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).allow_resume, false)
+})
+
+// --- squadra-host update ---------------------------------------------------------------
+
+test('squadra-host runs when it is reached through a link', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'squadra-link-')))
+  mkdirSync(join(dir, 'real'))
+  writeFileSync(join(dir, 'real', 'program.mjs'), readFileSync(join(ROOT, 'host/squadra-host.mjs')))
+  symlinkSync(join(dir, 'real'), join(dir, 'link'))
+  const out = execFileSync(process.execPath, [join(dir, 'link', 'program.mjs'), 'help'], { env: { ...process.env, SQUADRA_HOST_DIR: join(dir, 'home') }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  assert.match(out, /squadra-host/)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('update: only a signed release, and not an older one', async t => {
+  const { generateKeyPairSync, createPublicKey, sign } = await import('node:crypto')
+  const { createServer } = await import('node:http')
+  const { promisify } = await import('node:util')
+  const { execFile } = await import('node:child_process')
+  const { privateKey } = generateKeyPairSync('ed25519')
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-update-'))
+  // A copy of the program with a key to check with (and no launcher in the real home).
+  const publicB64 = createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64url')
+  const real = readFileSync(join(ROOT, 'host/squadra-host.mjs'), 'utf8')
+  const copyWith = key => real.replace(/^const RELEASE_PUBLIC_KEY = '.*'$/m, `const RELEASE_PUBLIC_KEY = '${key}'`).replace('try { installLauncher() } catch {}', '')
+  const program = join(dir, 'program.mjs')
+  writeFileSync(program, copyWith(publicB64))
+  const release = v => Buffer.from(`const VERSION = '${v}'\nprocess.exit(0)\n`)
+  const signed = b => sign(null, b, privateKey).toString('base64url')
+  const served = { body: null, sig: null }
+  const srv = createServer((req, res) => {
+    const r = req.url.endsWith('.sig') ? served.sig : served.body
+    res.writeHead(r == null ? 404 : 200)
+    res.end(r ?? 'not found')
+  })
+  await new Promise(r => srv.listen(0, '127.0.0.1', r))
+  t.after(() => { srv.closeAllConnections(); srv.close() })
+  const hostHome = join(dir, 'host')
+  mkdirSync(hostHome, { recursive: true, mode: 0o700 })
+  writeFileSync(join(hostHome, 'credentials.json'), JSON.stringify({ server: `http://127.0.0.1:${srv.address().port}`, id: 'h', secret: 's' }))
+  const installed = join(hostHome, 'squadra-host.mjs')
+  const update = async (...flags) => {
+    try {
+      const { stdout, stderr } = await promisify(execFile)(process.execPath, [program, 'update', ...flags], { env: { ...process.env, SQUADRA_HOST_DIR: hostHome }, encoding: 'utf8' })
+      return { ok: true, text: stdout + stderr }
+    } catch (err) { return { ok: false, text: err.stdout + err.stderr } }
+  }
+  const has = v => existsSync(installed) && readFileSync(installed, 'utf8').includes(`'${v}'`)
+  const newer = release('9.9.9')
+
+  // No signature, or one that doesn't match: refused, nothing installed.
+  served.body = newer; served.sig = null
+  let r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /no signature/); assert.ok(!existsSync(installed))
+  served.sig = signed(release('9.9.8'))
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /does not match/); assert.ok(!existsSync(installed))
+  // Signed by someone else.
+  served.sig = sign(null, newer, generateKeyPairSync('ed25519').privateKey).toString('base64url')
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /does not match/); assert.ok(!existsSync(installed))
+  // Signed, but older than this program.
+  served.body = release('0.0.1'); served.sig = signed(served.body)
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /older than this one/); assert.ok(!existsSync(installed))
+  // A real release.
+  served.body = newer; served.sig = signed(newer)
+  r = await update()
+  assert.equal(r.ok, true, r.text); assert.ok(has('9.9.9'))
+  // While a new key takes over there are two signatures, and one is ours.
+  const otherKey = generateKeyPairSync('ed25519').privateKey
+  served.body = release('9.9.9'); served.sig = `${sign(null, served.body, otherKey).toString('base64url')}\n${signed(served.body)}\n`
+  r = await update()
+  assert.equal(r.ok, true, r.text)
+  served.sig = `${sign(null, served.body, otherKey).toString('base64url')}\n${signed(release('9.9.8'))}\n`
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /does not match/)
+  // Only by asking for it, with a warning.
+  served.body = release('9.9.10'); served.sig = null
+  r = await update('--allow-unsigned')
+  assert.equal(r.ok, true, r.text); assert.match(r.text, /unsigned/); assert.ok(has('9.9.10'))
+  served.body = release('0.0.2'); served.sig = signed(served.body)
+  r = await update('--allow-downgrade')
+  assert.equal(r.ok, true, r.text); assert.ok(has('0.0.2'))
+  // A copy with no key has nothing to check with.
+  writeFileSync(program, copyWith(''))
+  served.body = newer; served.sig = signed(newer)
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /no release key/)
+})
+
+test('preparing a release: the version everywhere, signed, or nothing changes', async () => {
+  const { createPublicKey, verify } = await import('node:crypto')
+  const { cpSync } = await import('node:fs')
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-release-'))
+  const files = ['scripts', 'package.json', 'server/package.json', 'plugins/squadra/package.json', 'plugins/squadra/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'host/squadra-host.mjs', '.github/ISSUE_TEMPLATE/bug_report.yml', 'README.md', 'README-es.md']
+  for (const f of files) cpSync(join(ROOT, f), join(dir, f), { recursive: true })
+  mkdirSync(join(dir, 'docs'))
+  writeFileSync(join(dir, 'docs/reference.md'), `· v${VERSION}</p>\n`); writeFileSync(join(dir, 'docs/referencia.md'), `· v${VERSION}</p>\n`)
+  const at = f => join(dir, f)
+  const text = f => readFileSync(at(f), 'utf8')
+  const edit = (f, change) => writeFileSync(at(f), change(text(f)))
+  const run = (script, ...args) => {
+    try {
+      return { ok: true, text: execFileSync(process.execPath, [at(`scripts/${script}.mjs`), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }
+    } catch (err) { return { ok: false, text: `${err.stdout}${err.stderr}` } }
+  }
+  const setKey = out => {
+    const key = /RELEASE_PUBLIC_KEY in host\/squadra-host\.mjs:\n(\S+)/.exec(out.text)[1]
+    edit('host/squadra-host.mjs', s => s.replace(/^const RELEASE_PUBLIC_KEY = '.*'$/m, `const RELEASE_PUBLIC_KEY = '${key}'`))
+    return key
+  }
+  edit('package.json', s => s.replace(/"test": ".*"/, '"test": "node -e 0"'))
+  const keyFile = at('key.pem'); const oldKeyFile = at('old-key.pem')
+  const firstPublic = setKey(run('release-sign', 'keygen', oldKeyFile))
+  rmSync(at('host/squadra-host.mjs.sig'), { force: true })
+  assert.equal(run('release', 'check').ok, false)
+
+  // Refused before anything changes: a key that isn't ours, a lower version, no upgrade notes.
+  const unrelated = at('unrelated.pem')
+  run('release-sign', 'keygen', unrelated)
+  const before = () => text('host/squadra-host.mjs') + text('package.json')
+  const start = before()
+  let r = run('release', '99.0.0', oldKeyFile)
+  assert.equal(r.ok, false); assert.match(r.text, /write what someone updating/); assert.equal(before(), start)
+  edit('docs/reference.md', s => `${s}**From ${VERSION}:** nothing\n`)
+  edit('docs/referencia.md', s => `${s}**Desde ${VERSION}:** nada\n`)
+  r = run('release', '99.0.0', unrelated)
+  assert.equal(r.ok, false); assert.match(r.text, /not the one/); assert.equal(before(), start)
+  r = run('release', '0.0.0', oldKeyFile)
+  assert.equal(r.ok, false); assert.match(r.text, /older than/); assert.equal(before(), start)
+
+  // A release: said everywhere (the real files), and signed.
+  r = run('release', '99.0.0', oldKeyFile)
+  assert.equal(r.ok, true, r.text); assert.match(r.text, /git tag -s v99\.0\.0/)
+  assert.ok(!files.slice(1).some(f => text(f).includes(`"version": "${VERSION}"`) || text(f).includes(`v${VERSION}`) || text(f).includes(`'${VERSION}'`)))
+  assert.equal(run('release', 'check').ok, true)
+  assert.equal(run('release', 'check', 'v99.0.0').ok, true)
+  assert.equal(run('release', 'check', 'v99.0.1').ok, false)
+  // A place left behind, or a change after signing.
+  const readme = text('README.md')
+  edit('README.md', s => s.replace('v99.0.0', 'v98.0.0'))
+  r = run('release', 'check')
+  assert.equal(r.ok, false); assert.match(r.text, /README\.md/)
+  writeFileSync(at('README.md'), readme)
+  const program = text('host/squadra-host.mjs')
+  edit('host/squadra-host.mjs', s => `${s}\n// changed`)
+  assert.equal(run('release', 'check').ok, false)
+  writeFileSync(at('host/squadra-host.mjs'), program)
+
+  // Tests that fail are said, and the same version can be run again.
+  edit('package.json', s => s.replace('"node -e 0"', '"node -e process.exit(1)"'))
+  r = run('release', '99.0.0', oldKeyFile)
+  assert.equal(r.ok, false); assert.match(r.text, /tests failed/)
+  edit('package.json', s => s.replace('"node -e process.exit(1)"', '"node -e 0"'))
+  assert.equal(run('release', '99.0.0', oldKeyFile).ok, true)
+
+  // A tag already there.
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd: dir, stdio: 'ignore' })
+  git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'x'); git('tag', 'v99.0.0')
+  r = run('release', '99.0.0', oldKeyFile)
+  assert.equal(r.ok, false); assert.match(r.text, /already exists/)
+  rmSync(at('.git'), { recursive: true })
+
+  // A new key: both sign, so a machine with either accepts it. The old one alone won't do.
+  const newPublic = setKey(run('release-sign', 'keygen', keyFile))
+  assert.equal(run('release-sign', 'sign', oldKeyFile).ok, false)
+  assert.equal(run('release-sign', 'sign', keyFile, keyFile).ok, false)
+  r = run('release', '99.0.0', keyFile, oldKeyFile)
+  assert.equal(r.ok, true, r.text)
+  const signatures = text('host/squadra-host.mjs.sig').trim().split('\n')
+  assert.equal(signatures.length, 2)
+  for (const key of [firstPublic, newPublic]) {
+    const publicKey = createPublicKey({ key: Buffer.from(key, 'base64url'), format: 'der', type: 'spki' })
+    assert.ok(signatures.some(s => verify(null, readFileSync(at('host/squadra-host.mjs')), publicKey, Buffer.from(s, 'base64url'))), 'each machine can check it')
+  }
+})
+
+test('squadra-host keeps its secret out of the WebSocket headers, and stops only when the server says so', async t => {
+  const { createServer } = await import('node:http')
+  const { generateKeyPairSync, sign } = await import('node:crypto')
+  const seen = { ticketAuth: null, protocols: [], answer: 200, proves: null }
+  const srv = createServer((req, res) => {
+    if (req.url.startsWith('/server-identity')) {
+      // (A server older than this program has no key to prove.)
+      if (!seen.proves) { res.writeHead(seen.answer === 401 ? 401 : 404); return res.end('{}') }
+      const nonce = new URL(req.url, 'http://x').searchParams.get('nonce')
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ ok: true, result: { key: seen.proves.public, challenge: 'c', sig: sign(null, Buffer.from(JSON.stringify(['squadra-server-identity-1', nonce, 'c'])), seen.proves.privateKey).toString('base64url') } }))
+    }
+    if (req.url === '/host/ticket') {
+      seen.ticketAuth = req.headers.authorization
+      if (seen.answer !== 200) { res.writeHead(seen.answer); return res.end('{}') }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ ok: true, result: { ticket: 'ht_a_ticket_for_this_test' } }))
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, version: VERSION }))
+  })
+  srv.on('upgrade', (req, socket) => { seen.protocols.push(String(req.headers['sec-websocket-protocol'])); socket.destroy() })
+  await new Promise(r => srv.listen(0, '127.0.0.1', r))
+  t.after(() => { srv.closeAllConnections(); srv.close() })
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-ticket-'))
+  const secret = 'sh_the_real_secret_of_this_machine'
+  writeFileSync(join(dir, 'credentials.json'), JSON.stringify({ server: `http://127.0.0.1:${srv.address().port}`, id: 'h', secret }), { mode: 0o600 })
+  const run = () => spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: { ...process.env, SQUADRA_HOST_DIR: dir, SQUADRA_TMUX_SOCKET: `${SOCKET}-ticket`, PATH: dirname(process.execPath) + ':/usr/bin:/bin' }, stdio: 'ignore' })
+  const a = run()
+  try {
+    await waitFor(() => seen.protocols.length > 0, { timeout: 20_000, what: 'the WebSocket request' })
+    assert.equal(seen.ticketAuth, `Bearer ${secret}`)
+    assert.ok(seen.protocols.every(p => p.includes('auth.ht_a_ticket_for_this_test') && !p.includes(secret)), seen.protocols.join())
+  } finally { a.kill('SIGKILL') }
+  // A server without tickets (older than this program) still gets the secret,
+  // whichever way it refuses the ticket: for one of them, a machine's secret is
+  // just a session it doesn't know.
+  for (const answer of [404, 401]) {
+    seen.protocols = []
+    seen.answer = answer
+    const b = run()
+    try {
+      await waitFor(() => seen.protocols.length > 0, { timeout: 20_000, what: 'the WebSocket request' })
+      assert.ok(seen.protocols[0].includes(`auth.${secret}`))
+    } finally { b.kill('SIGKILL') }
+  }
+  // Told by a server that proves its key that it is unknown: it stops, with
+  // exit 0, and the service isn't restarted.
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  seen.proves = { privateKey, public: publicKey.export({ format: 'der', type: 'spki' }).toString('base64url') }
+  seen.answer = 401
+  const c = run()
+  const code = await new Promise(resolve => { c.on('close', resolve); setTimeout(() => { c.kill('SIGKILL'); resolve('still running') }, 20_000) })
+  assert.equal(code, 0)
+})
+
+test('the server keeps its key: made once, the same after a restart, and never replaced by itself', async () => {
+  const { randomBytes } = await import('node:crypto')
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-server-key-'))
+  const port = 21500 + Math.floor(Math.random() * 500)
+  const start = () => spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: dir, SQUADRA_SERVER_TOKEN: SERVER_TOKEN }, stdio: ['ignore', 'ignore', 'pipe'] })
+  const up = async () => {
+    const p = start()
+    p.log = ''
+    p.stderr.on('data', d => { p.log += d })
+    await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, { what: 'server' })
+    return p
+  }
+  const stop = p => new Promise(r => { p.on('close', r); p.kill('SIGTERM') })
+  const key = async () => (await (await fetch(`http://127.0.0.1:${port}/server-identity?nonce=${randomBytes(18).toString('base64url')}`)).json()).result.key
+  let p = await up()
+  const first = await key()
+  const file = join(dir, 'server-key')
+  assert.equal(statSync(file).mode & 0o777, 0o600)
+  await waitFor(() => p.log.includes('Server key:'), { what: 'the banner' })
+  assert.ok(!p.log.includes(readFileSync(file, 'utf8').split('\n')[1]), 'the private key is not in the log')
+  await stop(p)
+  p = await up()
+  assert.equal(await key(), first)
+  await stop(p)
+  // A damaged key isn't replaced: that would make it look like an impostor to everyone.
+  writeFileSync(file, 'not a key\n')
+  p = start()
+  const code = await new Promise(r => p.on('close', r))
+  assert.equal(code, 1)
+  assert.equal(readFileSync(file, 'utf8'), 'not a key\n')
+})
+
+test('a machine and its server prove who they are, and their link is theirs alone', { skip: !hasTmux && 'tmux not installed' }, async t => {
+  const { createServer: createTcp, connect } = await import('node:net')
+  const { createServer } = await import('node:http')
+  const { generateKeyPairSync, sign } = await import('node:crypto')
+  // Everything goes through this: it sees all the bytes, and can change them.
+  const relay = { target: PORT, toHost: [], toServer: [], flipToHost: false, flipToServer: false, sockets: new Set() }
+  const flip = d => { const b = Buffer.from(d); b[b.length - 5] ^= 1; return b }
+  const tcp = createTcp(client => {
+    const up = connect(relay.target, '127.0.0.1')
+    relay.sockets.add(client).add(up)
+    client.on('data', d => { relay.toServer.push(d); if (relay.flipToServer && d.length > 40) { relay.flipToServer = false; d = flip(d) } up.write(d) })
+    up.on('data', d => { relay.toHost.push(d); if (relay.flipToHost && d.length > 40) { relay.flipToHost = false; d = flip(d) } client.write(d) })
+    for (const s of [client, up]) { s.on('error', () => {}); s.on('close', () => { client.destroy(); up.destroy() }) }
+  })
+  await new Promise(r => tcp.listen(0, '127.0.0.1', r))
+  relay.cut = () => { for (const s of relay.sockets) s.destroy(); relay.sockets.clear() }
+  const through = `http://127.0.0.1:${tcp.address().port}`
+  let host
+  const hostDir2 = join(work, 'host-link')
+  mkdirSync(hostDir2, { recursive: true, mode: 0o700 })
+  writeFileSync(join(hostDir2, 'settings.json'), JSON.stringify({ folders: [allowed], max_sessions: 1, allow_input: true, claude_command: fakeClaude }))
+  const env = { ...process.env, SQUADRA_HOST_DIR: hostDir2, SQUADRA_TMUX_SOCKET: `${SOCKET}-link`, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', PATH: `${dirname(fakeClaude)}:${process.env.PATH}` }
+  t.after(() => { host?.kill('SIGKILL'); relay.cut(); tcp.close() })
+
+  const en = await dash('hosts/enroll', { name: 'link box' })
+  // A command for another server: nothing is sent, and the code isn't used up.
+  const wrong = await new Promise(resolve => {
+    const p = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', through, en.result.code, '--no-service', '--no-plugin', `--server-key=${'0'.repeat(64)}`], { env, stdio: ['ignore', 'ignore', 'pipe'], cwd: work })
+    let log = ''
+    p.stderr.on('data', d => { log += d })
+    p.on('close', code => resolve({ code, log }))
+  })
+  assert.notEqual(wrong.code, 0); assert.match(wrong.log, /not the server the dashboard/)
+  assert.ok(!existsSync(join(hostDir2, 'credentials.json')))
+
+  let log = ''
+  host = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', through, en.result.code, '--no-service', '--no-plugin', `--server-key=${en.result.server_key}`], { env, stdio: ['ignore', 'ignore', 'pipe'], cwd: work })
+  host.stderr.on('data', d => { log += d })
+  const online = () => waitFor(async () => (await dash('hosts')).result.find(x => x.name === 'link box' && x.online), { what: 'the machine online', timeout: 45_000 })
+  const { id } = await online()
+  const creds = JSON.parse(readFileSync(join(hostDir2, 'credentials.json'), 'utf8'))
+  assert.ok(creds.server_key)
+  assert.equal(statSync(join(hostDir2, 'host-key.json')).mode & 0o777, 0o600)
+
+  // Nothing on the link can be read on the way…
+  const roundTrip = async () => {
+    const r = await dash('hosts/folders', { host: id, action: 'add', path: join(work, 'nope') })
+    assert.equal(r.ok, false); assert.doesNotMatch(r.description, /not connected|timed? ?out|disconnected/i)
+  }
+  await roundTrip()
+  // (What the server sends isn't masked: this is the only thing hiding it.)
+  const upToServer = Buffer.concat(relay.toServer).toString('latin1')
+  assert.match(upToServer, /auth\.ht_/)
+  assert.ok(!upToServer.includes(`auth.${creds.secret}`))
+  const fromServer = Buffer.concat(relay.toHost).toString('latin1')
+  const onLink = fromServer.slice(fromServer.lastIndexOf('101 Switching Protocols'))
+  assert.ok(onLink.length > 100, 'something was sent on the link')
+  assert.doesNotMatch(onLink, /"t":|link box|nope/)
+
+  // …and whoever has its secret alone gets nothing.
+  const ticket = await fetch(`${URL_}/host/ticket`, { method: 'POST', headers: { Authorization: `Bearer ${creds.secret}` } })
+  assert.equal(ticket.status, 403)
+  const closed = await new Promise(resolve => {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/host/connect`, ['squadra', `auth.${creds.secret}`])
+    ws.onclose = ev => resolve(ev.code)
+  })
+  assert.equal(closed, 4003)
+  // Nor with a good proof of another key.
+  const { randomBytes } = await import('node:crypto')
+  const nonce = randomBytes(18).toString('base64url')
+  const { key: serverKey, challenge } = (await (await fetch(`${URL_}/server-identity?nonce=${nonce}`)).json()).result
+  const other = generateKeyPairSync('ed25519')
+  const eph = generateKeyPairSync('x25519').publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+  const otherTicket = await fetch(`${URL_}/host/ticket`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${creds.secret}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      key: other.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'), challenge, eph,
+      proof: sign(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', serverKey, 'host-ticket', id, challenge, eph])), other.privateKey).toString('base64url'),
+    }),
+  })
+  assert.equal(otherTicket.status, 403)
+  assert.match((await otherTicket.json()).description, /different key/)
+
+  // A byte changed, either way: noticed, and the machine connects again.
+  relay.flipToHost = true
+  await dash('hosts/folders', { host: id, action: 'add', path: join(work, 'nope') }).catch(() => {})
+  await waitFor(() => log.includes('does not check'), { what: 'the machine to notice' })
+  await online()
+  await waitFor(async () => { try { await roundTrip(); return true } catch { return false } }, { what: 'the link back' })
+  const mark = log.length
+  relay.flipToServer = true
+  await dash('hosts/folders', { host: id, action: 'add', path: join(work, 'nope') }).catch(() => {})
+  await waitFor(() => log.slice(mark).includes('connection lost'), { what: 'the server to drop it' })
+  await online()
+  await waitFor(async () => { try { await roundTrip(); return true } catch { return false } }, { what: 'the link back' })
+
+  // Something else at that address, with its own key.
+  const impostor = generateKeyPairSync('ed25519')
+  const pub = impostor.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+  const fake = { auth: [], upgrades: 0, mode: 'own key' }
+  const answerJson = (res, result, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: status === 200, result })) }
+  const fakeServer = createServer(async (req, res) => {
+    const chunks = []
+    for await (const c of req) chunks.push(c)
+    if (req.headers.authorization) fake.auth.push(req.headers.authorization)
+    const body = Buffer.concat(chunks).toString('utf8')
+    if (fake.mode === 'own key') {
+      const nonce = new URL(req.url, 'http://x').searchParams.get('nonce')
+      return answerJson(res, { key: pub, challenge: 'c', sig: sign(null, Buffer.from(JSON.stringify(['squadra-server-identity-1', nonce, 'c'])), impostor.privateKey).toString('base64url') })
+    }
+    if (fake.mode === 'no key') return answerJson(res, undefined, 404)
+    // In the middle, passing on what each says with a certificate for the name:
+    // it can swap the keys of the exchange, but it can't sign them.
+    const swapped = generateKeyPairSync('x25519').publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+    const sent = fake.mode === 'swap ours' && req.url === '/host/ticket' ? JSON.stringify({ ...JSON.parse(body), eph: swapped }) : body
+    const up = await fetch(`${URL_}${req.url}`, { method: req.method, headers: { ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}), 'Content-Type': 'application/json' }, ...(req.method === 'POST' ? { body: sent } : {}) })
+    const j = await up.json()
+    if (fake.mode === 'swap theirs' && req.url === '/host/ticket' && j.ok) j.result.eph = swapped
+    res.writeHead(up.status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(j))
+  })
+  fakeServer.on('upgrade', (req, socket) => { fake.upgrades++; socket.destroy() })
+  await new Promise(r => fakeServer.listen(0, '127.0.0.1', r))
+  t.after(() => { fakeServer.closeAllConnections(); fakeServer.close() })
+  const pointAt = port => { relay.target = port; relay.cut() }
+  let at = log.length
+  pointAt(fakeServer.address().port)
+  await waitFor(() => /not the server this machine knows/.test(log.slice(at)), { what: 'an impostor noticed', timeout: 45_000 })
+  assert.deepEqual(fake.auth, [], 'its secret was not sent')
+  at = log.length
+  fake.mode = 'no key'
+  relay.cut()
+  await waitFor(() => /one proves none/.test(log.slice(at)), { what: 'a server with no key noticed', timeout: 45_000 })
+  assert.deepEqual(fake.auth, [])
+  assert.equal(fake.upgrades, 0)
+
+  at = log.length
+  fake.mode = 'swap theirs'
+  relay.cut()
+  await waitFor(() => /not from this server/.test(log.slice(at)), { what: 'a swapped answer noticed', timeout: 45_000 })
+  at = log.length
+  fake.mode = 'swap ours'
+  relay.cut()
+  await waitFor(() => /does not prove/.test(log.slice(at)), { what: 'a swapped request refused', timeout: 45_000 })
+  assert.equal(fake.upgrades, 0, 'no link was opened through it')
+
+  // The real one again.
+  pointAt(PORT)
+  await online()
+  await roundTrip()
+
+  // A machine enrolled before it remembered keys takes this one, the first time.
+  host.kill('SIGKILL')
+  await waitFor(async () => !(await dash('hosts')).result.find(x => x.id === id).online, { what: 'the machine offline', timeout: 45_000 })
+  const { server_key: known, ...older } = JSON.parse(readFileSync(join(hostDir2, 'credentials.json'), 'utf8'))
+  writeFileSync(join(hostDir2, 'credentials.json'), JSON.stringify(older))
+  host = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env, stdio: ['ignore', 'ignore', 'pipe'], cwd: work })
+  await online()
+  assert.equal(JSON.parse(readFileSync(join(hostDir2, 'credentials.json'), 'utf8')).server_key, known)
+})
+
+test('the server hands out the release signature next to the program', async () => {
+  const r = await fetch(`${URL_}/host/squadra-host.mjs.sig`)
+  assert.equal(r.status, existsSync(join(ROOT, 'host/squadra-host.mjs.sig')) ? 200 : 404)
 })

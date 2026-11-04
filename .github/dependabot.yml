@@ -1,0 +1,22 @@
+# Docker images and GitHub Actions are fixed by digest, so nothing updates them
+# by itself: this opens a pull request to review when there is a new one.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories:
+      - /server
+      - /deploy/demo
+    schedule:
+      interval: weekly
+    ignore:
+      # The server and the plugin are written for this major version of Node.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

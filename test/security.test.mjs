@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +56,19 @@ before(async () => {
   JOIN = readFileSync(join(dataDir, 'join-token'), 'utf8').trim()
 })
 after(() => server?.kill('SIGTERM'))
+
+test('the dashboard asks browsers to stay on https also behind a TLS proxy', async () => {
+  assert.equal((await fetch(`${URL_}/`)).headers.get('strict-transport-security'), null)
+  const port = PORT + 3000
+  const proxied = spawn(process.execPath, [join(ROOT, 'server/server.js')], {
+    env: { ...process.env, PORT: String(port), DATA_DIR: mkdtempSync(join(tmpdir(), 'squadra-hsts-')), SQUADRA_SERVER_TOKEN: ADMIN, PUBLIC_URL: 'https://squadra.example.com' },
+    stdio: 'ignore',
+  })
+  try {
+    await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, { what: 'server' })
+    assert.match((await fetch(`http://127.0.0.1:${port}/`)).headers.get('strict-transport-security'), /max-age=31536000/)
+  } finally { proxied.kill('SIGTERM') }
+})
 
 test('the join token only registers new names', async () => {
   assert.match(JOIN, /^sj_/)
@@ -191,7 +204,8 @@ function rawWs(path, { origin, auth } = {}) {
       head += d.toString('latin1')
       if (!head.includes('\r\n\r\n')) return
       sock.off('data', onData)
-      resolve({ sock, status: Number(head.split(' ')[1]) })
+      // (head: with whatever came in the same packet, a close frame say.)
+      resolve({ sock, status: Number(head.split(' ')[1]), head })
     }
     sock.on('data', onData)
     sock.on('error', reject)
@@ -691,4 +705,110 @@ test('the last text of a turn, arriving after the turn ended, does not mark the 
   // Text of a new turn does.
   await call('observe', { events: [{ kind: 'text', ts: t, text: 'next' }] }, s)
   assert.equal(await state(), 'working')
+})
+
+test('a name taken with the join token directs no worker until it is approved in the dashboard', async () => {
+  const session = async n => (await get('api/state', ADMIN)).result.sessions.find(s => s.name === n)
+  const squat = (await call('register', { name: 'apq' }, JOIN)).result.secret
+  const w = (await call('register', { name: 'apw' }, ADMIN)).result.secret
+  // A session that hasn't said who it follows yet might be waiting for this name.
+  let r = await call('sendMessage', { chat_id: 'apw', text: 'before it connects' }, squat)
+  assert.equal(r.error_code, 403)
+  assert.equal(r.parameters.reason, 'approval_pending')
+  // Nor once it has said so, in either direction, except its greeting.
+  const claimed = await call('claimSession', { instance: 'inst-apw-0001', role: 'worker', coordinator: 'apq' }, w, 'inst-apw-0001')
+  assert.equal(claimed.result.coordinator_pending, true)
+  assert.equal((await call('sendMessage', { chat_id: 'apw', text: 'do this' }, squat)).parameters.reason, 'approval_pending')
+  assert.equal((await call('sendMessage', { chat_id: 'apq', text: 'my report' }, w, 'inst-apw-0001')).parameters.reason, 'approval_pending')
+  assert.ok((await call('sendMessage', { chat_id: 'apq', text: 'hello', squadra_hello: true }, w, 'inst-apw-0001')).ok)
+  // A hello doesn't open the other direction.
+  assert.equal((await call('sendMessage', { chat_id: 'apw', text: 'x', squadra_hello: true }, squat)).parameters.reason, 'approval_pending')
+  // Coordinators see it as pending; so does the dashboard.
+  assert.equal((await call('claimSession', { instance: 'inst-apq-0001', role: 'coordinator' }, squat, 'inst-apq-0001')).result.approval_pending, true)
+  assert.equal((await session('apq')).approval_pending, true)
+  // (Not even as the coordinator it now says it is.)
+  assert.equal((await call('freshStart', { chat_id: 'apw' }, squat, 'inst-apq-0001')).parameters?.reason, 'approval_pending')
+  // Only the admin can approve it.
+  assert.equal((await call('api/approve', { session: 'apq' }, JOIN)).error_code, 401)
+  assert.equal((await call('api/approve', { session: 'apq' }, squat, 'inst-apq-0001')).error_code, 401)
+  assert.ok((await call('api/approve', { session: 'apq' }, ADMIN)).ok)
+  assert.equal((await session('apq')).approval_pending, false)
+  assert.ok((await call('sendMessage', { chat_id: 'apw', text: 'now it can' }, squat, 'inst-apq-0001')).ok)
+  assert.ok((await call('sendMessage', { chat_id: 'apq', text: 'my report' }, w, 'inst-apw-0001')).ok)
+  // A worker that joined with the token can write to its real coordinator.
+  const j = (await call('register', { name: 'apj' }, JOIN)).result.secret
+  await call('claimSession', { instance: 'inst-apj-0001', role: 'worker', coordinator: 'apq' }, j, 'inst-apj-0001')
+  assert.ok((await call('sendMessage', { chat_id: 'apq', text: 'hello' }, j, 'inst-apj-0001')).ok)
+  // A name from the admin needs no approval; rotating with the admin token clears it.
+  const adm = (await call('register', { name: 'apa' }, ADMIN)).result.secret
+  assert.ok((await call('sendMessage', { chat_id: 'apw', text: 'from the admin' }, adm)).ok)
+  await call('register', { name: 'apr' }, JOIN)
+  assert.ok((await call('register', { name: 'apr', reset: true }, ADMIN)).ok)
+  assert.ok((await call('sendMessage', { chat_id: 'apj', text: 'x' }, (await call('register', { name: 'apr', reset: true }, ADMIN)).result.secret)).ok)
+})
+
+test('machines connect with a one-time ticket, and their secret never goes in the WebSocket headers', async () => {
+  const secret = await hostSecret('tick1')
+  assert.equal((await call('host/ticket', {}, 'sh_wrong')).error_code, 401)
+  assert.equal((await call('host/ticket', {})).error_code, 401)
+  const browser = await fetch(`${URL_}/host/ticket`, { method: 'POST', headers: { Authorization: `Bearer ${secret}`, Origin: 'https://evil.example' } })
+  assert.equal(browser.status, 403)
+  const ticket = (await call('host/ticket', {}, secret)).result.ticket
+  assert.match(ticket, /^ht_/)
+  assert.ok(!ticket.includes(secret))
+  const a = await rawWs('/host/connect', { auth: ticket })
+  assert.equal(a.status, 101)
+  a.sock.write(frame(JSON.stringify({ t: 'hello', id: 'x' })))
+  await sleep(300)
+  assert.equal(await closed(a.sock, 300), false, 'stays connected')
+  a.sock.destroy()
+  // Used once; and it isn't the "unknown machine" answer, which stops squadra-host.
+  const again = await rawWs('/host/connect', { auth: ticket })
+  assert.equal(again.status, 101)
+  const text = await new Promise(resolve => { let s = again.head; again.sock.on('data', d => { s += d.toString('latin1') }); again.sock.on('close', () => resolve(s)); setTimeout(() => resolve(s), 1500) })
+  assert.match(text, /ticket expired/)
+  // The secret itself still works, for machines older than the tickets.
+  const old = await rawWs('/host/connect', { auth: secret })
+  assert.equal(old.status, 101)
+  assert.equal(await closed(old.sock, 300), false)
+  old.sock.destroy()
+})
+
+test('the tokens are printed the time they are made, and not at every start', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'squadra-banner-'))
+  const start = env => new Promise((resolve, reject) => {
+    const port = PORT + 3100 + Math.floor(Math.random() * 500)
+    const p = spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: data, SQUADRA_SERVER_TOKEN: '', SWARM_SERVER_TOKEN: '', ...env }, stdio: ['ignore', 'ignore', 'pipe'] })
+    let out = ''
+    p.stderr.on('data', d => { out += d; if (/Dashboard: /.test(out)) { p.kill('SIGTERM') } })
+    p.on('close', () => resolve(out))
+    setTimeout(() => { p.kill('SIGKILL'); reject(new Error('no banner')) }, 10000)
+  })
+  const first = await start({})
+  const admin = readFileSync(join(data, 'server-token'), 'utf8').trim()
+  const join_ = readFileSync(join(data, 'join-token'), 'utf8').trim()
+  assert.ok(first.includes(admin) && first.includes(join_), 'shown once')
+  const second = await start({})
+  assert.ok(!second.includes(admin) && !second.includes(join_), 'not again')
+  assert.ok(second.includes(join(data, 'server-token')), 'it says where it is')
+  const fromEnv = await start({ SQUADRA_SERVER_TOKEN: 'a-token-from-the-environment' })
+  assert.ok(!fromEnv.includes('a-token-from-the-environment'))
+})
+
+test('deleting a session takes its messages and attachments off the disk, at once', async () => {
+  const a = (await call('register', { name: 'dela' }, ADMIN)).result.secret
+  const b = (await call('register', { name: 'delb' }, ADMIN)).result.secret
+  const c = (await call('register', { name: 'delc' }, ADMIN)).result.secret
+  for (const [n, s, role] of [['dela', a, 'coordinator'], ['delb', b, 'coordinator'], ['delc', c, 'coordinator']]) await call('claimSession', { instance: `inst-${n}-0001`, role }, s, `inst-${n}-0001`)
+  await call('sendMessage', { chat_id: 'delb', text: 'CANARY-FROM-THE-DELETED-ONE' }, a, 'inst-dela-0001')
+  await call('sendMessage', { chat_id: 'dela', text: 'CANARY-TO-THE-DELETED-ONE' }, b, 'inst-delb-0001')
+  await call('sendMessage', { chat_id: 'delc', text: 'KEPT-BETWEEN-OTHERS' }, b, 'inst-delb-0001')
+  const up = await fetch(`${URL_}/sendDocument?chat_id=dela&filename=n.txt`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${b}`, 'X-Squadra-Instance': 'inst-delb-0001' }, body: 'CANARY-ATTACHMENT' })
+  assert.ok((await up.json()).ok)
+  await call('releaseSession', { instance: 'inst-dela-0001', reason: 'logout' }, a, 'inst-dela-0001')
+  assert.ok((await call('api/delete', { session: 'dela' }, ADMIN)).ok)
+  const files = (d = dataDir) => readdirSync(d, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? files(join(d, e.name)) : [join(d, e.name)]))
+  const onDisk = needle => files().filter(f => readFileSync(f).includes(needle)).length
+  for (const canary of ['CANARY-FROM-THE-DELETED-ONE', 'CANARY-TO-THE-DELETED-ONE', 'CANARY-ATTACHMENT']) assert.equal(onDisk(canary), 0, canary)
+  assert.ok(onDisk('KEPT-BETWEEN-OTHERS') > 0)
 })

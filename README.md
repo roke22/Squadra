@@ -13,7 +13,7 @@
   <a href="https://github.com/roke22/Squadra/stargazers"><img src="https://img.shields.io/github/stars/roke22/Squadra?style=social" alt="GitHub stars"></a>
 </p>
 
-<p align="center"><a href="README-es.md">Leer en español</a> · <a href="https://roke22.github.io/Squadra/">Website</a> · <a href="https://roke22.github.io/Squadra/examples.html">Examples</a> · <a href="docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.6</p>
+<p align="center"><a href="README-es.md">Leer en español</a> · <a href="https://roke22.github.io/Squadra/">Website</a> · <a href="https://roke22.github.io/Squadra/examples.html">Examples</a> · <a href="docs/reference.md">Reference</a> · <a href="https://github.com/roke22/Squadra/discussions">Discussions</a> · v0.0.7</p>
 
 ---
 
@@ -27,6 +27,7 @@ Squadra is **multi-agent orchestration for Claude Code**: parallel Claude Code s
 
 ```bash
 git clone https://github.com/roke22/Squadra.git squadra && cd squadra
+git checkout "$(git tag --sort=-v:refname | head -1)"   # the latest release
 node server/server.js          # dashboard at http://127.0.0.1:7787
 ```
 
@@ -53,7 +54,7 @@ It is also in the logs, in the *Squadra demo* box: `docker-compose logs`. It sta
 
 **3. Sign in:** open **http://localhost:7787** and paste the token. Then **+ New session** (or 🏢 **Org chart → + Squad**) with the folder `/squadra/projects/demo`, an example project with three personas. The first time, Claude Code asks in the session's terminal for its theme, your Claude login (`/login`) and whether you trust the folder; the login is kept for every later session.
 
-To stop it, `docker-compose down` (the folder stays). After a `git pull`, `docker-compose up -d --build` builds it again. Only this computer can reach it. More in [the demo's README](deploy/demo/README.md).
+To stop it, `docker-compose down` (the folder stays). To update it, `git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"` and then `docker-compose up -d --build`. Only this computer can reach it. More in [the demo's README](deploy/demo/README.md).
 
 ![Squadra dashboard: two squads side by side, each coordinator with its workers](docs/screenshots/mosaic-squads.jpg)
 
@@ -115,17 +116,18 @@ The computers where the agents run get everything else installed for them when y
 
 ```bash
 git clone https://github.com/roke22/Squadra.git squadra && cd squadra
+git checkout "$(git tag --sort=-v:refname | head -1)"   # the latest release
 node server/server.js
 ```
 
-Open **http://127.0.0.1:7787** and sign in with the **server token** it prints when it starts (it is also saved in `data/server-token`).
+Open **http://127.0.0.1:7787** and sign in with the **server token** it prints the first time it starts (it stays in `data/server-token`).
 
 **With Docker** instead:
 
 ```bash
 docker build -f server/Dockerfile -t squadra-server .
 docker run -d --name squadra-server -p 127.0.0.1:7787:7787 -e PUBLIC_URL=http://127.0.0.1:7787 -v squadra-data:/data squadra-server
-docker logs squadra-server      # shows the server token
+docker logs squadra-server      # the first time, shows the server token (then: docker exec squadra-server cat /data/server-token)
 ```
 
 **To use it from other computers,** give it a domain: point the domain to this computer, open ports 80 and 443, and start it with
@@ -177,7 +179,7 @@ The **[examples](https://roke22.github.io/Squadra/examples.html)** show whole or
 
 ## Updating
 
-Update the dashboard (`git pull` and start it again, or rebuild the Docker image), then run `squadra-host update` on each computer. The dashboard tells you which ones are out of date.
+Update the dashboard to the latest release (`git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"`) and start it again, or rebuild the Docker image from there. Then run `squadra-host update` on each computer. The dashboard tells you which ones are out of date.
 
 ## FAQ
 

@@ -25,6 +25,12 @@ Node 22.13 or newer. The tests run on Linux and macOS in CI; Windows is supporte
 - Keep both languages in step: the English and Spanish READMEs and `docs/reference.md` / `docs/referencia.md` describe the same thing.
 - No new runtime dependencies in the server or the plugin without discussing it first.
 
+## Releases
+
+The steps are in [RELEASE.md](RELEASE.md). `squadra-host update` only installs a program signed with the key in `RELEASE_PUBLIC_KEY`, so a change to `host/squadra-host.mjs` needs no signature in its own pull request: it gets one when the next release is prepared.
+
+Docker images and GitHub Actions are fixed by digest. Dependabot opens a pull request when there is a new one; don't merge those without reading them, that review is the point of fixing them.
+
 ## Code of conduct
 
 Be kind and assume good faith. Harassment of any kind is not welcome here.

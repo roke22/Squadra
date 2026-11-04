@@ -609,6 +609,10 @@
       archive: 'Archive',
       delete: 'Delete',
       deleteSession: 'Delete session',
+      approve: 'Approve as coordinator',
+      approveNote: 'Not approved',
+      approveTitle: n => `Approve ${n}`,
+      approveText: who => `${who} registered with the join token and acts as a coordinator, or a worker expects it to. Until you approve it, it can't write to its workers. Approve it only if you started it: if you didn't, someone with the join token may have taken that name. In that case delete it, and rotate the join token.`,
       openChat: 'Open chat',
       viewChat: 'View chat',
       offlineHint: 'Archive and delete only work on disconnected sessions.',
@@ -636,7 +640,7 @@
       archiveTitle: n => `Archive ${n}`,
       archiveText: who => `${who} disappears from the mosaic and the list and moves to «Archived» with all its history. If it reconnects, it is unarchived automatically.`,
       deleteTitle: n => `Delete ${n}`,
-      deleteText: (who, n) => `Deletes ${who}'s identity and all its activity from the server, with its attachments and the messages it had queued for others. Its delivered messages stay in the other sessions' chats (without their attachments). If it registers again (<code>/squadra:login ${n}</code> on a machine with the join token, or opened again from the dashboard), it is a new identity: sessions that talked to it won't take its messages until they run <code>/squadra:access unpin ${n}</code> (if it was a coordinator, its workers also need <code>coordinator-pin.json</code> deleted from their state folder and a new login). This cannot be undone.`,
+      deleteText: (who, n) => `Deletes ${who}'s identity and all its activity from the server, with its attachments and the messages it had queued for others. Its messages go too: what it wrote, and what was written to it directly, also from the other sessions' chats. If it registers again (<code>/squadra:login ${n}</code> on a machine with the join token, or opened again from the dashboard), it is a new identity: sessions that talked to it won't take its messages until they run <code>/squadra:access unpin ${n}</code> (if it was a coordinator, its workers also need <code>coordinator-pin.json</code> deleted from their state folder and a new login). This cannot be undone.`,
       couldNotComplete: 'Could not complete',
       ok: 'OK',
       archivedAt: d => `Archived ${d}`,
@@ -949,6 +953,10 @@
       archive: 'Archivar',
       delete: 'Eliminar',
       deleteSession: 'Eliminar sesión',
+      approve: 'Aprobar como coordinador',
+      approveNote: 'Sin aprobar',
+      approveTitle: n => `Aprobar ${n}`,
+      approveText: who => `${who} se registró con el token de alta y actúa como coordinador, o un worker espera que lo sea. Hasta que lo apruebes, no puede escribir a sus workers. Apruébalo solo si lo iniciaste tú: si no, alguien con el token de alta puede haberse quedado ese nombre. En ese caso, elimínalo y rota el token de alta.`,
       openChat: 'Abrir chat',
       viewChat: 'Ver chat',
       offlineHint: 'Archivar y eliminar solo con la sesión desconectada.',
@@ -976,7 +984,7 @@
       archiveTitle: n => `Archivar ${n}`,
       archiveText: who => `${who} deja de aparecer en el mosaico y en la lista, y pasa a «Archivadas» con todo su historial. Si vuelve a conectarse, se desarchiva sola.`,
       deleteTitle: n => `Eliminar ${n}`,
-      deleteText: (who, n) => `Se borran del servidor la identidad y toda la actividad de ${who}, con sus adjuntos y los mensajes que tenía en cola para otras sesiones. Sus mensajes ya entregados siguen en los chats de las otras sesiones (sin sus adjuntos). Si se registra de nuevo (<code>/squadra:login ${n}</code> en una máquina con el token de alta, o abriéndola otra vez desde el panel), será una identidad nueva: las sesiones que hablaban con ella no aceptarán sus mensajes hasta que ejecuten <code>/squadra:access unpin ${n}</code> (si era un coordinador, sus workers necesitan además borrar <code>coordinator-pin.json</code> de su carpeta de estado y volver a hacer login). No se puede deshacer.`,
+      deleteText: (who, n) => `Se borran del servidor la identidad y toda la actividad de ${who}, con sus adjuntos y los mensajes que tenía en cola para otras sesiones. También se borran sus mensajes: lo que escribió y lo que le escribieron directamente, incluso de los chats de las otras sesiones. Si se registra de nuevo (<code>/squadra:login ${n}</code> en una máquina con el token de alta, o abriéndola otra vez desde el panel), será una identidad nueva: las sesiones que hablaban con ella no aceptarán sus mensajes hasta que ejecuten <code>/squadra:access unpin ${n}</code> (si era un coordinador, sus workers necesitan además borrar <code>coordinator-pin.json</code> de su carpeta de estado y volver a hacer login). No se puede deshacer.`,
       couldNotComplete: 'No se ha podido completar',
       ok: 'Vale',
       archivedAt: d => `Archivada ${d}`,
@@ -1748,6 +1756,10 @@
     const list = sortedSessions()
     const online = list.filter(s => s.online).length
     let html = `<button class="nav-item ${route.view === 'mosaic' && !route.squad ? 'sel' : ''}" data-go="#/"><span>▦</span><span class="n">${T.allSessions}</span><span class="badge" hidden></span><span class="s">${T.activeOf(online, list.length)}</span></button>`
+    // Names waiting for the user: their ⋯ menu has the button.
+    for (const s of list.filter(x => x.approval_pending)) {
+      html += `<button class="nav-item" data-go="#/s/${encodeURIComponent(s.name)}" title="${esc(T.approveNote)}"><span>⚠️</span><span class="n">${esc(s.name)}</span><span></span><span class="s">${esc(T.approveNote)}</span></button>`
+    }
     const leadsN = list.filter(s => s.role === 'coordinator').length
     html += `<button class="nav-item ${route.view === 'leads' ? 'sel' : ''}" data-go="#/c"><span>🧭</span><span class="n">${T.leads}</span><span class="badge" hidden></span><span class="s">${T.leadsCount(leadsN)}</span></button>`
     html += `<button class="nav-item ${route.view === 'org' ? 'sel' : ''}" data-go="#/org"><span>🏢</span><span class="n">${T.org}</span><span class="badge" hidden></span><span class="s">${T.orgNavSub(orgSquads().squads.length, links.length)}</span></button>`
@@ -1959,6 +1971,7 @@
       if (where) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
       if (reopenable(s)) acts.push(`<button class="btn primary" data-reopen="${esc(r.name)}">${T.reopen}</button>`)
       if (s) {
+        if (s.approval_pending) acts.push(`<button class="btn primary" data-act="approve" data-s="${esc(s.name)}">${T.approve}</button>`)
         acts.push(`<button class="btn" data-act="clear" data-s="${esc(s.name)}">${T.clearChat}</button>`)
         if (!s.online) acts.push(s.archived_at
           ? `<button class="btn" data-act="unarchive" data-s="${esc(s.name)}">${T.unarchive}</button>`
@@ -2163,6 +2176,7 @@
       <button data-go="#/s/${encodeURIComponent(name)}">${T.openChat}</button>
       ${where ? `<button data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}">${T.terminal}</button>` : ''}
       ${s.role === 'coordinator' ? `<button data-go="#/q/${encodeURIComponent(name)}">${T.viewSquad}</button><button data-act="addworker">${esc(T.addWorkerTo(name))}</button>` : ''}
+      ${s.approval_pending ? `<button data-act="approve">${T.approve}</button>` : ''}
       <button data-act="clear">${T.clearChat}</button>
       ${off ? `<button data-act="kick" class="danger">${T.kick}</button>` : ''}
       <button data-act="archive" ${off ? 'disabled' : ''}>${T.archive}</button>
@@ -2219,6 +2233,9 @@
     if (action === 'addworker') return addWorkerTo(name)
     const s = sessions.get(name)
     const who = `<b>${esc(name)}</b>`
+    if (action === 'approve') {
+      return confirmDialog({ title: T.approveTitle(name), text: T.approveText(who), confirm: T.approve, run: () => post('approve', name) })
+    }
     if (action === 'kick') {
       return confirmDialog({ title: T.kickTitle(name), text: T.kickText(who), confirm: T.kick, danger: true, run: () => post('kick', name) })
     }

@@ -78,8 +78,11 @@ claude-squadra          # then, inside: /squadra:login coordinator   or   /squad
 2. If the token is the server's admin token instead (the one used to sign in
    to the dashboard), say that it works but should stay in the browser: a
    machine only needs the join token.
-3. Warn if the URL is plain `http://` to anything other than `localhost` /
-   `127.0.0.1`: the token and every message would travel unencrypted.
+3. If the URL is plain `http://` to anything other than `localhost` /
+   `127.0.0.1` / `[::1]`, warn that the token and every message would travel
+   unencrypted, and that the plugin refuses it unless `<root>/.env` has
+   `SQUADRA_INSECURE=1`. Add that line only if the user says, in this terminal,
+   that this is a trusted private network.
 4. Read existing `<root>/.env` if present; update/add the `SQUADRA_URL=` and
    `SQUADRA_SERVER_TOKEN=` lines, preserve other keys. Write back, no quotes.
    (The channel server makes the file private, mode 600, when it starts.)

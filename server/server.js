@@ -21,7 +21,7 @@
 import { createServer as createHttpServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { DatabaseSync } from 'node:sqlite'
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, sign as signBytes, timingSafeEqual, verify as verifyBytes } from 'node:crypto'
 import { mkdirSync, writeFileSync, readFileSync, createReadStream, rmSync, statSync, chmodSync, openSync, closeSync, writeSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -205,7 +205,9 @@ function pageHeaders(html) {
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     'Cross-Origin-Opener-Policy': 'same-origin', // a page that opened the dashboard can't steer it
-    ...(TLS ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
+    // (Also behind a TLS proxy, which doesn't add it by itself. A browser
+    // ignores this header over plain http, so a local visit isn't affected.)
+    ...(TLS || PUBLIC_URL.startsWith('https://') ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
   }
 }
 // Single source of truth: server/package.json.
@@ -295,11 +297,38 @@ let { token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE } = (() => {
   return { token: generated, source: `${JOIN_TOKEN_FILE} (new)` }
 })()
 
+// This server's own key: made the first time it starts, and kept. Machines and
+// sessions remember it, and from then on talk only to whoever can prove to hold
+// it. Never replaced by itself: that would look like an impostor to all of them.
+const SERVER_KEY_FILE = join(DATA_DIR, 'server-key')
+const SERVER_KEY = (() => {
+  let pem = null
+  try { pem = readFileSync(SERVER_KEY_FILE) } catch (err) {
+    if (err.code !== 'ENOENT') { process.stderr.write(`squadra-server: cannot read ${SERVER_KEY_FILE}: ${err.message}\n`); process.exit(1) }
+  }
+  if (pem === null) {
+    pem = generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' })
+    writeFileSync(SERVER_KEY_FILE, pem, { mode: 0o600, flag: 'wx' })
+  }
+  try {
+    const privateKey = createPrivateKey(pem)
+    if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('not an Ed25519 key')
+    const pub = createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64url')
+    const hash = createHash('sha256').update(pub).digest('hex')
+    return { privateKey, public: pub, hash, fingerprint: hash.slice(0, 16).replace(/(.{4})(?=.)/g, '$1 ') }
+  } catch (err) {
+    process.stderr.write(`squadra-server: ${SERVER_KEY_FILE} is not a usable key (${err.message}). Put the backup back; a new key would make every machine and session refuse this server\n`)
+    process.exit(1)
+  }
+})()
+const signAsServer = fields => signBytes(null, Buffer.from(JSON.stringify(fields)), SERVER_KEY.privateKey).toString('base64url')
+
 const db = new DatabaseSync(join(DATA_DIR, 'squadra.db'))
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
   PRAGMA foreign_keys = ON;
+  PRAGMA secure_delete = ON;
   CREATE TABLE IF NOT EXISTS identities (
     name TEXT PRIMARY KEY,
     secret_hash TEXT NOT NULL UNIQUE,
@@ -443,9 +472,14 @@ for (const [table, column, type] of [
   ['identities', 'persona', 'TEXT'],                   // the persona it says it follows, set at login (JSON: kind, name, description)
   ['identities', 'description', 'TEXT'],               // what it is for, written in the dashboard (org chart)
   ['messages', 'fyi', 'INTEGER NOT NULL DEFAULT 0'],   // information only: no report expected
+  ['identities', 'needs_approval', 'INTEGER NOT NULL DEFAULT 0'], // registered with the join token: can't direct workers until approved in the dashboard
+  ['messages', 'sig', 'TEXT'],                         // the sender's signature (the plugin's signing.js): the server only carries it
   ['messages', 'report', 'TEXT'],                      // a worker's final report on a task: done | blocked | failed | question
   ['host_enrollments', 'ticket', 'TEXT'],              // a random id for the code (shown to the dashboard)
   ['hosts', 'enrollment', 'TEXT'],                     // the ticket of the code it enrolled with
+  ['hosts', 'public_key', 'TEXT'],                     // the machine's key, from its first proof: its secret alone isn't enough after that
+  ['identities', 'public_key', 'TEXT'],                // the same for a session
+  ['identities', 'proven_instance', 'TEXT'],           // the session id that proved it holds that key
 ]) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name)
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
@@ -496,7 +530,8 @@ const guarded = fn => () => {
 
 // --- identities --------------------------------------------------------------
 
-function register(name, reset) {
+// joined: it came with the join token, not from the dashboard or its admin.
+function register(name, reset, { joined = false } = {}) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw bad('name must match [A-Za-z0-9_-]{1,32}')
   const existing = db.prepare('SELECT name FROM identities WHERE name = ?').get(name)
   if (existing && !reset) {
@@ -504,13 +539,13 @@ function register(name, reset) {
   }
   const secret = `sq_${randomBytes(24).toString('base64url')}`
   if (existing) {
-    db.prepare('UPDATE identities SET secret_hash = ? WHERE name = ?').run(sha256(secret), name)
+    db.prepare('UPDATE identities SET secret_hash = ?, needs_approval = 0, public_key = NULL, proven_instance = NULL WHERE name = ?').run(sha256(secret), name)
     // A rotated identity must not keep a stale poller (or answer) alive.
     dropAnswer(name); servedUpTo.delete(name)
     const w = waiters.get(name)
     if (w) finishPoll(w, conflict())
   } else {
-    db.prepare('INSERT INTO identities (name, secret_hash, created_at, epoch) VALUES (?, ?, ?, ?)').run(name, sha256(secret), now(), randomBytes(12).toString('hex'))
+    db.prepare('INSERT INTO identities (name, secret_hash, created_at, epoch, needs_approval) VALUES (?, ?, ?, ?, ?)').run(name, sha256(secret), now(), randomBytes(12).toString('hex'), joined ? 1 : 0)
   }
   return { name, secret }
 }
@@ -561,11 +596,15 @@ function messageObj(row, { withReply = true } = {}) {
     date: unix(row.created_at),
   }
   if (row.edited_at) msg.edit_date = unix(row.edited_at)
-  if (row.system) msg.squadra_notice = true // generated by the server, not by the sender
+  if (row.system) {
+    msg.squadra_notice = true // generated by the server, not by the sender
+    msg.squadra_server_sig = signAsServer(['squadra-notice-1', row.from_name, row.target, row.id, msg.date, row.text ?? ''])
+  }
   // A task's lifecycle (see the plugin): information that needs no report,
   // and a worker's final report on its tasks.
   if (row.fyi) msg.squadra_fyi = true
   if (row.report) msg.squadra_report = row.report
+  if (row.sig) msg.squadra_sig = row.sig
   const f = fileRow(row.file_id)
   if (f) {
     if (row.text) msg.caption = row.text
@@ -921,7 +960,32 @@ const cleanText = t => {
 
 const COORDINATOR_PAIR_MAX = 60
 const REPORTS = ['done', 'blocked', 'failed', 'question']
-function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = false, auto = false, fyi = false, report = null }) {
+// A name taken with the join token could be one some worker is waiting for
+// as its coordinator: whoever got there first would give it orders. So until
+// it is approved in the dashboard it writes to nobody who follows it, or who
+// might (a session that hasn't said yet), and those who follow it only greet it.
+const approvalRow = name => db.prepare('SELECT needs_approval, role, coordinator, opened_role FROM identities WHERE name = ?').get(name)
+const notApproved = name => new ApiError(403, `Forbidden: "${name}" has not been approved as a coordinator yet: the user must approve it in the dashboard (open that session: Approve as coordinator)`, { parameters: { reason: 'approval_pending' } })
+function checkApproval(from, target, hello) {
+  if (target.startsWith('#')) return
+  const f = approvalRow(from), t = approvalRow(target)
+  if (!f || !t) return
+  if (f.needs_approval && (t.coordinator === from || (t.role == null && !t.opened_role))) throw notApproved(from)
+  if (t.needs_approval && f.coordinator === target && !hello) throw notApproved(target)
+}
+function approveSession(name) {
+  if (!identityExists(name)) throw bad('session not found')
+  db.prepare('UPDATE identities SET needs_approval = 0 WHERE name = ?').run(name)
+  broadcast('session', sessionView(name))
+  return { session: name, approved: true }
+}
+// A sender's signature: carried as it came, never read here.
+function sigParam(v) {
+  if (v == null || v === '') return null
+  if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,1024}$/.test(v)) throw bad('invalid squadra_sig')
+  return v
+}
+function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = false, auto = false, fyi = false, report = null, sig = null, hello = false }) {
   if (text != null && typeof text !== 'string') throw bad('text must be a string')
   // (Far too long is refused before the cleaning, which costs the whole text.)
   if (text && text.length > MAX_TEXT * 2) throw bad(`message is too long (max ${MAX_TEXT} chars)`)
@@ -940,6 +1004,7 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
   // sends nor takes messages.
   if (!system && roleOf(from) === 'solo') throw new ApiError(403, 'Forbidden: this is a standalone session: it does not message other sessions')
   if (!system && !target.startsWith('#') && roleOf(target) === 'solo') throw new ApiError(403, `Forbidden: "${target}" is a standalone Claude Code session: it does not take messages from other sessions`)
+  if (!system) checkApproval(from, target, hello)
   // Two coordinators can keep each other busy forever (each message wakes the
   // other): at most so many an hour between the two, then the user decides.
   if (!system && !auto && !target.startsWith('#') && roleOf(from) === 'coordinator' && roleOf(target) === 'coordinator' &&
@@ -965,8 +1030,8 @@ function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = 
     throw new ApiError(403, `Forbidden: "${o.name}" is a worker and is not connected right now; the message was not sent`,
       { parameters: { reason: 'recipient_offline', name: o.name, last_seen_at: o.last_seen_at } })
   }
-  const info = db.prepare('INSERT INTO messages (from_name, target, text, reply_to, file_id, file_kind, created_at, system, auto, fyi, report) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(from, target, text ?? null, reply, fileId ?? null, fileKind ?? null, now(), system ? 1 : 0, auto ? 1 : 0, fyi ? 1 : 0, report)
+  const info = db.prepare('INSERT INTO messages (from_name, target, text, reply_to, file_id, file_kind, created_at, system, auto, fyi, report, sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(from, target, text ?? null, reply, fileId ?? null, fileKind ?? null, now(), system ? 1 : 0, auto ? 1 : 0, fyi ? 1 : 0, report, sig)
   const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid)
   const msg = messageObj(row)
   broadcast('message', messageView(row))
@@ -1199,6 +1264,7 @@ async function freshStart(name, p) {
   if (!NAME_RE.test(worker)) throw bad('chat_id must be one of your workers')
   const row = db.prepare('SELECT role, coordinator, host_id FROM identities WHERE name = ?').get(worker)
   if (roleOf(name) !== 'coordinator' || row?.role !== 'worker' || row.coordinator !== name) return no('not_your_worker', `"${worker}" is not a worker of yours`)
+  checkApproval(name, worker, false)
   if (!row.host_id || !hostLinks.has(row.host_id)) return no('no_machine', `"${worker}" was not opened from the dashboard, or its machine is not connected: nobody can type /clear in its terminal`)
   if (!isOnline(worker)) return no('offline', `"${worker}" is not connected`)
   const state = activityOf(worker).state
@@ -1258,6 +1324,8 @@ const methods = {
       auto: p.squadra_auto === true,
       fyi: p.squadra_fyi === true,
       report,
+      sig: sigParam(p.squadra_sig),
+      hello: p.squadra_hello === true,
     })
   },
 
@@ -1280,7 +1348,8 @@ const methods = {
     if (row.text === p.text) throw bad('message is not modified')
     // Still allowed to write there (a group you left is closed to you).
     resolveTarget(row.target, name)
-    db.prepare('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?').run(p.text, now(), id)
+    checkApproval(name, row.target, false)
+    db.prepare('UPDATE messages SET text = ?, edited_at = ?, sig = ? WHERE id = ?').run(p.text, now(), sigParam(p.squadra_sig), id)
     const edited = db.prepare('SELECT * FROM messages WHERE id = ?').get(id)
     const msg = messageObj(edited)
     // Only to whoever can see the original, and not queued for workers that
@@ -1352,10 +1421,15 @@ const methods = {
     // not use up the budget of the session that holds the name.)
     if (lease && lease.instance !== instance && holdsName(name, lease)) throw nameInUse(name, lease)
     if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+    const provenKey = sessionKeyProved(name, instance, p)
+    if (provenKey) db.prepare('UPDATE identities SET public_key = ?, proven_instance = ? WHERE name = ?').run(provenKey, instance, name)
     // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
     const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null
     const coordinator = role === 'worker' && NAME_RE.test(String(p.coordinator ?? '')) ? String(p.coordinator) : null
     if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ?, persona = ? WHERE name = ?').run(role, coordinator, personaOf(p.persona), name)
+    const approval = approvalRow(name)
+    // (It may have just become one to approve, or to wait for.)
+    if (role && (role === 'coordinator' ? approval.needs_approval : coordinator && approvalRow(coordinator)?.needs_approval)) setImmediate(() => broadcast('session', sessionView(role === 'coordinator' ? name : coordinator)))
     // An archived session that logs in again is active again.
     if (db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) {
       setImmediate(() => broadcast('session', sessionView(name)))
@@ -1363,7 +1437,11 @@ const methods = {
     if (!lease || lease.instance !== instance) setLease(name, instance)
     else delete lease.restoredUntil
     markPolled(name) // a claim is a sign of life: don't let the down sweep fire before the first poll
-    return { name, role, since: unix(leases.get(name).since) }
+    return {
+      name, role, since: unix(leases.get(name).since),
+      ...(role === 'coordinator' && approval.needs_approval ? { approval_pending: true } : {}),
+      ...(role === 'worker' && coordinator && approvalRow(coordinator)?.needs_approval ? { coordinator_pending: true } : {}),
+    }
   },
 
   // reason: 'logout' (the user left) or 'exit' (Claude Code is closing).
@@ -1736,6 +1814,7 @@ async function upload(name, kind, query, req, stillValid = () => {}) {
       replyTo: query.get('reply_to_message_id'),
       fileId,
       fileKind: realKind,
+      sig: sigParam(query.get('squadra_sig')),
     })
   } catch (err) {
     // (Not sent: the file goes too.)
@@ -1752,6 +1831,7 @@ const adminMethods = {
     return register(p.name, p.reset === true)
   },
   rotateJoinToken: () => rotateJoinToken(),
+  approveSession: p => approveSession(String(p.name ?? '')),
   listIdentities() {
     return db.prepare('SELECT name, created_at, last_seen_at FROM identities ORDER BY name').all()
       .map(r => ({ name: r.name, created_at: unix(r.created_at), ...presenceOf(r.name) }))
@@ -1765,6 +1845,12 @@ const adminMethods = {
 }
 
 // --- maintenance -------------------------------------------------------------
+
+let lastTruncate = now()
+function truncateLog() {
+  lastTruncate = now()
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch (err) { logError(`could not truncate the write-ahead log: ${err.message}`) }
+}
 
 function cleanup() {
   const t = now()
@@ -1780,6 +1866,9 @@ function cleanup() {
   db.prepare('DELETE FROM reactions WHERE created_at < ? OR message_id NOT IN (SELECT id FROM messages)').run(t - MESSAGE_TTL_MS)
   db.prepare('DELETE FROM messages WHERE created_at < ?').run(t - MESSAGE_TTL_MS)
   db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
+  // (What was deleted is overwritten in the database file, but stays in the
+  // write-ahead log until this.)
+  if (t - lastTruncate >= 3600_000) truncateLog()
   // Over the caps: the oldest go first.
   db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_EVENTS)
   db.prepare('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_MESSAGES)
@@ -1796,7 +1885,7 @@ cleanup()
 // --- dashboard (server token) ------------------------------------------------------
 
 function sessionView(name) {
-  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona, description FROM identities WHERE name = ?').get(name)
+  const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona, description, needs_approval FROM identities WHERE name = ?').get(name)
   if (!row) return { name, deleted: true }
   const a = activityOf(name)
   return {
@@ -1810,6 +1899,8 @@ function sessionView(name) {
     opened_role: row.host_id && ['coordinator', 'worker', 'solo'].includes(row.opened_role) ? row.opened_role : null, // and as what
     opened_persona: row.host_id && PERSONA_ID_RE.test(String(row.opened_persona ?? '')) ? row.opened_persona : null, // and with which persona
     description: row.description || null, // what it is for (org chart)
+    // Acts as a coordinator (or some worker expects it to) and nobody approved it yet.
+    approval_pending: !!row.needs_approval && (row.role === 'coordinator' || !!db.prepare('SELECT 1 FROM identities WHERE coordinator = ?').get(name)),
     ...presenceOf(name),
     activity: { ...a, tool: a.tool ? { ...a.tool } : null },
   }
@@ -1997,6 +2088,17 @@ function deleteSession(name, { requireOffline = true } = {}) {
   // What it queued for others goes too (it may be why it was deleted).
   db.prepare('DELETE FROM updates WHERE sender = ?').run(name)
   db.prepare('DELETE FROM events WHERE session = ?').run(name)
+  // Its conversations: what it wrote and what was written to it, also the
+  // attachments sent to it. Nothing of a deleted session waits to expire.
+  const sentToIt = db.prepare('SELECT file_id FROM messages WHERE target = ? AND file_id IS NOT NULL').all(name).map(r => r.file_id)
+  db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE from_name = ? OR target = ?)').run(name, name)
+  db.prepare('DELETE FROM messages WHERE from_name = ? OR target = ?').run(name, name)
+  for (const id of sentToIt) {
+    const f = fileRow(id)
+    if (!f) continue
+    try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
+    db.prepare('DELETE FROM files WHERE file_id = ?').run(id)
+  }
   // Its attachments go too (they count against the server's total).
   for (const f of db.prepare('SELECT file_id, path FROM files WHERE owner = ?').all(name)) {
     try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
@@ -2010,6 +2112,7 @@ function deleteSession(name, { requireOffline = true } = {}) {
   const w = waiters.get(name)
   if (w) finishPoll(w, new ApiError(401, 'Unauthorized'))
   broadcast('session', { name, deleted: true })
+  truncateLog()
   return { session: name, deleted: true }
 }
 
@@ -2046,6 +2149,7 @@ function kickSession(name) {
 
 const dashboardActions = {
   kick: p => kickSession(String(p.session ?? '')),
+  approve: p => approveSession(String(p.session ?? '')),
   clear: p => clearChat(String(p.session ?? '')),
   delete: p => deleteSession(String(p.session ?? '')),
   archive: p => setArchived(String(p.session ?? ''), true),
@@ -2089,6 +2193,14 @@ const installer = name => cachedFile(new URL(`../install/${name}`, import.meta.u
 const hostScript = () => {
   for (const f of HOST_SCRIPT) {
     const c = cachedFile(f, body => ({ sha: createHash('sha256').update(body).digest('hex') }))
+    if (c) return c
+  }
+  return null
+}
+
+const hostSignature = () => {
+  for (const f of HOST_SCRIPT) {
+    const c = cachedFile(new URL(`${f.href}.sig`))
     if (c) return c
   }
   return null
@@ -2156,18 +2268,19 @@ function createEnrollment(p, req) {
     expires_at: t + ENROLL_TTL_MS,
     server_url: base,
     sha256: sha,
+    server_key: SERVER_KEY.hash,
     // The Squadra plugin release that goes with this server (squadra-host pins the same one).
     plugin_command: `claude plugin marketplace add roke22/Squadra#v${VERSION} && claude plugin install squadra@squadra`,
     // One command per system: the installer prepares the machine (tmux, Node,
     // Claude Code) and runs squadra-host with this code. (Windows: inside WSL.)
     install: {
-      linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''}`,
-      macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''}`,
+      linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
+      macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
       windows: `irm ${q(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${base} ${code}`,
     },
     // Just squadra-host, on a machine that already has what it needs.
     // Downloaded into a new private folder: nobody can swap the file between the check and the run.
-    command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code}`,
+    command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code} --server-key=${SERVER_KEY.hash}`,
   }
 }
 
@@ -2527,7 +2640,8 @@ function upgrade(req, socket, head) {
   // Authenticated before the socket is accepted, so nobody without a
   // credential holds a connection open: the credential comes as a
   // subprotocol ("squadra", "auth.<credential>"). The dashboard's is a
-  // one-time ticket (POST /api/terminal/ticket); a machine's is its secret.
+  // one-time ticket (POST /api/terminal/ticket), and so is a machine's (POST
+  // /host/ticket); machines older than 0.0.7 send their secret here.
   const offered = String(req.headers['sec-websocket-protocol'] ?? '').split(',').map(x => x.trim())
   const cred = offered.find(x => x.startsWith('auth.'))?.slice('auth.'.length) ?? ''
   // (Credentials are random, 192 bits or more: a wrong one costs one lookup.)
@@ -2545,8 +2659,15 @@ function upgrade(req, socket, head) {
     return refuse(426, 'Upgrade Required')
   }
   let host = null
+  let ticketed = false
+  let linkKeys = null
   if (path === '/host/connect') {
-    host = db.prepare('SELECT * FROM hosts WHERE secret_hash = ?').get(sha256(cred))
+    ticketed = cred.startsWith(HOST_TICKET_PREFIX)
+    if (ticketed) {
+      const taken = takeHostTicket(cred)
+      host = taken ? db.prepare('SELECT * FROM hosts WHERE id = ?').get(taken.host) : null
+      linkKeys = taken?.keys ?? null
+    } else host = db.prepare('SELECT * FROM hosts WHERE secret_hash = ?').get(sha256(cred))
     // A machine reconnecting nonstop would write to the database and update
     // every dashboard each time: at most 30 connections a minute.
     if (host && !allow('hosthello', host.id, 30)) return refuse(429, 'Too Many Requests')
@@ -2554,12 +2675,134 @@ function upgrade(req, socket, head) {
   const ws = acceptWebSocket(req, socket, head, { log: logError, maxMessage: 16 * 1024, protocol: 'squadra' })
   if (!ws) return
   // A machine that was disconnected is told so (and stops), at once.
+  // (A ticket says nothing about the machine: lost in a restart of this
+  // server, say. It asks for another, which tells it if it was disconnected.)
+  if (path === '/host/connect' && !host && ticketed) { ws.close(4002, 'ticket expired: asking for another'); return }
   if (path === '/host/connect' && !host) { ws.close(4001, 'unknown or disconnected host'); return }
+  // A machine that has proved its key doesn't connect with its secret alone,
+  // nor without the encrypted link that key gets it.
+  if (path === '/host/connect' && host.public_key && !linkKeys) { ws.close(4003, 'this machine has a key: update its squadra-host (0.0.7 or later)'); return }
+  if (linkKeys) encryptSocket(ws, linkKeys)
   wsClients.add(ws)
   if (path === '/host/connect') openHostLink(ws, req, host)
   else openViewerLink(ws, req)
   const handler = ws.onclose
   ws.onclose = () => { wsClients.delete(ws); handler() }
+}
+
+// The same for a machine's link: 30 seconds, used once, for that machine.
+const HOST_TICKET_PREFIX = 'ht_'
+const hostTickets = new Map() // ticket -> { host, expires }
+function newHostTicket(host, keys = null) {
+  for (const [t, v] of hostTickets) if (v.expires < Date.now()) hostTickets.delete(t)
+  if (hostTickets.size >= 1000) hostTickets.delete(hostTickets.keys().next().value)
+  const ticket = `${HOST_TICKET_PREFIX}${randomBytes(24).toString('base64url')}`
+  hostTickets.set(ticket, { host, keys, expires: Date.now() + 30_000 })
+  return ticket
+}
+function takeHostTicket(ticket) {
+  const v = hostTickets.get(ticket)
+  if (!v) return null
+  hostTickets.delete(ticket)
+  return v.expires >= Date.now() ? v : null
+}
+
+// --- proving who is who ---------------------------------------------------------------------
+
+// Anyone can ask this server to prove it holds its key, on a nonce of their own.
+// The answer also brings a challenge of one use, for them to do the same.
+const serverChallenges = new Map() // challenge -> expires (ms)
+function serverIdentity(nonce) {
+  if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) throw bad('nonce must be 16 to 128 URL-safe characters')
+  for (const [c, exp] of serverChallenges) { if (exp >= Date.now() && serverChallenges.size < 5000) break; serverChallenges.delete(c) }
+  const challenge = randomBytes(24).toString('base64url')
+  serverChallenges.set(challenge, Date.now() + 60_000)
+  return { key: SERVER_KEY.public, challenge, sig: signAsServer(['squadra-server-identity-1', nonce, challenge]) }
+}
+function takeChallenge(challenge) {
+  const exp = serverChallenges.get(challenge)
+  serverChallenges.delete(challenge)
+  return exp !== undefined && exp >= Date.now()
+}
+// Signed for this server and this purpose only: useless anywhere else.
+function proofIsGood(publicKey, purpose, subject, challenge, extra, proof) {
+  try {
+    const key = createPublicKey({ key: Buffer.from(String(publicKey), 'base64url'), format: 'der', type: 'spki' })
+    if (key.asymmetricKeyType !== 'ed25519') return false
+    return verifyBytes(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', SERVER_KEY.public, purpose, subject, String(challenge), String(extra)])), key, Buffer.from(String(proof), 'base64url'))
+  } catch {
+    return false
+  }
+}
+const keyRefused = text => new ApiError(403, `Forbidden: ${text}`, { parameters: { reason: 'key_refused' } })
+
+// A session's key, for a claim: remembered the first time, required after that.
+// (Null: a plugin older than 0.0.7, for a name that never had a key.)
+function sessionKeyProved(name, instance, p) {
+  const known = db.prepare('SELECT public_key FROM identities WHERE name = ?').get(name)?.public_key ?? null
+  if (p.signing_key == null) {
+    if (known) throw keyRefused(`the session "${name}" has a key, and this login doesn't prove it: update the Squadra plugin (0.0.7 or later) on that machine`)
+    return null
+  }
+  const offered = String(p.signing_key)
+  const fresh = takeChallenge(String(p.challenge ?? ''))
+  if (!fresh || !proofIsGood(offered, 'claim', name, p.challenge, instance, p.proof)) throw keyRefused('this login does not prove its key; try again')
+  if (known && known !== offered) throw keyRefused(`the session "${name}" has a different key on this server. If it really moved to another machine or lost its key, delete it in the dashboard and open it again; if not, something else may be using its secret`)
+  return offered
+}
+
+// A machine's ticket. With a proof of its key, the link it opens is encrypted
+// between the two of them, whatever is on the way: the keys come from an
+// exchange that this server signs and that machine proved it took part in.
+function hostTicketAnswer(host, p) {
+  if (p.proof == null) {
+    if (host.public_key) throw keyRefused('this machine has a key, and this request doesn\'t prove it: update its squadra-host (0.0.7 or later)')
+    return { ticket: newHostTicket(host.id) }
+  }
+  const offered = String(p.key ?? '')
+  const eph = String(p.eph ?? '')
+  const fresh = takeChallenge(String(p.challenge ?? ''))
+  if (!fresh || !proofIsGood(offered, 'host-ticket', host.id, p.challenge, eph, p.proof)) throw keyRefused('this request does not prove the machine\'s key; try again')
+  if (host.public_key && host.public_key !== offered) throw keyRefused('this machine has a different key on this server. If it really lost its key, remove it in the dashboard and add it again; if not, something else may be using its secret')
+  let peer
+  try {
+    peer = createPublicKey({ key: Buffer.from(eph, 'base64url'), format: 'der', type: 'spki' })
+    if (peer.asymmetricKeyType !== 'x25519') throw new Error('not x25519')
+  } catch { throw bad('eph is not a key') }
+  if (!host.public_key) db.prepare('UPDATE hosts SET public_key = ? WHERE id = ?').run(offered, host.id)
+  const mine = generateKeyPairSync('x25519')
+  const myEph = mine.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url')
+  const okm = Buffer.from(hkdfSync('sha256', diffieHellman({ privateKey: mine.privateKey, publicKey: peer }), String(p.challenge), `squadra-link-1|${eph}|${myEph}`, 64))
+  const ticket = newHostTicket(host.id, { fromHost: okm.subarray(0, 32), toHost: okm.subarray(32) })
+  return { ticket, eph: myEph, sig: signAsServer(['squadra-link-1', eph, myEph, String(p.challenge), ticket]) }
+}
+
+// Every message on that link: AES-256-GCM, numbered by its place in each
+// direction, so none can be changed, repeated, dropped or moved unnoticed.
+const linkIv = n => { const iv = Buffer.alloc(12); iv.writeBigUInt64BE(n, 4); return iv }
+function encryptSocket(ws, { fromHost, toHost }) {
+  let sent = 0n
+  let received = 0n
+  const rawSend = ws.send
+  ws.send = text => {
+    const c = createCipheriv('aes-256-gcm', toHost, linkIv(sent++))
+    const body = Buffer.concat([c.update(String(text), 'utf8'), c.final()])
+    return rawSend(Buffer.concat([body, c.getAuthTag()]).toString('base64'))
+  }
+  let handler = () => {}
+  const inbound = raw => {
+    let text
+    try {
+      const all = Buffer.from(raw, 'base64')
+      const d = createDecipheriv('aes-256-gcm', fromHost, linkIv(received++))
+      d.setAuthTag(all.subarray(-16))
+      text = Buffer.concat([d.update(all.subarray(0, -16)), d.final()]).toString('utf8')
+    } catch {
+      return ws.close(4003, 'a message that does not check')
+    }
+    handler(text)
+  }
+  Object.defineProperty(ws, 'onmessage', { get: () => inbound, set: h => { handler = h } })
 }
 
 // One-time tickets for the dashboard's terminal socket (a browser can't send
@@ -3106,11 +3349,24 @@ async function handle(req, res) {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       return res.end(f.body)
     }
+    // Its release signature, checked by squadra-host update with the key it
+    // already has: a server can't hand a machine a program of its own.
+    if (req.method === 'GET' && path === '/host/squadra-host.mjs.sig') {
+      const f = hostSignature()
+      if (!f) throw new ApiError(404, 'Not Found')
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+      return res.end(f.body)
+    }
     if (req.method === 'GET' && path.startsWith('/install/') && Object.hasOwn(INSTALLERS, path.slice('/install/'.length))) {
       const f = installer(path.slice('/install/'.length))
       if (!f) throw new ApiError(404, 'Not Found')
       res.writeHead(200, { 'Content-Type': INSTALLERS[path.slice('/install/'.length)], 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
       return res.end(f.body)
+    }
+    // Proof that this is the server they remember (public, like the two above).
+    if (req.method === 'GET' && path === '/server-identity') {
+      if (!allow('server-identity', ipKey(clientIp(req)), 300)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+      return sendJson(res, 200, { ok: true, result: serverIdentity(url.searchParams.get('nonce')) })
     }
     if (path === '/host/enroll') {
       if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
@@ -3119,6 +3375,17 @@ async function handle(req, res) {
     }
 
     const token = bearer(req)
+
+    // A machine's secret stays in an Authorization header, which proxies hide
+    // from their logs: to connect, it trades it for a ticket of one use.
+    if (path === '/host/ticket') {
+      if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
+      if (req.headers.origin) throw new ApiError(403, 'Forbidden')
+      const host = token ? db.prepare('SELECT id, public_key FROM hosts WHERE secret_hash = ?').get(sha256(token)) : null
+      if (!host) throw new ApiError(401, 'Unauthorized')
+      if (!allow('hostticket', host.id, 60)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+      return sendJson(res, 200, { ok: true, result: hostTicketAnswer(host, await readParams(req, url, 4096, { pool: 'public' })) })
+    }
 
     if (path.startsWith('/api/')) {
       if (!token || !isServerToken(token)) throw new ApiError(401, 'Unauthorized')
@@ -3152,7 +3419,7 @@ async function handle(req, res) {
       if (params.reset === true && !admin) {
         throw new ApiError(403, 'Forbidden: only the server (admin) token can rotate an existing identity; delete the session from the dashboard and register it again, or ask the admin')
       }
-      return sendJson(res, 200, { ok: true, result: register(params.name, admin && params.reset === true) })
+      return sendJson(res, 200, { ok: true, result: register(params.name, admin && params.reset === true, { joined: !admin }) })
     }
     // Admin: server token only.
     if (path.startsWith('/admin/')) {
@@ -3175,6 +3442,13 @@ async function handle(req, res) {
     if (lease && path !== '/claimSession' && path !== '/getUpdates' && path !== '/releaseSession') {
       const inst = String(req.headers['x-squadra-instance'] ?? '')
       if (inst !== lease.instance) throw notHolder(name, inst)
+    }
+    // A session with a key acts only from the session id that proved it: its
+    // secret alone (a copy in a log, say) does nothing, connected or not.
+    const keyed = db.prepare('SELECT public_key, proven_instance FROM identities WHERE name = ?').get(name)
+    if (keyed?.public_key && path !== '/claimSession') {
+      const inst = String(req.headers['x-squadra-instance'] ?? '')
+      if (inst !== keyed.proven_instance) throw notHolder(name, inst)
     }
     touch(name)
 
@@ -3304,6 +3578,7 @@ for (const r of db.prepare('SELECT * FROM events ORDER BY id').iterate()) {
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost'])
 const servers = []
 
+const isNewToken = source => source.endsWith('(new)')
 function startupBanner(scheme) {
   nowServing()
   const everywhere = HOST === '0.0.0.0' || HOST === '::'
@@ -3311,13 +3586,19 @@ function startupBanner(scheme) {
   const lines = [
     `squadra-server v${VERSION}: listening on ${scheme}://${HOST}:${PORT}${everywhere ? ' (all interfaces)' : ''} (data: ${DATA_DIR})`,
     '',
-    `  Server token — admin: signs in to the dashboard. Keep it in the browser only (${TOKEN_SOURCE}):`,
-    `    ${SERVER_TOKEN}`,
+    // (The tokens themselves only the time they are made, not at every start:
+    // logs are kept, and read, by more than whoever holds these.)
+    ...(isNewToken(TOKEN_SOURCE)
+      ? [`  Server token — admin: signs in to the dashboard. Keep it in the browser only (${TOKEN_SOURCE}). It is only shown this once:`, `    ${SERVER_TOKEN}`]
+      : [`  Server token — admin: signs in to the dashboard. Keep it in the browser only. It is in ${TOKEN_SOURCE}.`]),
     '',
     `  Join token — for machines: registers new sessions, nothing else (${JOIN_TOKEN_SOURCE}).`,
     '  Configure each machine from Claude Code with:',
-    `    /squadra:configure ${url} ${JOIN_TOKEN}`,
+    `    /squadra:configure ${url} ${isNewToken(JOIN_TOKEN_SOURCE) ? JOIN_TOKEN : '<join-token>'}`,
     `  Dashboard: ${url}/`,
+    '',
+    `  Server key: ${SERVER_KEY.fingerprint} (${SERVER_KEY_FILE}). Machines and sessions remember it: back this`,
+    '  file up with the data. Without it they refuse this server until they are added again.',
   ]
   if (TRUST_PROXY && !PUBLIC_URL) {
     lines.push('', '  ⚠️  --trust-proxy without --public-url: set the public address so enrollment commands',

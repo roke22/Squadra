@@ -7,7 +7,7 @@
 #
 # Not for production: there the dashboard and the machines run apart (see the
 # README). This is for trying Squadra out on one computer.
-FROM node:22-slim
+FROM node:22-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
 
 ARG CLAUDE_CODE_VERSION=latest
 RUN apt-get update \
@@ -17,7 +17,7 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cac
 
 WORKDIR /app
 COPY server/server.js server/acme.js server/ws.js server/ui.html server/package.json ./
-COPY host/squadra-host.mjs ./
+COPY host/squadra-host.mjs* ./
 COPY install ./install
 COPY server/vendor ./vendor
 # The plugin from this repository, as a local marketplace (not a published
