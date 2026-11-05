@@ -24,12 +24,15 @@ const SERVER_MODULES = {
 }
 const SERVER_OTHER_FOLDERS = ['vendor']
 const PLUGIN_MODULES = { core: [], claude: ['core'] }
+// Plain helpers at the plugin's top, which hook.js uses too and which import
+// no module: these the modules may use.
+const PLUGIN_HELPERS = ['observe.js', 'paths.js', 'signing.js']
 
 // The folder a program's files live in, and the modules in it. The plugin's
 // are one way only: what is Claude's stays out of what any agent could reuse.
 const PROGRAMS = [
   { dir: 'server', modules: SERVER_MODULES, otherFolders: SERVER_OTHER_FOLDERS },
-  { dir: 'plugins/squadra', modules: PLUGIN_MODULES, otherFolders: ['hooks', 'skills', '.claude-plugin'] },
+  { dir: 'plugins/squadra', modules: PLUGIN_MODULES, otherFolders: ['hooks', 'skills', '.claude-plugin'], helpers: PLUGIN_HELPERS },
 ]
 
 // Static imports and re-exports, and import() of a literal. A dynamic import
@@ -78,7 +81,7 @@ function violations(files, programs = PROGRAMS) {
         // Inside its module, or a file at the top of the program. Those are
         // the entry points and what is older than the modules: a module
         // doesn't reach back to them.
-        if (from && !to) out.push(`${file}: a module doesn't import the top of its program (${imp.path})`)
+        if (from && !to && !program.helpers?.includes(target.slice(program.dir.length + 1))) out.push(`${file}: a module doesn't import the top of its program (${imp.path})`)
         continue
       }
       if (from && !(program.modules[from] ?? []).includes(to)) out.push(`${file}: module "${from}" may not use "${to}"`)
@@ -122,11 +125,21 @@ test('modules: only along the arrows, and never in a circle', () => {
   assert.match(violations(claude).join(), /"core" may not use "claude"/)
 })
 
+test('modules: core speaks to the agent only through agent.js', () => {
+  const core = Object.entries(sourcesIn('plugins/squadra/core'))
+  assert.ok(core.length)
+  for (const [file, source] of core) assert.doesNotMatch(source, /notifications\/claude/, file)
+  // A helper stays plain: what imports a module isn't one.
+  for (const h of PLUGIN_HELPERS) assert.doesNotMatch(readFileSync(join(ROOT, 'plugins/squadra', h), 'utf8'), /from '\.\/(core|claude)\//, h)
+})
+
 test('modules: nothing unknown, nothing that can not be checked, no reaching out', () => {
   assert.match(violations({ 'server/stuff/x.js': '' }).join(), /not a known module/)
   assert.match(violations({ 'server/messaging/x.js': 'const m = await import(name)' }).join(), /can't be checked/)
   assert.match(violations({ 'server/messaging/x.js': `import '../../plugins/squadra/signing.js'` }).join(), /outside server/)
   assert.match(violations({ 'server/messaging/x.js': `import '../server.js'` }).join(), /doesn't import the top/)
+  assert.match(violations({ 'plugins/squadra/core/x.js': `import '../server.js'` }).join(), /doesn't import the top/)
+  assert.deepEqual(violations({ 'plugins/squadra/core/x.js': `import '../signing.js'` }), [])
   // The entry point joins the modules; inside one, anything goes.
   assert.deepEqual(violations({
     'server/server.js': `import { a } from './machines/index.js'\nimport { b } from './acme.js'`,
