@@ -26,6 +26,7 @@ import { mkdirSync, writeFileSync, readFileSync, createReadStream, rmSync, statS
 import { join, extname } from 'node:path'
 import { parseArgs } from 'node:util'
 import { watchFile } from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { createAcme, LETS_ENCRYPT, LETS_ENCRYPT_STAGING } from './acme.js'
 import { acceptWebSocket } from './ws.js'
 
@@ -528,6 +529,12 @@ const guarded = fn => () => {
   try { fn() } catch (err) { process.stderr.write(`squadra-server: ${fn.name || 'timer'}: ${err?.stack ?? err}\n`) }
 }
 
+// What a module tells the ones above it, without knowing them:
+//   session-changed (name)   what the dashboard shows of it changed
+//   notice (worker, text)    its coordinator should hear this
+//   context-cleared (name)   /clear took effect in that session
+const bus = new EventEmitter()
+
 // --- identities --------------------------------------------------------------
 
 // joined: it came with the join token, not from the dashboard or its admin.
@@ -976,7 +983,7 @@ function checkApproval(from, target, hello) {
 function approveSession(name) {
   if (!identityExists(name)) throw bad('session not found')
   db.prepare('UPDATE identities SET needs_approval = 0 WHERE name = ?').run(name)
-  broadcast('session', sessionView(name))
+  bus.emit('session-changed', name)
   return { session: name, approved: true }
 }
 // A sender's signature: carried as it came, never read here.
@@ -1218,11 +1225,11 @@ function observe(name, p) {
     const wasWarned = !!before.context_warned
     applyEvent(name, view)
     contextNotices(name, view, wasWarned)
-    if (kind === 'session_start' && rest.source === 'clear') freshWaiters.get(name)?.(true)
+    if (kind === 'session_start' && rest.source === 'clear') bus.emit('context-cleared', name)
     broadcast('event', view)
     stored++
   } })
-  if (stored) broadcast('session', sessionView(name))
+  if (stored) bus.emit('session-changed', name)
   return { stored }
 }
 
@@ -1237,14 +1244,14 @@ function contextNotices(name, ev, wasWarned) {
     // Its own cooldown too: compaction events reset the flag.
     if (now() - (a.context_notice_at ?? 0) < NOTICE_COOLDOWN_MS) return
     a.context_notice_at = now()
-    announce(name, `📈 ${name} has used ${ev.context_pct}% of its context; it will auto-compact soon. Avoid giving it a large new task now, or prefer a worker with more room.`)
+    bus.emit('notice', name, `📈 ${name} has used ${ev.context_pct}% of its context; it will auto-compact soon. Avoid giving it a large new task now, or prefer a worker with more room.`)
   }
   if (ev.kind === 'compacted') {
     // At most one compaction notice every 5 minutes per worker: alternating
     // usage/compacted events must not flood the coordinator.
     if (now() - (a.compact_notice_at ?? 0) < NOTICE_COOLDOWN_MS) return
     a.compact_notice_at = now()
-    announce(name, `🗜️ ${name} compacted its context (${ev.trigger === 'manual' ? 'manual' : 'automatic'}). Its Squadra role and the latest messages it received were restored; if its task depends on details only you know, send them to it again.`)
+    bus.emit('notice', name, `🗜️ ${name} compacted its context (${ev.trigger === 'manual' ? 'manual' : 'automatic'}). Its Squadra role and the latest messages it received were restored; if its task depends on details only you know, send them to it again.`)
   }
 }
 
@@ -1258,6 +1265,7 @@ function contextNotices(name, ev, wasWarned) {
 // worker, opened from the dashboard, connected and idle, once a minute.
 const FRESH_WAIT_MS = Number(process.env.SQUADRA_FRESH_WAIT_MS ?? 20_000)
 const freshWaiters = new Map() // worker -> resolve(confirmed)
+bus.on('context-cleared', name => freshWaiters.get(name)?.(true))
 async function freshStart(name, p) {
   const worker = String(p.chat_id ?? '')
   const no = (reason, text) => ({ cleared: false, reason, text })
@@ -1290,9 +1298,15 @@ async function freshStart(name, p) {
   }
 }
 
-const methods = {
+const observationMethods = {
   observe,
+}
+
+const machineMethods = {
   freshStart,
+}
+
+const organizationMethods = {
   // A coordinator's own squad, as the user described it in the dashboard:
   // its name and goal, and what the coordinator itself is for. Nothing for
   // workers: their coordinator gives them the context each task needs.
@@ -1307,10 +1321,98 @@ const methods = {
     return { title: sq?.title ?? null, goal: sq?.goal ?? null, description, workers_online: workers }
   },
 
+  // A session sees who exists (and when it was registered, for the
+  // coordinator pin), but presence, queue and context only of sessions it
+  // talks to: messages both ways, or a group they share.
+  getChat(name, p) {
+    readLimit(name, 'chat') // its own budget: other reads can't use it up
+    const id = String(p.chat_id ?? '')
+    if (id.startsWith('#')) {
+      const members = db.prepare('SELECT name FROM group_members WHERE group_id = ?').all(id).map(r => r.name)
+      if (!members.includes(name)) throw bad('chat not found')
+      return { id, type: 'group', title: id, members }
+    }
+    const ident = db.prepare('SELECT created_at, epoch FROM identities WHERE name = ?').get(id)
+    if (!ident) throw bad('chat not found')
+    // Writing to a session isn't enough (anyone can): it has to have written back.
+    // (Only messages since both current identities exist: a name deleted and
+    // registered again starts with no relations.)
+    if (!related(name, id)) return { id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, presence_hidden: true }
+    const a = activity.get(id)
+    return {
+      id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, ...presenceOf(id),
+      context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
+      persona: personaView(id),
+      // What the dashboard says it is for, and of its squad when it leads
+      // one: for coordinators only (workers get their context from theirs).
+      ...(roleOf(name) === 'coordinator' ? {
+        // (Busy or free: whether to give it work now.)
+        state: ['idle', 'working', 'tool', 'waiting', 'compacting', 'ended'].includes(a?.state) ? a.state : null,
+        description: db.prepare('SELECT description FROM identities WHERE name = ?').get(id)?.description || null,
+        squad: roleOf(id) === 'coordinator' ? squadInfo(id) : null,
+      } : {}),
+    }
+  },
+}
+
+const sessionMethods = {
+
   getMe(name) {
     readLimit(name)
     return { ...userObj(name), is_bot: true }
   },
+
+  // A session claims its name before polling. First come, first served: while
+  // the session holding the name is online, any other session is refused.
+  claimSession(name, p) {
+    const instance = String(p.instance ?? '')
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(instance)) throw bad('instance is required')
+    const lease = leases.get(name)
+    // A connected session keeps its name: nobody can take it over (not even
+    // with its identity secret). The dashboard admin can disconnect it.
+    // (Checked before the rate limit: a copy of the secret refused here must
+    // not use up the budget of the session that holds the name.)
+    if (lease && lease.instance !== instance && holdsName(name, lease)) throw nameInUse(name, lease)
+    if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+    const provenKey = sessionKeyProved(name, instance, p)
+    if (provenKey) db.prepare('UPDATE identities SET public_key = ?, proven_instance = ? WHERE name = ?').run(provenKey, instance, name)
+    // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
+    const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null
+    const coordinator = role === 'worker' && NAME_RE.test(String(p.coordinator ?? '')) ? String(p.coordinator) : null
+    if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ?, persona = ? WHERE name = ?').run(role, coordinator, personaOf(p.persona), name)
+    const approval = approvalRow(name)
+    // (It may have just become one to approve, or to wait for.)
+    if (role && (role === 'coordinator' ? approval.needs_approval : coordinator && approvalRow(coordinator)?.needs_approval)) setImmediate(() => bus.emit('session-changed', role === 'coordinator' ? name : coordinator))
+    // An archived session that logs in again is active again.
+    if (db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) {
+      setImmediate(() => bus.emit('session-changed', name))
+    }
+    if (!lease || lease.instance !== instance) setLease(name, instance)
+    else delete lease.restoredUntil
+    markPolled(name) // a claim is a sign of life: don't let the down sweep fire before the first poll
+    return {
+      name, role, since: unix(leases.get(name).since),
+      ...(role === 'coordinator' && approval.needs_approval ? { approval_pending: true } : {}),
+      ...(role === 'worker' && coordinator && approvalRow(coordinator)?.needs_approval ? { coordinator_pending: true } : {}),
+    }
+  },
+
+  // reason: 'logout' (the user left) or 'exit' (Claude Code is closing).
+  releaseSession(name, p) {
+    const lease = leases.get(name)
+    if (lease && lease.instance === String(p.instance ?? '')) {
+      if (!allow('release', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+      if (!lease.downNotified) announceDown(name, p.reason === 'exit' ? 'exit' : 'logout')
+      dropLease(name)
+      const w = waiters.get(name)
+      if (w) finishPoll(w, null, [])
+      presence.set(name, { ...(presence.get(name) ?? {}), lastPollAt: now(), disconnected: true, pollingSince: null })
+    }
+    return true
+  },
+}
+
+const messagingMethods = {
 
   sendMessage(name, p) {
     rateLimit(name)
@@ -1409,55 +1511,6 @@ const methods = {
     return { file_id: f.file_id, file_unique_id: f.file_unique_id, file_size: f.size, file_path: f.path }
   },
 
-  // A session claims its name before polling. First come, first served: while
-  // the session holding the name is online, any other session is refused.
-  claimSession(name, p) {
-    const instance = String(p.instance ?? '')
-    if (!/^[A-Za-z0-9_-]{8,64}$/.test(instance)) throw bad('instance is required')
-    const lease = leases.get(name)
-    // A connected session keeps its name: nobody can take it over (not even
-    // with its identity secret). The dashboard admin can disconnect it.
-    // (Checked before the rate limit: a copy of the secret refused here must
-    // not use up the budget of the session that holds the name.)
-    if (lease && lease.instance !== instance && holdsName(name, lease)) throw nameInUse(name, lease)
-    if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
-    const provenKey = sessionKeyProved(name, instance, p)
-    if (provenKey) db.prepare('UPDATE identities SET public_key = ?, proven_instance = ? WHERE name = ?').run(provenKey, instance, name)
-    // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
-    const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null
-    const coordinator = role === 'worker' && NAME_RE.test(String(p.coordinator ?? '')) ? String(p.coordinator) : null
-    if (role) db.prepare('UPDATE identities SET role = ?, coordinator = ?, persona = ? WHERE name = ?').run(role, coordinator, personaOf(p.persona), name)
-    const approval = approvalRow(name)
-    // (It may have just become one to approve, or to wait for.)
-    if (role && (role === 'coordinator' ? approval.needs_approval : coordinator && approvalRow(coordinator)?.needs_approval)) setImmediate(() => broadcast('session', sessionView(role === 'coordinator' ? name : coordinator)))
-    // An archived session that logs in again is active again.
-    if (db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) {
-      setImmediate(() => broadcast('session', sessionView(name)))
-    }
-    if (!lease || lease.instance !== instance) setLease(name, instance)
-    else delete lease.restoredUntil
-    markPolled(name) // a claim is a sign of life: don't let the down sweep fire before the first poll
-    return {
-      name, role, since: unix(leases.get(name).since),
-      ...(role === 'coordinator' && approval.needs_approval ? { approval_pending: true } : {}),
-      ...(role === 'worker' && coordinator && approvalRow(coordinator)?.needs_approval ? { coordinator_pending: true } : {}),
-    }
-  },
-
-  // reason: 'logout' (the user left) or 'exit' (Claude Code is closing).
-  releaseSession(name, p) {
-    const lease = leases.get(name)
-    if (lease && lease.instance === String(p.instance ?? '')) {
-      if (!allow('release', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
-      if (!lease.downNotified) announceDown(name, p.reason === 'exit' ? 'exit' : 'logout')
-      dropLease(name)
-      const w = waiters.get(name)
-      if (w) finishPoll(w, null, [])
-      presence.set(name, { ...(presence.get(name) ?? {}), lastPollAt: now(), disconnected: true, pollingSince: null })
-    }
-    return true
-  },
-
   // Groups are private: whoever creates one owns it, and others join only
   // after the group's owner invites them (inviteToGroup).
   joinGroup(name, p) {
@@ -1518,40 +1571,9 @@ const methods = {
     else handOverGroup(id, name)
     return true
   },
-
-  // A session sees who exists (and when it was registered, for the
-  // coordinator pin), but presence, queue and context only of sessions it
-  // talks to: messages both ways, or a group they share.
-  getChat(name, p) {
-    readLimit(name, 'chat') // its own budget: other reads can't use it up
-    const id = String(p.chat_id ?? '')
-    if (id.startsWith('#')) {
-      const members = db.prepare('SELECT name FROM group_members WHERE group_id = ?').all(id).map(r => r.name)
-      if (!members.includes(name)) throw bad('chat not found')
-      return { id, type: 'group', title: id, members }
-    }
-    const ident = db.prepare('SELECT created_at, epoch FROM identities WHERE name = ?').get(id)
-    if (!ident) throw bad('chat not found')
-    // Writing to a session isn't enough (anyone can): it has to have written back.
-    // (Only messages since both current identities exist: a name deleted and
-    // registered again starts with no relations.)
-    if (!related(name, id)) return { id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, presence_hidden: true }
-    const a = activity.get(id)
-    return {
-      id, type: 'private', username: id, created_at: unix(ident.created_at), squadra_identity: ident.epoch, ...presenceOf(id),
-      context: a?.context_pct != null ? { pct: a.context_pct, tokens: a.context_tokens, compact_at: a.compact_at } : null,
-      persona: personaView(id),
-      // What the dashboard says it is for, and of its squad when it leads
-      // one: for coordinators only (workers get their context from theirs).
-      ...(roleOf(name) === 'coordinator' ? {
-        // (Busy or free: whether to give it work now.)
-        state: ['idle', 'working', 'tool', 'waiting', 'compacting', 'ended'].includes(a?.state) ? a.state : null,
-        description: db.prepare('SELECT description FROM identities WHERE name = ?').get(id)?.description || null,
-        squad: roleOf(id) === 'coordinator' ? squadInfo(id) : null,
-      } : {}),
-    }
-  },
 }
+
+const methods = { ...observationMethods, ...machineMethods, ...organizationMethods, ...sessionMethods, ...messagingMethods }
 
 const chatActions = new Map()
 
@@ -1619,7 +1641,7 @@ function checkLease(name, instance) {
     if (lease.downNotified) {
       lease.downNotified = false
       db.prepare('INSERT OR REPLACE INTO leases (name, instance, since) VALUES (?, ?, ?)').run(name, lease.instance, lease.since)
-      announce(name, `🔌 ${name} is back online (same session).`)
+      bus.emit('notice', name, `🔌 ${name} is back online (same session).`)
     }
     return
   }
@@ -1653,6 +1675,8 @@ function announce(worker, text) {
   }
 }
 
+bus.on('notice', announce)
+
 function announceDown(worker, reason) {
   const lease = leases.get(worker)
   if (lease) lease.downNotified = true
@@ -1685,7 +1709,7 @@ function announceDown(worker, reason) {
   const parts = [what]
   if (msgs.length) parts.push(`It never picked up ${msgs.length} message(s), which were dropped: ${lost.join('; ')}.`)
   parts.push('If it had a task in progress, it will not finish it: consider reassigning it to another active worker.')
-  announce(worker, parts.join(' '))
+  bus.emit('notice', worker, parts.join(' '))
 }
 
 // Leases whose holder stopped polling without releasing (crash, lost network).
@@ -1717,7 +1741,7 @@ function markPolled(name) {
   presence.set(name, { pollingSince: p && !p.disconnected && p.pollingSince ? p.pollingSince : now(), lastPollAt: now(), disconnected: false })
   // An archived session that comes back (also without logging in again, after
   // a network blip) is active again, as one that claims its name is.
-  if (back && db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) broadcast('session', sessionView(name))
+  if (back && db.prepare('UPDATE identities SET archived_at = NULL WHERE name = ? AND archived_at IS NOT NULL').run(name).changes) bus.emit('session-changed', name)
 }
 
 function isOnline(name) {
@@ -1734,6 +1758,15 @@ function downIn(name) {
   if (!lease || lease.downNotified) return null
   const at = Math.max((presence.get(name)?.lastPollAt ?? 0) + LOST_GRACE_MS, lease.restoredUntil ?? 0)
   return Math.max(0, Math.ceil((at - now()) / 1000))
+}
+
+// A deleted session: nothing about it stays in memory, and a poll it left open ends.
+function forgetSession(name) {
+  dropLease(name)
+  dropAnswer(name); servedUpTo.delete(name); lastTouched.delete(name); pushCount.delete(name)
+  presence.delete(name)
+  const w = waiters.get(name)
+  if (w) finishPoll(w, new ApiError(401, 'Unauthorized'))
 }
 
 function presenceOf(name) {
@@ -1852,12 +1885,15 @@ function truncateLog() {
   try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch (err) { logError(`could not truncate the write-ahead log: ${err.message}`) }
 }
 
-function cleanup() {
+function cleanupUpdates() {
+  db.prepare('DELETE FROM updates WHERE created_at < ?').run(now() - UPDATE_TTL_MS)
+  db.prepare('DELETE FROM updates WHERE update_id <= (SELECT update_id FROM updates ORDER BY update_id DESC LIMIT 1 OFFSET ?)').run(MAX_UPDATES)
+}
+
+function cleanupMessages() {
   const t = now()
   // Groups nobody is in (left behind by older versions) are closed.
   for (const g of db.prepare('SELECT id FROM groups WHERE NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = groups.id)').all()) closeGroup(g.id)
-  db.prepare('DELETE FROM updates WHERE created_at < ?').run(t - UPDATE_TTL_MS)
-  db.prepare('DELETE FROM updates WHERE update_id <= (SELECT update_id FROM updates ORDER BY update_id DESC LIMIT 1 OFFSET ?)').run(MAX_UPDATES)
   for (const f of db.prepare('SELECT file_id, path FROM files WHERE created_at < ?').all(t - FILE_TTL_MS)) {
     try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
     db.prepare('DELETE FROM files WHERE file_id = ?').run(f.file_id)
@@ -1865,17 +1901,37 @@ function cleanup() {
   db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE created_at < ?)').run(t - MESSAGE_TTL_MS)
   db.prepare('DELETE FROM reactions WHERE created_at < ? OR message_id NOT IN (SELECT id FROM messages)').run(t - MESSAGE_TTL_MS)
   db.prepare('DELETE FROM messages WHERE created_at < ?').run(t - MESSAGE_TTL_MS)
-  db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
-  // (What was deleted is overwritten in the database file, but stays in the
-  // write-ahead log until this.)
-  if (t - lastTruncate >= 3600_000) truncateLog()
-  // Over the caps: the oldest go first.
-  db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_EVENTS)
+  // Over the cap: the oldest go first.
   db.prepare('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_MESSAGES)
-  for (const [k, v] of storedLog) if (!v.some(b => Math.floor(t / 60_000) - b.m < 60)) storedLog.delete(k)
   for (const [k, v] of chatActions) if (t - v.at > 10_000) chatActions.delete(k)
-  for (const [k, v] of sendLog) if (!v.some(x => t - x < 60_000)) sendLog.delete(k)
+}
+
+function cleanupEvents() {
+  const t = now()
+  db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
+  // Over the cap: the oldest go first.
+  db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_EVENTS)
   for (const [k, v] of observeLog) if (!v.some(x => t - x.t < 60_000)) observeLog.delete(k)
+}
+
+function cleanupLimits() {
+  const t = now()
+  for (const [k, v] of storedLog) if (!v.some(b => Math.floor(t / 60_000) - b.m < 60)) storedLog.delete(k)
+  for (const [k, v] of sendLog) if (!v.some(x => t - x < 60_000)) sendLog.delete(k)
+}
+
+// (What was deleted is overwritten in the database file, but stays in the
+// write-ahead log until this.)
+function truncateLogHourly() {
+  if (now() - lastTruncate >= 3600_000) truncateLog()
+}
+
+function cleanup() {
+  cleanupMessages()
+  cleanupUpdates()
+  cleanupEvents()
+  cleanupLimits()
+  truncateLogHourly()
 }
 setInterval(guarded(cleanup), 60 * 1000).unref()
 cleanup()
@@ -1883,6 +1939,8 @@ cleanup()
 // --- http --------------------------------------------------------------------
 
 // --- dashboard (server token) ------------------------------------------------------
+
+bus.on('session-changed', name => broadcast('session', sessionView(name)))
 
 function sessionView(name) {
   const row = db.prepare('SELECT name, role, coordinator, created_at, archived_at, cleared_at, host_id, opened_role, opened_persona, description, needs_approval FROM identities WHERE name = ?').get(name)
@@ -2104,13 +2162,9 @@ function deleteSession(name, { requireOffline = true } = {}) {
     try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
     db.prepare('DELETE FROM files WHERE file_id = ?').run(f.file_id)
   }
-  dropLease(name)
-  dropAnswer(name); servedUpTo.delete(name); lastTouched.delete(name); pushCount.delete(name)
+  forgetSession(name)
   activity.delete(name)
-  presence.delete(name)
   lastSessionKey.delete(name)
-  const w = waiters.get(name)
-  if (w) finishPoll(w, new ApiError(401, 'Unauthorized'))
   broadcast('session', { name, deleted: true })
   truncateLog()
   return { session: name, deleted: true }
@@ -2351,7 +2405,7 @@ function enrollHost(p, req) {
     // The plugin's server address always; the join token only if the admin
     // asked for it (sessions opened from the dashboard don't need it: their
     // names are registered by the server).
-    plugin: { url: serverBaseUrl(req), ...(row.configure_plugin ? { token: JOIN_TOKEN } : {}) },
+    plugin: { url: serverBaseUrl(req), ...(row.configure_plugin ? { token: joinToken().token } : {}) },
   }
 }
 
@@ -3021,7 +3075,7 @@ function describeSession(p) {
   if (!NAME_RE.test(name) || !identityExists(name)) throw bad('session not found')
   const description = oneLine(p.description, 300)
   db.prepare('UPDATE identities SET description = ? WHERE name = ?').run(description || null, name)
-  broadcast('session', sessionView(name))
+  bus.emit('session-changed', name)
   return { name, description: description || null }
 }
 
@@ -3285,6 +3339,7 @@ const sameSecret = (token, secret) => typeof token === 'string' && token !== '' 
   timingSafeEqual(Buffer.from(sha256(token)), Buffer.from(sha256(secret)))
 const isServerToken = token => sameSecret(token, SERVER_TOKEN)
 const isJoinToken = token => sameSecret(token, JOIN_TOKEN)
+const joinToken = () => ({ token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE })
 
 // A new join token: machines configured with the old one can no longer
 // register new names (their existing identities keep working).
@@ -3571,9 +3626,12 @@ function recleanOnce(key, table, select, fix) {
 }
 
 // Rebuild each session's derived state from the stored events (last 24h).
-for (const r of db.prepare('SELECT * FROM events ORDER BY id').iterate()) {
-  applyEvent(r.session, eventView(r.id, r.session, r.ts, r.kind, JSON.parse(r.data), { stored: true }))
+function restoreActivity() {
+  for (const r of db.prepare('SELECT * FROM events ORDER BY id').iterate()) {
+    applyEvent(r.session, eventView(r.id, r.session, r.ts, r.kind, JSON.parse(r.data), { stored: true }))
+  }
 }
+restoreActivity()
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost'])
 const servers = []
@@ -3592,9 +3650,9 @@ function startupBanner(scheme) {
       ? [`  Server token — admin: signs in to the dashboard. Keep it in the browser only (${TOKEN_SOURCE}). It is only shown this once:`, `    ${SERVER_TOKEN}`]
       : [`  Server token — admin: signs in to the dashboard. Keep it in the browser only. It is in ${TOKEN_SOURCE}.`]),
     '',
-    `  Join token — for machines: registers new sessions, nothing else (${JOIN_TOKEN_SOURCE}).`,
+    `  Join token — for machines: registers new sessions, nothing else (${joinToken().source}).`,
     '  Configure each machine from Claude Code with:',
-    `    /squadra:configure ${url} ${isNewToken(JOIN_TOKEN_SOURCE) ? JOIN_TOKEN : '<join-token>'}`,
+    `    /squadra:configure ${url} ${isNewToken(joinToken().source) ? joinToken().token : '<join-token>'}`,
     `  Dashboard: ${url}/`,
     '',
     `  Server key: ${SERVER_KEY.fingerprint} (${SERVER_KEY_FILE}). Machines and sessions remember it: back this`,
