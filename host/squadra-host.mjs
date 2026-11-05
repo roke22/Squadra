@@ -221,25 +221,6 @@ function loadSettings() {
   return s
 }
 
-// The Claude Code executable as an absolute path. A bare name is looked up
-// only in absolute PATH entries, so a "." in PATH can never make a session
-// run a "claude" file from the project folder.
-function claudeBinary(cmd = loadSettings().claude_command) {
-  const ok = p => { try { accessSync(p, FS.X_OK); return statSync(p).isFile() } catch { return false } }
-  if (cmd.includes('/')) {
-    if (!isAbsolute(cmd) || !ok(cmd)) throw new Error(`claude_command must be an absolute path to an executable: ${cmd}`)
-    const why = untrustedExecutable(cmd)
-    if (why) throw new Error(`refusing ${cmd} as Claude Code: ${why}`)
-    return throughDispatcher(cmd, 'claude')
-  }
-  for (const dir of String(process.env.PATH ?? '').split(':')) {
-    if (!isAbsolute(dir)) continue
-    const p = join(dir, cmd)
-    if (ok(p) && !untrustedExecutable(p)) return throughDispatcher(p, 'claude')
-  }
-  throw new Error(`"${cmd}" (Claude Code) was not found on the PATH (in a folder only you or root can change)`)
-}
-
 // Version managers' shims (volta, asdf, nodenv) pick the program from the
 // folder they run in — a session's folder is a repository, which could name
 // its own. Such a shim is replaced by the program it picks from the home
@@ -494,9 +475,6 @@ function computeTrustedFolders() {
     return !untrustedFolder(d) && !roots.some(r => within(real, r))
   }).join(':') || '/usr/bin:/bin'
 }
-const runClaude = (cmd, args, opts = {}) => run(cmd, args, { cwd: HOME, ...opts, env: { ...process.env, PATH: trustedPath() } })
-const claudeOrNull = () => { try { return claudeBinary() } catch { return null } }
-
 // --- tmux ---------------------------------------------------------------------------
 
 // UTF-8 always: tmux runs with -u (without it "é" becomes "_" and folder
@@ -530,13 +508,6 @@ async function tmuxVersion() {
     const { stdout } = await run(tmuxBin(), ['-V'])
     const m = /(\d+)\.(\d+)/.exec(stdout)
     return m ? { text: stdout.trim(), major: Number(m[1]), minor: Number(m[2]) } : { text: stdout.trim(), major: 0, minor: 0 }
-  } catch { return null }
-}
-
-async function claudeVersion(cmd) {
-  try {
-    const { stdout } = await runClaude(cmd, ['--version'], { timeout: 10_000 })
-    return stdout.trim().split('\n')[0].slice(0, 80)
   } catch { return null }
 }
 
@@ -679,6 +650,54 @@ function checkFolder(folder, settings) {
   return real
 }
 
+// A persona as the server asks for it (see Claude Code, below).
+const PERSONA_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
+
+// "0.0.1" < "0.0.2" (numeric parts; anything unreadable is not "older").
+function olderVersion(a, b) {
+  const p = v => String(v).split('.').map(x => Number.parseInt(x, 10))
+  const [x, y] = [p(a), p(b)]
+  if (x.some(Number.isNaN) || y.some(Number.isNaN)) return false
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
+  return false
+}
+
+// --- Claude Code --------------------------------------------------------------------
+//
+// All this program knows about the agent its sessions run. The rest of the file
+// uses it only through the claudeCode object at the end of this section (a test
+// checks that): another agent would be a second object like it.
+
+// The Claude Code executable as an absolute path. A bare name is looked up
+// only in absolute PATH entries, so a "." in PATH can never make a session
+// run a "claude" file from the project folder.
+function claudeBinary(cmd = loadSettings().claude_command) {
+  const ok = p => { try { accessSync(p, FS.X_OK); return statSync(p).isFile() } catch { return false } }
+  if (cmd.includes('/')) {
+    if (!isAbsolute(cmd) || !ok(cmd)) throw new Error(`claude_command must be an absolute path to an executable: ${cmd}`)
+    const why = untrustedExecutable(cmd)
+    if (why) throw new Error(`refusing ${cmd} as Claude Code: ${why}`)
+    return throughDispatcher(cmd, 'claude')
+  }
+  for (const dir of String(process.env.PATH ?? '').split(':')) {
+    if (!isAbsolute(dir)) continue
+    const p = join(dir, cmd)
+    if (ok(p) && !untrustedExecutable(p)) return throughDispatcher(p, 'claude')
+  }
+  throw new Error(`"${cmd}" (Claude Code) was not found on the PATH (in a folder only you or root can change)`)
+}
+
+const runClaude = (cmd, args, opts = {}) => run(cmd, args, { cwd: HOME, ...opts, env: { ...process.env, PATH: trustedPath() } })
+const claudeOrNull = () => { try { return claudeBinary() } catch { return null } }
+
+
+async function claudeVersion(cmd) {
+  try {
+    const { stdout } = await runClaude(cmd, ['--version'], { timeout: 10_000 })
+    return stdout.trim().split('\n')[0].slice(0, 80)
+  } catch { return null }
+}
+
 // --- personas: a skill or agent a session follows -----------------------------------
 //
 // The dashboard offers the skills and agents found for a session's folder —
@@ -690,7 +709,6 @@ function checkFolder(folder, settings) {
 // Either way it is part of the system prompt, so it holds for the whole
 // session: compactions don't summarize it away, and skills loaded later add
 // to it, they don't replace it.
-const PERSONA_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
 const PERSONA_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const PERSONA_MAX_BYTES = 256 * 1024
 const PERSONAS_MAX = 200
@@ -870,15 +888,6 @@ async function pinMarketplace(cmd, opts) {
   log(`Squadra marketplace pinned to v${VERSION} (it was ${m.ref ? `at ${plain(m.ref)}` : 'following the default branch'})`)
   return true
 }
-let PLUGIN = null // { installed, version, enabled }, or null when it can't be told
-// "0.0.1" < "0.0.2" (numeric parts; anything unreadable is not "older").
-function olderVersion(a, b) {
-  const p = v => String(v).split('.').map(x => Number.parseInt(x, 10))
-  const [x, y] = [p(a), p(b)]
-  if (x.some(Number.isNaN) || y.some(Number.isNaN)) return false
-  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
-  return false
-}
 
 async function pluginStatus(cmd = claudeOrNull()) {
   if (!cmd) return null
@@ -973,6 +982,116 @@ function pluginStateDir(name) {
   return join(custom ?? join(claudeHome(), 'channels', 'squadra'), name)
 }
 
+// What must hold before a session opens here. It returns the program to run.
+async function prepareSession(s, settings) {
+  const claude = claudeBinary(settings.claude_command)
+  // Without the plugin the session would start, but never join Squadra.
+  // Checked every time (opening a session is rare): it may have been removed.
+  const st = await pluginStatus(claude)
+  if (st) PLUGIN = st
+  if (st && (!st.installed || !st.enabled)) {
+    throw new Error(`the Squadra plugin is ${PLUGIN.installed ? 'disabled' : 'not installed'} in Claude Code on this machine. Run "squadra-host plugin" there, or: ${PLUGIN_COMMANDS}`)
+  }
+  // An older plugin can't talk to this server (it doesn't send its session id).
+  if (st?.version && olderVersion(st.version, VERSION)) {
+    throw new Error(`the Squadra plugin on this machine is ${plain(st.version)}, older than this squadra-host (${VERSION}): run "squadra-host plugin" there, then open the session again`)
+  }
+  // The plugin ignores a CLAUDE_CONFIG_DIR inside the highest folder above the
+  // session's folder that doesn't contain the home (a repository could plant
+  // one): it would never find what is written here. Said now, not silently.
+  if (process.env.CLAUDE_CONFIG_DIR && isAbsolute(process.env.CLAUDE_CONFIG_DIR)) {
+    const cfg = realOr(process.env.CLAUDE_CONFIG_DIR)
+    let top = null
+    const home = realOr(HOME)
+    for (let d = s.folder; !withinById(home, d) && !withinById(HOME, d); d = dirname(d)) { top = d; if (dirname(d) === d) break }
+    if (top && withinById(cfg, top)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) is inside ${top}, like the session's folder: the Squadra plugin would ignore it. Move it, or open sessions in folders elsewhere`)
+    // Nor one that isn't private, it or a folder above it (the plugin
+    // ignores that too: the same rule).
+    if (!privateChain(join(cfg, 'channels', 'squadra'), cfg)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) must be a folder of this user that others can't write to, inside folders nobody else can change`)
+  }
+  // The secret the server reserved goes only to that server: the plugin
+  // here must be configured for it (same origin), or the session isn't opened.
+  const origin = u => { try { return new URL(u).origin } catch { return null } }
+  if (s.identity && CREDS_SERVER && origin(pluginServerUrl()) !== origin(CREDS_SERVER)) {
+    throw new Error(`the Squadra plugin on this machine is configured for ${pluginServerUrl() ?? 'no server'}, but this machine belongs to ${CREDS_SERVER}: set SQUADRA_URL=${CREDS_SERVER} in ${join(claudeHome(), 'channels', 'squadra', '.env')}`)
+  }
+  // The persona, looked up again in the folder now (it may have changed since
+  // the dashboard listed it).
+  s.personaInfo = s.persona ? findPersona(s.folder, s.persona, s.role) : null
+  return claude
+}
+
+// What a session's process is started with, besides what is Squadra's.
+function sessionEnv(s) {
+  const env = {}
+  if (s.compact_window) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(s.compact_window)
+  // Claude Code's config folder is this program's, not the one the tmux
+  // server started with (it outlives restarts of this program).
+  const cfg = process.env.CLAUDE_CONFIG_DIR
+  if (cfg && isAbsolute(cfg)) env.CLAUDE_CONFIG_DIR = cfg
+  return env
+}
+
+// The command a session runs, after the "env" that starts it. env: the one
+// sessionEnv gave. dir: the plugin's folder for this session.
+function sessionCommand(s, claude, dir, env) {
+  // (A standalone session takes no messages: no development channel, and so
+  // no dialog about it at every start. The plugin still reports its activity.)
+  const argv = [...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, ...(s.role === 'solo' ? [] : ['--dangerously-load-development-channels', 'plugin:squadra@squadra'])]
+  if (s.resume) argv.push('--continue')
+  // The persona, in the system prompt: a skill's text from a private copy
+  // (what the session reads is what was checked, not the file as it may be
+  // later), an agent by its name.
+  const promptFile = join(dir, 'persona.md')
+  if (s.personaInfo?.kind === 'skill') {
+    ensurePrivateDir(dir)
+    const tmp = join(dir, `.persona.md.${process.pid}.${Date.now()}`)
+    writeFileSync(tmp, skillPrompt(s.personaInfo), { mode: 0o600, flag: 'wx' })
+    renameSync(tmp, promptFile)
+    argv.push('--append-system-prompt-file', promptFile)
+  } else {
+    rmSync(promptFile, { force: true })
+    if (s.personaInfo?.kind === 'agent') argv.push('--agent', s.personaInfo.name)
+  }
+  return argv
+}
+
+async function clearContext(target) {
+  // (Typed, then Enter a moment later: as one burst the menu of commands
+  // could still be completing "/clear" when Enter arrives.)
+  await tmux(['send-keys', '-t', target, '-l', '/clear'])
+  await new Promise(r => setTimeout(r, 300))
+  await tmux(['send-keys', '-t', target, 'Enter'])
+}
+
+const claudeCode = {
+  // Where the program is (checked, see claudeBinary), and which version.
+  program: claudeBinary,
+  programOrNull: claudeOrNull,
+  version: claudeVersion,
+  // Its config folder.
+  home: claudeHome,
+  // Opening a session, resuming its conversation or with a persona included.
+  prepareSession,
+  sessionEnv,
+  sessionCommand,
+  // Typed in a session's terminal, as the user would.
+  clearContext,
+  // The skills and agents a session opened in this folder could follow, as the dashboard sees them.
+  personas: folder => listPersonas(folder).map(personaView),
+  // The Squadra plugin in its config: installed, and how it is set up.
+  plugin: {
+    status: pluginStatus,
+    ensure: ensurePlugin,
+    commands: PLUGIN_COMMANDS,
+    serverUrl: pluginServerUrl,
+    stateDir: pluginStateDir,
+    acceptPlainHttp: acceptPlainHttpInPlugin,
+  },
+}
+
+// --- opening and closing sessions -----------------------------------------------------
+
 // A private file in a private folder, never through a symlink: written to a
 // new temporary file, then renamed over the old one (a rename replaces a
 // symlink itself, it doesn't write where it points).
@@ -1032,44 +1151,11 @@ function openTerminal(spec) {
 async function openTerminalNow(spec) {
   const settings = loadSettings()
   const s = validateSpec(spec, settings, await listTerminals())
-  const claude = claudeBinary(settings.claude_command)
-  // Without the plugin the session would start, but never join Squadra.
-  // Checked every time (opening a session is rare): it may have been removed.
-  const st = await pluginStatus(claude)
-  if (st) PLUGIN = st
-  if (st && (!st.installed || !st.enabled)) {
-    throw new Error(`the Squadra plugin is ${PLUGIN.installed ? 'disabled' : 'not installed'} in Claude Code on this machine. Run "squadra-host plugin" there, or: ${PLUGIN_COMMANDS}`)
-  }
-  // An older plugin can't talk to this server (it doesn't send its session id).
-  if (st?.version && olderVersion(st.version, VERSION)) {
-    throw new Error(`the Squadra plugin on this machine is ${plain(st.version)}, older than this squadra-host (${VERSION}): run "squadra-host plugin" there, then open the session again`)
-  }
+  const claude = await claudeCode.prepareSession(s, settings)
   // Where the plugin keeps this name's state: its launch file (role and
   // coordinator, read instead of environment variables) and, when the server
   // reserved the name for this machine, its identity.
-  // The plugin ignores a CLAUDE_CONFIG_DIR inside the highest folder above the
-  // session's folder that doesn't contain the home (a repository could plant
-  // one): it would never find what is written here. Said now, not silently.
-  if (process.env.CLAUDE_CONFIG_DIR && isAbsolute(process.env.CLAUDE_CONFIG_DIR)) {
-    const cfg = realOr(process.env.CLAUDE_CONFIG_DIR)
-    let top = null
-    const home = realOr(HOME)
-    for (let d = s.folder; !withinById(home, d) && !withinById(HOME, d); d = dirname(d)) { top = d; if (dirname(d) === d) break }
-    if (top && withinById(cfg, top)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) is inside ${top}, like the session's folder: the Squadra plugin would ignore it. Move it, or open sessions in folders elsewhere`)
-    // Nor one that isn't private, it or a folder above it (the plugin
-    // ignores that too: the same rule).
-    if (!privateChain(join(cfg, 'channels', 'squadra'), cfg)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) must be a folder of this user that others can't write to, inside folders nobody else can change`)
-  }
-  // The secret the server reserved goes only to that server: the plugin
-  // here must be configured for it (same origin), or the session isn't opened.
-  const origin = u => { try { return new URL(u).origin } catch { return null } }
-  if (s.identity && CREDS_SERVER && origin(pluginServerUrl()) !== origin(CREDS_SERVER)) {
-    throw new Error(`the Squadra plugin on this machine is configured for ${pluginServerUrl() ?? 'no server'}, but this machine belongs to ${CREDS_SERVER}: set SQUADRA_URL=${CREDS_SERVER} in ${join(claudeHome(), 'channels', 'squadra', '.env')}`)
-  }
-  // The persona, looked up again in the folder now (it may have changed since
-  // the dashboard listed it).
-  s.personaInfo = s.persona ? findPersona(s.folder, s.persona, s.role) : null
-  const dir = pluginStateDir(s.name)
+  const dir = claudeCode.plugin.stateDir(s.name)
   // (A session in the home folder reaches everything of this user: its
   // permission prompts are answered only in its own terminal.)
   const relay = settings.permission_relay && !s.home && s.role !== 'solo'
@@ -1087,37 +1173,15 @@ async function openTerminalNow(spec) {
 }
 
 async function startSession(s, settings, claude, dir) {
-  if (s.identity) writePrivate(dir, 'identity.json', { name: s.name, secret: s.identity, server: pluginServerUrl() })
+  if (s.identity) writePrivate(dir, 'identity.json', { name: s.name, secret: s.identity, server: claudeCode.plugin.serverUrl() })
   const tname = PREFIX + s.name
-  const env = { SQUADRA_NAME: s.name }
-  if (s.compact_window) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(s.compact_window)
+  const env = { SQUADRA_NAME: s.name, ...claudeCode.sessionEnv(s) }
   if (!settings.permission_relay || s.home || s.role === 'solo') env.SQUADRA_PERMISSION_RELAY = 'off'
   // Fixed command. Two or more arguments make tmux exec it directly, no shell.
   // "env -u TMUX" hides the tmux server from the session: its tools can't
   // simply run "tmux send-keys" into another session. (They run as the same
   // user, so this is a speed bump, not a wall: see the README.)
-  // Claude Code's config folder is this program's, not the one the tmux
-  // server started with (it outlives restarts of this program).
-  const cfg = process.env.CLAUDE_CONFIG_DIR
-  if (cfg && isAbsolute(cfg)) env.CLAUDE_CONFIG_DIR = cfg
-  // (A standalone session takes no messages: no development channel, and so
-  // no dialog about it at every start. The plugin still reports its activity.)
-  const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, ...(s.role === 'solo' ? [] : ['--dangerously-load-development-channels', 'plugin:squadra@squadra'])]
-  if (s.resume) argv.push('--continue')
-  // The persona, in the system prompt: a skill's text from a private copy
-  // (what the session reads is what was checked, not the file as it may be
-  // later), an agent by its name.
-  const promptFile = join(dir, 'persona.md')
-  if (s.personaInfo?.kind === 'skill') {
-    ensurePrivateDir(dir)
-    const tmp = join(dir, `.persona.md.${process.pid}.${Date.now()}`)
-    writeFileSync(tmp, skillPrompt(s.personaInfo), { mode: 0o600, flag: 'wx' })
-    renameSync(tmp, promptFile)
-    argv.push('--append-system-prompt-file', promptFile)
-  } else {
-    rmSync(promptFile, { force: true })
-    if (s.personaInfo?.kind === 'agent') argv.push('--agent', s.personaInfo.name)
-  }
+  const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...claudeCode.sessionCommand(s, claude, dir, env)]
   const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window, persona: s.personaInfo ? { id: s.personaInfo.id, kind: s.personaInfo.kind, name: s.personaInfo.name } : null })
   await tmux([
     'start-server', ';',
@@ -1160,7 +1224,7 @@ async function setLinks(name, coordinators) {
   if (!t) throw new Error('no such session on this machine')
   if (t.role !== 'coordinator') throw new Error('only a coordinator is linked with other squads')
   const links = checkLinks(coordinators, name, 'coordinator', loadSettings())
-  writePrivate(pluginStateDir(name), 'links.json', { name, coordinators: links })
+  writePrivate(claudeCode.plugin.stateDir(name), 'links.json', { name, coordinators: links })
   log(`links of "${plain(name)}": ${links.map(plain).join(', ') || '(none)'}`)
   return { name, links }
 }
@@ -1175,12 +1239,7 @@ async function clearSession(id, coordinator) {
   const t = (await listTerminals()).find(x => x.id === id)
   if (!t) throw new Error('no such session on this machine')
   if (t.role !== 'worker' || t.coordinator !== coordinator) throw new Error(`"${id}" is not a worker of "${coordinator}" on this machine`)
-  const target = `=${PREFIX}${id}:`
-  // (Typed, then Enter a moment later: as one burst the menu of commands
-  // could still be completing "/clear" when Enter arrives.)
-  await tmux(['send-keys', '-t', target, '-l', '/clear'])
-  await new Promise(r => setTimeout(r, 300))
-  await tmux(['send-keys', '-t', target, 'Enter'])
+  await claudeCode.clearContext(`=${PREFIX}${id}:`)
   log(`cleared the context of "${plain(id)}" for its coordinator "${plain(coordinator)}"`)
   return { cleared: true }
 }
@@ -1190,8 +1249,8 @@ async function killTerminal(id) {
   const list = await listTerminals()
   if (!list.some(t => t.id === id)) throw new Error('no such session on this machine')
   await tmux(['kill-session', '-t', `=${PREFIX}${id}`]) // "=": exactly this name, never a prefix match
-  try { rmSync(join(pluginStateDir(id), 'launch.json'), { force: true }) } catch {} // if it never got to use it
-  try { rmSync(join(pluginStateDir(id), 'links.json'), { force: true }) } catch {}
+  try { rmSync(join(claudeCode.plugin.stateDir(id), 'launch.json'), { force: true }) } catch {} // if it never got to use it
+  try { rmSync(join(claudeCode.plugin.stateDir(id), 'links.json'), { force: true }) } catch {}
   log(`closed "${id}"`)
   return true
 }
@@ -1401,6 +1460,7 @@ async function hostInfo() {
   }
 }
 
+let PLUGIN = null // { installed, version, enabled }, or null when it can't be told
 let CLAUDE_VERSION = null
 
 let CREDS_SERVER = null // the server this machine is enrolled with
@@ -1482,7 +1542,7 @@ async function connect(creds) {
     async open(m) { try { return await openTerminal(m.spec) } finally { await pushInfo() } },
     async kill(m) { const r = await killTerminal(m.term); await pushInfo(); return r },
     // The skills and agents a session opened in this folder could follow.
-    async personas(m) { return { personas: listPersonas(checkFolder(m.folder, loadSettings())).map(personaView) } },
+    async personas(m) { return { personas: claudeCode.personas(checkFolder(m.folder, loadSettings())) } },
     // The dashboard linked or unlinked a coordinator running here.
     async links(m) { return setLinks(m.name, m.coordinators) },
     // A worker's coordinator wants it to start its next task from a clean context.
@@ -1834,8 +1894,8 @@ function openLink(exchange, proved, answer) {
 // The plugin on this machine remembers the same key (it does so by itself on a
 // machine with no squadra-host), per server. Never over one it already has.
 function pinServerKeyForPlugin(server, key) {
-  if (pluginServerUrl() !== server.replace(/\/+$/, '')) return
-  const dir = join(claudeHome(), 'channels', 'squadra', '.server-keys')
+  if (claudeCode.plugin.serverUrl() !== server.replace(/\/+$/, '')) return
+  const dir = join(claudeCode.home(), 'channels', 'squadra', '.server-keys')
   const file = join(dir, serverKeyHash(server.replace(/\/+$/, '')).slice(0, 16))
   if (existsSync(file)) return
   try {
@@ -1878,7 +1938,7 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   const self = fileURLToPath(import.meta.url)
   if (resolve(self) !== resolve(INSTALLED_SCRIPT)) { try { copyFileSync(self, INSTALLED_SCRIPT) } catch {} }
   // Configure the Squadra plugin on this machine if it isn't yet.
-  const pluginEnv = join(claudeHome(), 'channels', 'squadra', '.env')
+  const pluginEnvFile = join(claudeCode.home(), 'channels', 'squadra', '.env')
   // Only a well-formed URL and token: anything else (a line break, say) could
   // add settings of its own to the plugin's .env.
   const pu = r.plugin?.url, pt = r.plugin?.token
@@ -1886,23 +1946,23 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   const urlOk = typeof pu === 'string' && /^https?:\/\/[^\s]+$/.test(pu) && (() => { try { return new URL(pu).origin === new URL(server).origin } catch { return false } })()
   const tokenOk = pt == null || (typeof pt === 'string' && /^[\x21-\x7e]{16,256}$/.test(pt))
   if (r.plugin && (!urlOk || !tokenOk)) log('⚠️  the server sent an invalid plugin configuration: ignored')
-  else if (r.plugin && pu && !existsSync(pluginEnv)) {
+  else if (r.plugin && pu && !existsSync(pluginEnvFile)) {
     // The server address always; the join token only if the dashboard
     // offered it (sessions opened from the dashboard don't need it).
-    ensurePrivateDir(join(pluginEnv, '..'))
+    ensurePrivateDir(join(pluginEnvFile, '..'))
     // (Enrolled with --insecure: the plugin needs to be told the same, or it refuses plain http.)
-    writeFileSync(pluginEnv, `SQUADRA_URL=${pu}\n${pt ? `SQUADRA_SERVER_TOKEN=${pt}\n` : ''}${insecure ? 'SQUADRA_INSECURE=1\n' : ''}`, { mode: 0o600, flag: 'wx' }) // never through a symlink
-    log(`Squadra plugin configured for ${pu} (${pluginEnv})${pt ? '' : ', without a join token: only sessions opened from the dashboard can join'}`)
+    writeFileSync(pluginEnvFile, `SQUADRA_URL=${pu}\n${pt ? `SQUADRA_SERVER_TOKEN=${pt}\n` : ''}${insecure ? 'SQUADRA_INSECURE=1\n' : ''}`, { mode: 0o600, flag: 'wx' }) // never through a symlink
+    log(`Squadra plugin configured for ${pu} (${pluginEnvFile})${pt ? '' : ', without a join token: only sessions opened from the dashboard can join'}`)
   }
   if (proved) pinServerKeyForPlugin(server, proved.key)
   // Install the plugin itself, so sessions opened from the dashboard work unattended.
   if (plugin && info.claude) {
     try {
-      const before = await pluginStatus()
-      const st = await ensurePlugin()
+      const before = await claudeCode.plugin.status()
+      const st = await claudeCode.plugin.ensure()
       log(before?.installed && before.enabled ? `Squadra plugin ${st.version ?? ''} already installed in Claude Code` : `Squadra plugin ${st.version ?? ''} installed in Claude Code`)
     } catch (err) {
-      log(`⚠️  could not install the Squadra plugin (${err.message.split('\n')[0]}). Install it with: ${PLUGIN_COMMANDS}`)
+      log(`⚠️  could not install the Squadra plugin (${err.message.split('\n')[0]}). Install it with: ${claudeCode.plugin.commands}`)
     }
   }
   // The "squadra-host" command and the service (not for a custom
@@ -2261,10 +2321,10 @@ async function main() {
   if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`)
   const tv = await tmuxVersion()
   if (tv && (tv.major < 3 || (tv.major === 3 && tv.minor < 2))) die(`${tv.text} is too old: squadra-host needs tmux 3.2 or newer`)
-  CLAUDE_VERSION = claudeOrNull() ? await claudeVersion(claudeOrNull()) : null
+  CLAUDE_VERSION = claudeCode.programOrNull() ? await claudeCode.version(claudeCode.programOrNull()) : null
   if (cmd === 'plugin') {
-    try { const st = await ensurePlugin({ update: true }); return log(`Squadra plugin ${st.version ?? ''} is installed and up to date. Restart open sessions to use a new version.`) }
-    catch (err) { die(`${err.message.split('\n')[0]}\nInstall it by hand with: ${PLUGIN_COMMANDS}`) }
+    try { const st = await claudeCode.plugin.ensure({ update: true }); return log(`Squadra plugin ${st.version ?? ''} is installed and up to date. Restart open sessions to use a new version.`) }
+    catch (err) { die(`${err.message.split('\n')[0]}\nInstall it by hand with: ${claudeCode.plugin.commands}`) }
   }
   if (cmd === 'enroll') {
     // Enrolled and left running as a service: nothing more to do here.
@@ -2278,13 +2338,13 @@ async function main() {
   }
   const creds = readJson(CREDENTIALS_FILE, null)
   if (creds?.server) checkScheme(creds.server, creds.insecure === true)
-  if (creds?.insecure) acceptPlainHttpInPlugin(creds.server)
+  if (creds?.insecure) claudeCode.plugin.acceptPlainHttp(creds.server)
   if (!creds?.server || !creds?.secret) die(`this machine is not enrolled yet. In the dashboard, open Machines → + Add machine and run the command it shows.\n\n${USAGE}`, 2)
   if (!tv) log(`⚠️  tmux is not installed: sessions cannot be opened until it is (${TMUX_INSTALL}).`)
-  PLUGIN = await pluginStatus()
+  PLUGIN = await claudeCode.plugin.status()
   if (PLUGIN && !PLUGIN.installed) log(`⚠️  the Squadra plugin is not installed in Claude Code: sessions cannot be opened until it is. Run: ${cli()} plugin`)
   // Keep what the dashboard shows about the plugin current (installed or updated by hand).
-  setInterval(async () => { const st = await pluginStatus(); if (st) PLUGIN = st }, 5 * 60_000).unref()
+  setInterval(async () => { const st = await claudeCode.plugin.status(); if (st) PLUGIN = st }, 5 * 60_000).unref()
   await connect(creds)
 }
 

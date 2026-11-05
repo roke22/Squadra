@@ -133,6 +133,16 @@ test('modules: core speaks to the agent only through agent.js', () => {
   for (const h of PLUGIN_HELPERS) assert.doesNotMatch(readFileSync(join(ROOT, 'plugins/squadra', h), 'utf8'), /from '\.\/(core|claude)\//, h)
 })
 
+test('modules: the host uses Claude Code only through its claudeCode object', () => {
+  const source = readFileSync(join(ROOT, 'host/squadra-host.mjs'), 'utf8')
+  const start = source.indexOf('// --- Claude Code ---'), end = source.indexOf('// --- opening and closing sessions ---')
+  assert.ok(start > 0 && end > start)
+  const section = source.slice(start, end), outside = source.slice(0, start) + source.slice(end)
+  const names = [...section.matchAll(/^(?:export )?(?:async )?(?:function|const|let) (\w+)/gm)].map(m => m[1]).filter(n => n !== 'claudeCode')
+  assert.ok(names.includes('claudeBinary') && names.includes('ensurePlugin'))
+  for (const name of names) assert.doesNotMatch(outside, new RegExp(`(?<![.\\w])${name}\\b`), name)
+})
+
 test('modules: nothing unknown, nothing that can not be checked, no reaching out', () => {
   assert.match(violations({ 'server/stuff/x.js': '' }).join(), /not a known module/)
   assert.match(violations({ 'server/messaging/x.js': 'const m = await import(name)' }).join(), /can't be checked/)

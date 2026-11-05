@@ -26,7 +26,7 @@ The server and the plugin are divided into modules by subject (`server/messaging
 - A module uses another only through its `index.js`, and only if the list allows it. Dependencies go one way, with no circles.
 - A new folder has to be added to the list, with what it may use.
 - `plugins/squadra/core/` is what any agent could reuse: it doesn't use `plugins/squadra/claude/`, and asks the agent for what it needs through `core/agent.js`. `observe.js`, `paths.js` and `signing.js` stay at the plugin's top, because `hook.js` and the tests use them too.
-- `host/squadra-host.mjs` stays a single file, because that is what machines download and verify.
+- `host/squadra-host.mjs` stays a single file, because that is what machines download and verify. What it knows about Claude Code is in one section, and the rest uses it through the `claudeCode` object.
 
 ## Pull requests
 
