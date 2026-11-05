@@ -133,6 +133,34 @@ test('modules: core speaks to the agent only through agent.js', () => {
   for (const h of PLUGIN_HELPERS) assert.doesNotMatch(readFileSync(join(ROOT, 'plugins/squadra', h), 'utf8'), /from '\.\/(core|claude)\//, h)
 })
 
+// The host is one file that can't import anything, and the plugin installs from
+// its own folder: the few security checks both need are written twice, and stay
+// the same here. (What only shares a name, like checkLinks, isn't on this list.)
+test('modules: the checks the plugin and the host each keep are the same', () => {
+  const lines = file => readFileSync(join(ROOT, file), 'utf8').split('\n')
+  const definition = (file, name) => lines(file).find(l => new RegExp(`^(export )?const ${name} = `).test(l))?.replace(/^export /, '')
+  // A function's lines without its signature and its comments.
+  const body = (file, name) => {
+    const src = lines(file)
+    const start = src.findIndex(l => new RegExp(`^(export )?function ${name}\\(`).test(l))
+    assert.notEqual(start, -1, `${name} in ${file}`)
+    return src.slice(start + 1, src.indexOf('}', start)).filter(l => !l.trim().startsWith('//')).map(l => l.replace(/\s+\/\/ .*$/, ''))
+  }
+  const HOST = 'host/squadra-host.mjs', PATHS = 'plugins/squadra/paths.js'
+  for (const [name, file] of [['NAME_RE', 'plugins/squadra/core/settings.js'], ['LINKS_MAX', 'plugins/squadra/core/access.js'], ['HOME', 'plugins/squadra/core/sendable.js']]) {
+    assert.ok(definition(HOST, name), name)
+    assert.equal(definition(file, name), definition(HOST, name), name)
+  }
+  assert.deepEqual(body(HOST, 'privateChain'), body(PATHS, 'safeChain'))
+  assert.deepEqual(body(HOST, 'serverSigned'), body('plugins/squadra/signing.js', 'signedBy'))
+  // (Remembered differently in each.)
+  const noMemo = list => list.filter(l => !/privateGroupMemo|privateGroupCache|\bcached\b/.test(l))
+  assert.deepEqual(noMemo(body(HOST, 'privateGroup')), noMemo(body(PATHS, 'privateGroup')))
+  // (By the folders' identity. The first line, comparing the spelling, is each one's own.)
+  const byIdentity = list => list.slice(1).map(l => l.replaceAll(/\bpath\b/g, 'p').replaceAll(/\bdir\b/g, 'd'))
+  assert.deepEqual(byIdentity(body(HOST, 'withinById')), byIdentity(body(PATHS, 'within')))
+})
+
 test('modules: the host uses Claude Code only through its claudeCode object', () => {
   const source = readFileSync(join(ROOT, 'host/squadra-host.mjs'), 'utf8')
   const start = source.indexOf('// --- Claude Code ---'), end = source.indexOf('// --- opening and closing sessions ---')

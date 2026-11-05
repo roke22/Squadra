@@ -10,7 +10,7 @@
  * (allowed folders, maximum sessions, whether the web terminal may type), so a
  * compromised server cannot widen them. The command is always the same:
  *
- *   claude --dangerously-load-development-channels plugin:squadra@squadra [--continue]
+ *   claude --dangerously-load-development-channels plugin:squadra@squadra [--resume <its own conversation>]
  *          [--append-system-prompt-file <its private copy of the skill> | --agent <name>]
  *
  * Typing in a session's terminal from the dashboard is, by nature, the same as
@@ -954,17 +954,23 @@ const pluginServerUrl = () => { const u = pluginEnv().SQUADRA_URL; return u && /
 // Missing folders count by the nearest one above that exists.
 function privateChain(path, upTo = path) {
   const me = typeof process.getuid === 'function' ? process.getuid() : null
-  let below = true // (up to upTo, included: the strict rule)
+  // (Up to upTo, included: the strict rule. The same text as the plugin's safeChain.)
+  let below = true
   for (let d = resolve(path); ; d = dirname(d)) {
     let st = null
     try { st = lstatSync(d) } catch (err) { if (err.code !== 'ENOENT') return false }
     if (st) {
       if (st.isSymbolicLink() || !st.isDirectory()) return false
-      const sticky = !!(st.mode & 0o1000)
+    }
+    if (st) {
       if (below) {
-        if ((me !== null && st.uid !== me) || (st.mode & 0o002) || ((st.mode & 0o020) && !privateGroup(st.gid))) return false
-      } else if ((me !== null && st.uid !== me && st.uid !== 0) || ((st.mode & 0o002) && !sticky) ||
-        ((st.mode & 0o020) && !sticky && !privateGroup(st.gid) && st.gid !== 0 && !(platform() === 'darwin' && st.gid === 80))) return false
+        const groupOk = !(st.mode & 0o020) || privateGroup(st.gid)
+        if ((me !== null && st.uid !== me) || (st.mode & 0o002) || !groupOk) return false
+      } else {
+        const sticky = !!(st.mode & 0o1000)
+        const groupOk = !(st.mode & 0o020) || sticky || privateGroup(st.gid) || st.gid === 0 || (platform() === 'darwin' && st.gid === 80)
+        if ((me !== null && st.uid !== me && st.uid !== 0) || ((st.mode & 0o002) && !sticky) || !groupOk) return false
+      }
     }
     if (d === resolve(upTo)) below = false
     if (dirname(d) === d) return true
@@ -1839,9 +1845,9 @@ async function serverIdentity(server) {
   if (typeof key !== 'string' || typeof challenge !== 'string' || !serverSigned(key, ['squadra-server-identity-1', nonce, challenge], sig)) throw new Error('the server did not prove its key')
   return { key, challenge }
 }
-function serverSigned(key, fields, sig) {
+function serverSigned(publicKeyText, fields, sig) {
   try {
-    const publicKey = createPublicKey({ key: Buffer.from(key, 'base64url'), format: 'der', type: 'spki' })
+    const publicKey = createPublicKey({ key: Buffer.from(String(publicKeyText), 'base64url'), format: 'der', type: 'spki' })
     return publicKey.asymmetricKeyType === 'ed25519' && verify(null, Buffer.from(JSON.stringify(fields)), publicKey, Buffer.from(String(sig), 'base64url'))
   } catch {
     return false
