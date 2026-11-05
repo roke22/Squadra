@@ -81,7 +81,7 @@ export function renderTop() {
     setHtml($('topTitle'), `<span class="dot ${s ? status(s).dot : ''}"></span>⌨ ${esc(r.term)} ${roleTag(s?.role ?? t?.role)} ${personaTag(s?.persona ?? t?.persona)}`)
     $('topSub').textContent = [h ? T.onHost(h.name) : '', t?.folder ?? '', h?.info && !t ? T.notListed : ''].filter(Boolean).join(' · ')
     const acts = []
-    if (s) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.term)}">${T.chat}</button>`)
+    if (s) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.term)}/chat">${T.chat}</button>`)
     acts.push(`<button class="btn" data-tact="redraw">${T.redraw}</button>`)
     if (t && h?.online) acts.push(`<button class="btn danger" data-tact="kill">${T.closeSession}</button>`)
     acts.push(`<button class="btn" data-go="#/h/${encodeURIComponent(r.host)}">${T.back}</button>`)

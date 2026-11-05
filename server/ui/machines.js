@@ -76,7 +76,7 @@ export function renderHosts(only) {
           <span class="m" title="${esc(t.folder ?? '')}">${esc(t.folder ?? '')}${t.role === 'worker' && t.coordinator ? ` · ${esc(T.coordinatorOf(t.coordinator))}` : ''}</span>
           <span class="acts">
             ${h.online ? `<button class="btn" data-go="#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(t.id)}">${T.terminal}</button>` : ''}
-            ${s ? `<button class="btn" data-go="#/s/${encodeURIComponent(t.id)}">${T.chat}</button>` : ''}
+            ${s ? `<button class="btn" data-go="#/s/${encodeURIComponent(t.id)}/chat">${T.chat}</button>` : ''}
             ${h.online ? `<button class="btn danger" data-hact="kill" data-h="${esc(h.id)}" data-t="${esc(t.id)}">${T.closeSession}</button>` : ''}
           </span></div>`
     }).join('')

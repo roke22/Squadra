@@ -84,8 +84,8 @@ export async function startSession(server, name, role, coordinator) {
   return { name, send: (to, text) => server.call('sendMessage', { chat_id: to, text }, opts) }
 }
 
-// A machine that shows one terminal, and answers what is typed in it the way
-// a program in a terminal would: by writing it back.
+// A machine that shows one terminal, opens more when asked, and answers what is
+// typed in a terminal the way a program there would: by writing it back.
 export async function startMachine(server, name, terminal) {
   const { code } = await server.call('api/hosts/enroll', { name })
   const { id, secret } = await server.call('host/enroll', { code, info: { hostname: name } })
@@ -93,17 +93,23 @@ export async function startMachine(server, name, terminal) {
   const ws = new WebSocket(`${server.url.replace('http', 'ws')}/host/connect`, ['squadra', `auth.${secret}`])
   const send = m => ws.send(JSON.stringify(m))
   const b64 = text => Buffer.from(text).toString('base64')
+  const info = {
+    hostname: name, platform: 'linux', arch: 'x64', version: '0.0.7', folders: ['/srv/squad'], allow_input: true, max_sessions: 8,
+    terminals: [{ id: terminal.id, role: terminal.role, coordinator: terminal.coordinator, folder: '/srv/squad', created_at: Date.now() }],
+  }
   await new Promise((resolve, reject) => {
     ws.onerror = () => reject(new Error('the machine could not connect'))
     ws.onopen = () => {
-      send({ t: 'hello', info: {
-        hostname: name, platform: 'linux', arch: 'x64', version: '0.0.7', folders: ['/srv/squad'], allow_input: true, max_sessions: 8,
-        terminals: [{ id: terminal.id, role: terminal.role, coordinator: terminal.coordinator, folder: '/srv/squad', created_at: Date.now() }],
-      } })
+      send({ t: 'hello', info })
     }
     ws.onmessage = e => {
       const m = JSON.parse(e.data)
       if (m.t === 'welcome') resolve()
+      if (m.t === 'open') {
+        info.terminals.push({ id: m.spec.name, role: m.spec.role, coordinator: m.spec.coordinator, folder: '/srv/squad', created_at: Date.now() })
+        send({ t: 'info', info })
+        send({ t: 'reply', req: m.req, ok: true, result: { id: m.spec.name } })
+      }
       if (m.t === 'attach') send({ t: 'screen', term: m.term, data: b64('screen from the machine\r\n'), cols: m.cols, rows: m.rows })
       if (m.t === 'in') { typed.push(m.data); send({ t: 'out', term: m.term, data: b64(m.data) }) }
     }

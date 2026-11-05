@@ -102,3 +102,17 @@ test('a terminal: it shows the screen, and what is typed reaches the machine', a
   await expect(screen).toContainText('hello')
   expect(machine.typed.join('')).toContain('hello')
 })
+
+// (Last: it adds a terminal to the machine, which the tests above count.)
+test('the Chat button: from a terminal and from the machines, it opens the chat', async ({ page }) => {
+  await server.call('api/terminals/open', { host: machine.id, spec: { name: 'worker2', role: 'worker', coordinator: 'coord' } })
+  const chatOpens = async button => {
+    await button.click()
+    await expect(page).toHaveURL(/#\/s\/worker2\/chat$/)
+    await expect(page.locator('#session .chat')).toBeVisible()
+  }
+  await signIn(page, `#/t/${machine.id}/worker2`)
+  await chatOpens(page.locator('#topRight').getByRole('button', { name: 'Chat', exact: true }))
+  await page.goto(`${server.url}/#/hosts`)
+  await chatOpens(page.locator('#hosts .term-row', { hasText: 'worker2' }).getByRole('button', { name: 'Chat', exact: true }))
+})
