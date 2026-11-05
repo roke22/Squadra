@@ -1042,8 +1042,14 @@ function sessionEnv(s) {
 // the folder's last conversation, which can be another session's.
 function ownConversation(dir, folder) {
   try {
-    const c = JSON.parse(readFileSync(join(dir, 'conversation.json'), 'utf8'))
-    return /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(c.id) && realpathSync(c.folder) === folder && existsSync(c.transcript) ? c.id : null
+    // (A session can write here: a pipe or a device would stop this program.)
+    const file = join(dir, 'conversation.json')
+    const st = lstatSync(file)
+    if (!st.isFile() || st.size > 8192) return null
+    const c = JSON.parse(readFileSync(file, 'utf8'))
+    if (typeof c.id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(c.id)) return null
+    if (!c.transcript.endsWith(`${sep}${c.id}.jsonl`) || !statSync(c.transcript).isFile()) return null
+    return realpathSync(c.folder) === folder ? c.id : null
   } catch { return null }
 }
 

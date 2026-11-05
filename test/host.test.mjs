@@ -529,6 +529,17 @@ test('continuing: a session takes up its own conversation, never the folder\'s l
   assert.doesNotMatch(await argsOf('cont3', { id, transcript, folder: outside }), /--resume/)
   assert.doesNotMatch(await argsOf('cont4', { id, transcript: join(work, 'gone.jsonl'), folder }), /--resume/)
   assert.doesNotMatch(await argsOf('cont5', { id: '--dangerously-skip-permissions', transcript, folder }), /--resume|--dangerously-skip/)
+  assert.doesNotMatch(await argsOf('cont6', { id, transcript: join(work, 'another.jsonl'), folder }), /--resume/)
+  assert.doesNotMatch(await argsOf('cont7', { id: [id], transcript, folder }), /--resume/)
+  // A session can write in that folder: a pipe (or a device) must not stop the
+  // machine, and a link isn't its note.
+  const stateOf = name => { const dir = join(claudeDir, 'channels', 'squadra', name); mkdirSync(dir, { recursive: true, mode: 0o700 }); return join(dir, 'conversation.json') }
+  execFileSync('mkfifo', [stateOf('cont8')])
+  assert.doesNotMatch(await argsOf('cont8'), /--resume/)
+  const note = join(work, 'a-note.json')
+  writeFileSync(note, JSON.stringify({ id, transcript, folder }))
+  symlinkSync(note, stateOf('cont9'))
+  assert.doesNotMatch(await argsOf('cont9'), /--resume/)
 })
 
 test('personas: the machine lists a folder\'s skills and agents, and opens a session with the one picked by id', { skip: !hasTmux && 'tmux not installed' }, async () => {
