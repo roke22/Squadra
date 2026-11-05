@@ -102,6 +102,7 @@ async function pollLoop(s) {
       // each (the next poll waits for them all, and a session that doesn't
       // poll for 15 seconds is taken for gone).
       s.photoDeadline = Date.now() + 8000
+      s.pollBatch = (s.pollBatch ?? 0) + 1
       for (const u of updates) {
         offset = u.update_id + 1
         try {

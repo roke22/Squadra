@@ -68,9 +68,9 @@ function md(src) {
         // next to it (a label can pass for another site in many ways).
         const l = decode(label.replace(/<[^>]*>/g, '')).trim()
         // So does a host written with characters that look like others
-        // (gіthub.com with a Cyrillic і, a division slash for "/").
+        // (gіthub.com with a Cyrillic і, a division slash for "/", %2E for ".").
         const written = decode(href).replace(/^https?:\/\//i, '').split(/[/?#\\]/)[0].replace(/^[^@]*@/, '')
-        if ((l !== decode(href) && l !== u.href) || /[^\x21-\x7e]/.test(written) || /(^|\.)xn--/i.test(u.hostname)) realHost = u.host
+        if ((l !== decode(href) && l !== u.href) || /[^\x21-\x7e]|%/.test(written) || /(^|\.)xn--/i.test(u.hostname)) realHost = u.host
       } catch {}
       return own ? `${label} (${href})` : `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>${realHost ? ` <span class="more">(${esc(realHost)})</span>` : ''}`
     })

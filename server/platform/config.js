@@ -109,7 +109,8 @@ if (TLS_MODE === 'files' && !(TLS_CERT && TLS_KEY)) {
   process.stderr.write('squadra-server: --tls-cert and --tls-key go together\n')
   process.exit(2)
 }
-if (PUBLIC_URL && !/^https?:\/\/[^\s/]+/.test(PUBLIC_URL)) {
+// (It goes into the commands the dashboard gives: nothing a shell would read.)
+if (PUBLIC_URL && !/^https?:\/\/[^\s/'"`$\\&|;<>()^%!]+(\/[^\s'"`$\\&|;<>()^%!]*)?$/.test(PUBLIC_URL)) {
   process.stderr.write(`squadra-server: invalid public URL "${PUBLIC_URL}" (expected http(s)://host[:port])\n`)
   process.exit(2)
 }

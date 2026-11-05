@@ -138,6 +138,7 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.ok(en.result.command.includes(`'${URL_}/host/squadra-host.mjs'`))
   assert.ok(en.result.command.includes(`enroll '${URL_}' ${en.result.code} --server-key=${en.result.server_key}`))
   for (const system of ['linux', 'macos']) assert.ok(en.result.install[system].endsWith(`--server-key=${en.result.server_key}`))
+  assert.ok(en.result.install.windows.endsWith(`'${URL_}' ${en.result.code} --sha256 ${en.result.sha256} --server-key ${en.result.server_key}`))
 
   // The program is served by the server, as the command expects, and the
   // command checks its sha256 before running it (a tampered copy fails).

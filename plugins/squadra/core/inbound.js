@@ -120,8 +120,12 @@ export function safeContent(text) {
 // coordinator deleted and registered again (by someone else) while this
 // worker runs is caught too.
 const COORDINATOR_RECHECK_MS = 60_000
-export async function checkCoordinator(s, { fresh = false } = {}) {
+// batch: for a message from the coordinator, once per batch of messages: a
+// burst of them, each waiting for its own check, would keep this session from
+// polling for long enough to be taken for gone.
+export async function checkCoordinator(s, { fresh = false, batch = false } = {}) {
   if (s.role !== 'worker' || s.coordinatorRejected) return !s.coordinatorRejected
+  if (batch && s.pollBatch && s.coordinatorBatch === s.pollBatch) return true
   if (!fresh && s.coordinatorChecked && Date.now() - (s.coordinatorCheckedAt ?? 0) < COORDINATOR_RECHECK_MS) return true
   let info
   try { info = await call('getChat', { chat_id: s.coordinator }, { s }) } catch (err) {
@@ -162,6 +166,7 @@ export async function checkCoordinator(s, { fresh = false } = {}) {
   if (!pin || pin.name !== s.coordinator || (!pin.identity && identity)) {
     try { writePrivateFile(s.coordinatorPinFile, JSON.stringify({ name: s.coordinator, identity, created_at: created }, null, 2) + '\n') } catch {}
   }
+  s.coordinatorBatch = s.pollBatch
   return true
 }
 
@@ -171,7 +176,7 @@ export async function handleInbound(s, msg, { edited = false } = {}) {
   // An edited permission request is never taken: what was asked can't change.
   if (edited && /^\s*🔐 Permission/.test(String(msg.text ?? ''))) { log(`ignored an edited permission request from ${msg.from?.id}`); return }
   if (s.role === 'worker' && String(msg.from?.id) === s.coordinator) {
-    const ok = await checkCoordinator(s, { fresh: true })
+    const ok = await checkCoordinator(s, { fresh: true, batch: true })
     // Couldn't be checked now: the message is taken again later, not lost.
     if (ok === null) throw new RetryLater('coordinator could not be checked')
     if (!ok) return

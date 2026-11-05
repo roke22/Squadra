@@ -149,6 +149,7 @@ export function createMachines(platform, { sessions, observation }) {
       .run(sha256(code), name, t, t + ENROLL_TTL_MS, p.configure_plugin === true ? 1 : 0, ticket)
     const base = serverBaseUrl(req)
     const q = s => `'${String(s).replace(/'/g, `'\\''`)}'` // always a single shell word
+    const ps = s => `'${String(s).replace(/'/g, "''")}'`
     // The command checks the program it downloads against this server's copy
     // (sha256sum on Linux, shasum on macOS) before running it.
     const sha = hostScript()?.sha ?? null
@@ -167,7 +168,8 @@ export function createMachines(platform, { sessions, observation }) {
       install: {
         linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
         macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
-        windows: `irm ${q(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${base} ${code}`,
+        // (PowerShell's quotes. "--server-key x", not "=": a .bat splits its arguments at "=".)
+        windows: `irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}`,
       },
       // Just squadra-host, on a machine that already has what it needs.
       // Downloaded into a new private folder: nobody can swap the file between the check and the run.

@@ -103,6 +103,14 @@ test('a terminal: it shows the screen, and what is typed reaches the machine', a
   expect(machine.typed.join('')).toContain('hello')
 })
 
+test('the chat: a link whose host is written with % shows the real host', async ({ page }) => {
+  const s = await startSession(server, 'links1', 'worker', 'coord')
+  const url = 'https://github.com%2Eevil.example/x'
+  await s.observe([{ kind: 'text', text: `[${url}](${url})`, ts: Date.now() }])
+  await signIn(page, '#/s/links1/chat')
+  await expect(page.locator('#session .chat a[href*="evil.example"] + .more')).toHaveText('(github.com.evil.example)')
+})
+
 test('the chat: a tool shows its end across messages, and none runs after its turn', async ({ page }) => {
   const s = await startSession(server, 'tools1', 'worker', 'coord')
   const t0 = Date.now()

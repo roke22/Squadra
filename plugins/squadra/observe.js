@@ -100,6 +100,9 @@ export function redact(text) {
 // patterns can't see): every string as text, and a string or number under a
 // secret-looking key (a string) as a whole. `mask` is redact or maskOutgoing's text.
 const SECRET_KEY = /^(?:[A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|account[_-]?key|credentials?|authorization|cookie|contrase(?:ñ|n)a|clave))[A-Za-z0-9_.-]{0,40}$/i
+// (Words of a camelCase name count as words: dbPass, hmacKey. Not a secret by
+// name alone: pass_through, and a pwd that is a folder.)
+const secretName = (k, v) => SECRET_KEY.test(k.replace(/([a-z0-9])([A-Z])/g, '$1_$2')) && !/tokens$|^pass[_-]?through$/i.test(k) && !(/^pwd$/i.test(k) && /^[/~]/.test(v))
 export function maskDeep(value, mask, depth = 0) {
   let masked = 0
   const walk = (v, d) => {
@@ -110,7 +113,7 @@ export function maskDeep(value, mask, depth = 0) {
     for (const [k, x] of Object.entries(v)) {
       // (Counts of tokens — max_tokens, tokens — aren't secrets; a number
       // under a password, secret or PIN key is.)
-      const secretKey = SECRET_KEY.test(k) && !/tokens$/i.test(k)
+      const secretKey = secretName(k, x)
       const numberSecret = typeof x === 'number' && Number.isFinite(x) && /pass|secret|^pin$|[_-]pin$/i.test(k) && String(x).length >= 4
       if ((secretKey && typeof x === 'string' && x.length >= 4 && !/^\[REDACTED/.test(x)) || numberSecret) { masked++; out[k] = '[REDACTED]' } else out[k] = walk(x, d + 1)
     }
@@ -125,6 +128,8 @@ export function maskDeep(value, mask, depth = 0) {
 // (no spaces, brackets or code). Ordinary code such as
 // `const token = getToken(req)` stays as written. The whole text is checked.
 const OUT_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|account[_-]?key|credentials?)[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/gi
+// The same for camelCase names, where case tells the words apart: dbPass=…, hmacKey=…
+const OUT_CAMEL_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:[a-z0-9](?:Pw|Pwd|Pass|Hmac|PW|PWD|PASS|HMAC)(?![a-z])|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?=[A-Z]))[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/g
 const NOT_SECRET = /^(true|false|null|none|undefined|required|optional|string|number|boolean|redacted|\[redacted\]|example|changeme|xxx+|\*+)$/i
 export function maskOutgoing(text) {
   if (typeof text !== 'string' || !text) return { text, masked: 0 }
@@ -134,13 +139,15 @@ export function maskOutgoing(text) {
   for (const re of SECRET_PATTERNS) out = out.replace(re, count(() => '[REDACTED]'))
   out = out.replace(URL_CREDENTIALS, count((_, a, b) => `${a}${b}:[REDACTED]@`))
   out = out.replace(BEARER, count((_, k) => `${k} [REDACTED]`))
-  out = out.replace(OUT_KEY_VALUE, (m, k, sep, q, v) => {
+  out = out.replace(CLI_SHORT, count((m, a, _p, c, user) => (a ? `${a}[REDACTED]` : `${c}${user}:[REDACTED]`)))
+  const keyValue = (m, k, sep, q, v) => {
     // A secret has letters and digits; names in code don't (process.env.API_KEY,
     // os.environ["X"], my-tls-secret, /auth/reset-password).
-    if (NOT_SECRET.test(v) || !/\d/.test(v) || !/[A-Za-z]/.test(v) || (!q && /^[/#]/.test(v))) return m
+    if (NOT_SECRET.test(v) || !/\d/.test(v) || !/[A-Za-z]/.test(v) || (!q && /^[/#]/.test(v)) || /^pass[_-]?through$/i.test(k)) return m
     masked++
     return `${k}${sep}${q}[REDACTED]${q}`
-  })
+  }
+  out = out.replace(OUT_KEY_VALUE, keyValue).replace(OUT_CAMEL_KEY_VALUE, keyValue)
   return { text: out, masked }
 }
 
@@ -157,19 +164,28 @@ function outputMaySecrets(tool, toolInput) {
   if (/^(BashOutput|TaskOutput)$/.test(tool)) return true
   const i = toolInput && typeof toolInput === 'object' ? toolInput : {}
   if (/^mcp__/.test(tool) && /shell|exec|terminal|bash|command|run/i.test(tool)) {
-    // (Every string in its input, whatever the field is called: args, argv…)
-    const strings = []
-    const walk = (v, d) => { if (strings.length > 200 || d > 10) return; if (typeof v === 'string') strings.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x, d + 1) }
-    walk(i, 0)
+    const strings = stringsIn(i)
     return !strings.length || strings.length > 200 || strings.some(cmd => touchesSecrets('Bash', { command: cmd }))
   }
   return touchesSecrets(tool, toolInput)
+}
+// Every string in a tool's input, whatever the field is called: args, paths, uri…
+function stringsIn(input) {
+  const strings = []
+  const walk = (v, d) => { if (strings.length > 200 || d > 10) return; if (typeof v === 'string') strings.push(v); else if (v && typeof v === 'object') for (const x of Object.values(v)) walk(x, d + 1) }
+  walk(input, 0)
+  return strings
 }
 export function touchesSecrets(tool, toolInput) {
   const i = toolInput && typeof toolInput === 'object' ? toolInput : {}
   if (tool === 'Bash') {
     const cmd = String(i.command ?? '').slice(0, 10_000)
     return SECRET_FILE.test(cmd) || SECRET_DIR.test(cmd) || SECRET_COMMAND.test(cmd)
+  }
+  // An MCP tool can name a file in any field. (Too many to look at: taken as secret.)
+  if (/^mcp__/.test(tool)) {
+    const strings = stringsIn(i)
+    return strings.length > 200 || strings.some(v => { const t = v.slice(0, 4096); return SECRET_FILE.test(t) || SECRET_DIR.test(t) || SECRET_FILE.test(` ${t}`) })
   }
   const path = String(i.file_path ?? i.notebook_path ?? i.path ?? '').slice(0, 4096)
   // Grep and Glob also by their pattern (".env*", "**/*.pem").
@@ -433,7 +449,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
         // command's name, the tool), never its arguments or content.
         const secret = touchesSecrets(tool, input.tool_input)
         // (Not even the command's name: a quoted value before it could split into it.)
-        const summary = secret && tool === 'Bash'
+        const summary = secret && (tool === 'Bash' || tool.startsWith('mcp__'))
           ? 'command … (touches secrets: not shown)'
           : summarizeTool(tool, input.tool_input, cwd)
         return push({

@@ -1895,6 +1895,41 @@ test('eighth audit: masking in a permission prompt never hides a command silentl
     assert.ok(maskOutgoing(t).masked >= 1, t)
 })
 
+test('a burst from the coordinator: its identity is checked once per batch, not once per message', async t => {
+  const proxy = await hostileProxy()
+  t.after(() => proxy.close())
+  const c = new Plugin('bcoord', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator', SQUADRA_ALLOW_FROM: 'bworker' })
+  await c.init()
+  await c.waitConnected()
+  const w = new Plugin('bworker', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'bcoord' }, { noServer: true, envFile: `SQUADRA_URL=${proxy.url}\nSQUADRA_SERVER_TOKEN=${SERVER_TOKEN}\n` })
+  await w.init()
+  await w.waitConnected()
+  await sleep(300)
+  const before = proxy.urls.filter(u => u.startsWith('/getChat')).length
+  const N = 12
+  await Promise.all(Array.from({ length: N }, (_, i) => c.tool('reply', { chat_id: 'bworker', text: `task ${i}` })))
+  await waitFor(() => w.channel(p => p.content.startsWith('task ')).length === N, { what: 'the whole burst' })
+  const checks = proxy.urls.filter(u => u.startsWith('/getChat')).length - before
+  assert.ok(checks >= 1 && checks < N / 2, `${checks} checks for ${N} messages`)
+  c.close()
+  w.close()
+})
+
+test('secrets: camelCase names, a MySQL password in a message, and files named in any field of an MCP tool', async () => {
+  const { maskOutgoing, maskDeep, redact, touchesSecrets, summarizeTool } = await import(join(ROOT, 'plugins/squadra/observe.js'))
+  for (const t of ['dbPass=hunter2hunter2', 'userPwd: abc12345678', 'adminPw=Xy12345678', 'hmacKey=deadbeef1234']) assert.ok(maskOutgoing(t).masked >= 1, t)
+  assert.equal(maskOutgoing('mysql -uroot -pS3cretPw1 db').text, 'mysql -uroot -p[REDACTED] db')
+  for (const t of ['const pass = getPass(req1)', 'compassPoint=north12345', 'passThrough=abc12345678']) assert.equal(maskOutgoing(t).text, t)
+  const { value } = maskDeep({ dbPass: 'hunter2', hmacKey: 'abcd1234', adminPw: 'abcd', password: 'x12345', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' }, redact)
+  assert.deepEqual({ ...value }, { dbPass: '[REDACTED]', hmacKey: '[REDACTED]', adminPw: '[REDACTED]', password: '[REDACTED]', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' })
+  assert.equal(touchesSecrets('mcp__fs__read', { paths: ['/p/.env'] }), true)
+  assert.equal(touchesSecrets('mcp__fs__read', { uri: 'file:///home/u/.ssh/id_rsa' }), true)
+  assert.equal(touchesSecrets('mcp__fs__read', { nested: { a: [{ b: '/p/server.pem' }] } }), true)
+  assert.equal(touchesSecrets('mcp__fs__read', { uri: 'file:///p/readme.md' }), false)
+  assert.equal(touchesSecrets('mcp__x__y', { many: Array(300).fill('a') }), true)
+  assert.ok(summarizeTool)
+})
+
 test('a worker opened from the dashboard trusts the coordinator it was opened for, even if an older one had that name', async () => {
   const c1 = (await api('register', { name: 'cpin1' }, SERVER_TOKEN)).result
   // The worker's state still remembers an earlier session called cpin1.
@@ -1936,10 +1971,11 @@ test('a standalone session (solo) is plain Claude Code: no Squadra instructions 
 // Stands between a plugin and the server, as a compromised server or an
 // intercepted connection would: it can change anything in what it passes on.
 function hostileProxy() {
-  const proxy = { tamper: null, swapFile: null, seen: [], identity: null, auth: [], onNotice: null, inject: null }
+  const proxy = { tamper: null, swapFile: null, seen: [], identity: null, auth: [], onNotice: null, inject: null, urls: [] }
   const srv = createHttpServer(async (req, res) => {
     const chunks = []
     for await (const c of req) chunks.push(c)
+    proxy.urls.push(req.url)
     if (req.headers.authorization) proxy.auth.push(req.headers.authorization)
     if (req.url.startsWith('/server-identity') && proxy.identity) return proxy.identity(req, res)
     const headers = { ...req.headers }

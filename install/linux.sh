@@ -26,6 +26,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) SHA="${2:-}"; shift 2 ;;
+      --server-key) ARGS+=("--server-key=${2:-}"); shift 2 ;; # (from windows.bat: no "=" there)
       --allow-root) ROOT_OK=1; shift ;;
       *) ARGS+=("$1"); shift ;;
     esac

@@ -4,11 +4,11 @@ rem Squadra runs inside WSL (Ubuntu), together with Claude Code: this checks
 rem that WSL is there and runs the Linux installer inside it.
 rem The dashboard gives you the exact command, with your code:
 rem
-rem   windows.bat https://your-server CODE [--allow-home] [--insecure]
+rem   windows.bat https://your-server CODE [--sha256 X] [--server-key X] [--allow-home] [--insecure]
 setlocal
 
 if "%~2"=="" (
-  echo usage: windows.bat ^<server-url^> ^<code^> [--allow-home] [--insecure]
+  echo usage: windows.bat ^<server-url^> ^<code^> [--sha256 X] [--server-key X] [--allow-home] [--insecure]
   exit /b 2
 )
 
@@ -19,7 +19,7 @@ if errorlevel 1 goto nowsl
 
 echo.
 echo ==^> Setting up Squadra inside WSL (it may ask for your Ubuntu password)
-wsl -e bash -c "curl -fsSL '%~1/install/linux.sh' | bash -s -- '%~1' '%~2' %3 %4 %5 %6"
+wsl -e bash -c "curl -fsSL '%~1/install/linux.sh' | bash -s -- '%~1' '%~2' %3 %4 %5 %6 %7 %8 %9"
 exit /b %errorlevel%
 
 :nowsl
