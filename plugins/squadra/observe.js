@@ -295,9 +295,11 @@ const MAX_HOOK_BYTES = 64 * 1024 * 1024
 // onPrompt(prompt): each prompt about to be sent, whole (a worker's tasks start).
 // onChannelSeen(ids): message_ids of channel messages the transcript shows
 // reached Claude, also those put into a turn already going (no prompt for them).
-// stopCheck(active): when the turn is about to end, a reason to go on, or ''
+// stopCheck(): when the turn is about to end, a reason to go on, or ''
 // (asked for by the Stop hook through the same socket).
-export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null, onPrompt = null, onChannelSeen = null, stopCheck = null }) {
+// onConversation(id, transcript): the conversation this session is in, when
+// first known and whenever it changes (/clear, /resume), at every level.
+export function createObserver({ level = 'full', send, log = () => {}, contextProvider = () => '', onToolInput = null, onPrompt = null, onChannelSeen = null, stopCheck = null, onConversation = null }) {
   level = normalizeLevel(level) ?? 'full'
   const limits = LIMITS[level]
   let server = null
@@ -306,6 +308,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
   let flushing = false
   let flushTimer = null
   let tail = null // { path, offset, rest, decoder, timer }
+  let conversation = null
   let cwd = process.cwd()
   let stopped = false
 
@@ -403,6 +406,10 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
     const cwdChanged = typeof input.cwd === 'string' && input.cwd !== cwd
     if (cwdChanged) cwd = input.cwd
     if (input.transcript_path && !input.agent_id) setTranscript(input.transcript_path)
+    if (typeof input.session_id === 'string' && !input.agent_id && input.session_id !== conversation) {
+      conversation = input.session_id
+      try { onConversation?.(conversation, input.transcript_path) } catch (err) { log(`observe: conversation callback failed: ${err.message}`) }
+    }
     const base = {
       ts: Number(ts) || Date.now(),
       ...(input.agent_type ? { agent: String(input.agent_type) } : {}),
@@ -522,7 +529,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           if (msg?.want === 'stop') {
             // Up to date first: what reached Claude in this turn counts.
             readTail()
-            Promise.resolve().then(() => stopCheck?.(msg.active === true))
+            Promise.resolve().then(() => stopCheck?.())
               .catch(err => { log(`observe: stop check failed: ${err.message}`); return '' })
               .then(block => conn.end(JSON.stringify({ block: typeof block === 'string' ? block : '' })))
             return

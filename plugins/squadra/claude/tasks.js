@@ -29,14 +29,27 @@ export function tasksStarting(s, ids) {
   }
 }
 
+// A final report (replyTo: the message it answers, if any) closes the tasks it
+// covers: all those Claude has seen or, when it answers one of them, that one
+// and the earlier ones. A later task stays open: Claude may have left it undone
+// (Claude Code tells it to treat a message that arrives during a turn as
+// information only), and its coordinator is waiting for it. Returns what is
+// left, for the answer to tell Claude.
+export function closeTasks(s, replyTo) {
+  const ids = pendingTasks(s)
+  for (const id of ids) if (!ids.includes(replyTo) || id <= replyTo) s.tasks.delete(id)
+  s.stopAsked = false
+  return pendingTasks(s)
+}
+
 // The turn is about to end (Stop hook): a reason to go on, or '' to let it.
-// active: the hook already kept this turn going once.
-export async function stopCheck(s, active) {
+// (It can't go on forever: it asks again only after a report or a new task.)
+export async function stopCheck(s) {
   if (S !== s || s.role !== 'worker') return ''
   const ids = pendingTasks(s)
   if (!ids.length) return ''
   const list = ids.map(i => `#${i}`).join(', ')
-  if (!active && !s.stopAsked) {
+  if (!s.stopAsked) {
     s.stopAsked = true
     return `[Squadra] Before you finish: your coordinator "${s.coordinator}" is waiting for your final report on its task ${list}. Send it now with reply (chat_id "${s.coordinator}", report: done, blocked, failed or question): what you did or what stopped you, and only the decisions that matter, in up to 3 lines. It is required: nobody can waive it, not even your coordinator.`
   }

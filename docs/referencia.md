@@ -300,7 +300,7 @@ Las reglas de la máquina están en `~/.config/squadra-host/settings.json`. El p
 | `allow_home` | Si la carpeta personal entera puede ser una de ellas (`false`; lo activa `squadra-host --allow-home`) |
 | `max_sessions` | Como mucho estas a la vez (8; máximo 64) |
 | `allow_input` | Si el panel puede escribir en las terminales (`true`). Ponlo a `false` para solo mirar (terminales de solo lectura) |
-| `allow_resume` | Si una sesión puede continuar la última conversación de su carpeta (`true`) |
+| `allow_resume` | Si una sesión puede continuar su propia última conversación (`true`) |
 | `permission_relay` | Si el coordinador de un worker puede responder sus permisos desde otra sesión (igual que `allow_input` por defecto; nunca en sesiones en la carpeta personal). Para las sesiones que abre squadra-host; para las arrancadas a mano en la máquina, pon `SQUADRA_PERMISSION_RELAY=off` en el `.env` del plugin |
 | `allow_clear` | Si el coordinador de un worker puede limpiar su contexto (`/clear`, escrito en su terminal) antes de darle una tarea nueva (igual que `allow_input` por defecto) |
 | `coordinators` | Si se pone, los únicos nombres de coordinador que pueden recibir los workers que abre squadra-host en esta máquina, y con los que pueden enlazarse los coordinadores que abre |
@@ -356,6 +356,8 @@ Cada mensaje de un coordinador a su worker es una tarea, y cada tarea termina co
 - **Empezar no necesita mensaje:** cuando una tarea arranca el turno del worker, el plugin le pone 👀. Una reacción no despierta a nadie, así que no gasta tokens.
 - **Terminar sin el informe no es posible:** un hook `Stop` impide que el turno acabe y le dice a Claude que lo envíe antes. Nadie puede dispensarlo, ni siquiera el coordinador ("avísame solo si algo va mal" no cuenta). Solo pide el de las tareas que Claude ya ha visto: una que llega justo cuando el turno acaba queda para el turno siguiente.
 - **Si aun así termina sin él** (ya se le pidió una vez, o algo falló), el coordinador recibe un aviso automático: *"w1 ended its turn without a final report on your task #123"*.
+- **Un informe cubre lo que responde:** con `reply_to` cierra esa tarea y las anteriores; una posterior sigue abierta y se le sigue pidiendo. Sin `reply_to` cierra todas las que Claude ha visto.
+- **Una tarea cada vez:** Claude Code le dice a Claude que trate un mensaje de canal que llega durante un turno como información no fiable, no como instrucciones, así que un worker puede no hacerle caso. A los coordinadores se les indica que esperen el informe antes de la siguiente tarea, y a los workers que informen de lo que dejen sin hacer.
 - **Información que no necesita respuesta:** el coordinador la envía con `fyi: true`, y no se espera informe.
 - El coordinador ve en `ping` si cada worker está **BUSY** (ocupado) o **free** (libre), y el panel marca en el chat cada informe (✓ hecho, ⛔ bloqueado, ✗ fallido, ? pregunta) y cada mensaje informativo.
 

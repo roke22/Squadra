@@ -9,7 +9,7 @@ import {
   COORDINATOR_WORDS, defaultObserve, SERVER_URL, transportProblem, DEFAULT_COORDINATOR, NAME_RE,
   log, OBSERVE_ORDER, RUN_DIR, VERSION, SERVER_TOKEN, ROOT_ENV_FILE, S, setSession, readApproved,
   listedApprovers, prepareAccess, writeApproved, personaLabel, linkedCoordinators, loadAccess, call,
-  claimPidFile, releasePidFile, nameOrQ, readPeerKey, checkCoordinator, connect, startLoops,
+  claimPidFile, releasePidFile, nameOrQ, readPeerKey, checkCoordinator, connect, startLoops, writePrivateFile,
 } from '../core/index.js'
 import { WINDOWS_HINT, channelLaunchStatus, LAUNCH_HINT } from './launch.js'
 import { roleRules } from './instructions.js'
@@ -116,7 +116,9 @@ export async function login({ name, role, coordinator, staticAccess = false, see
     contextProvider: source => (S !== s ? '' : source === 'prompt' ? briefOnPrompt(s) : withBrief(s, source === 'clear' ? clearedContext(s) : recoveryContext(s))),
     onPrompt: prompt => { if (S === s) tasksStarting(s, channelIds(prompt)) },
     onChannelSeen: ids => { if (S === s) tasksStarting(s, ids) },
-    stopCheck: active => stopCheck(s, active),
+    // For squadra-host, to open this session again in its own conversation.
+    onConversation: (id, transcript) => { if (S === s) writePrivateFile(join(s.stateDir, 'conversation.json'), JSON.stringify({ id, transcript, folder: process.cwd() }) + '\n') },
+    stopCheck: () => stopCheck(s),
     onToolInput: (tool, input) => {
       const now = Date.now()
       s.toolInputs.push({ tool, input, at: now })

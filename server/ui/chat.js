@@ -194,11 +194,13 @@ export class ChatView {
     }
 
     const a = sessions.get(this.name)?.activity
+    this.pairTools()
     const parts = []
     let group = null
     const flush = () => { if (group) { parts.push({ group, n: group.list.length }); group = null } }
     for (const it of this.items) {
       if (it.t === 'event' && (it.kind === 'tool_start' || it.kind === 'tool_end' || it.kind === 'subagent_start' || it.kind === 'subagent_stop')) {
+        if (it.kind === 'tool_end' && this.started.has(it.ref)) continue // shown with its start
         if (!group) group = { key: this.key(it), list: [] }
         group.list.push(it)
         continue
@@ -229,6 +231,31 @@ export class ChatView {
     this.itemsEl.innerHTML = html.join('') + shown.reverse().join('')
   }
 
+  // Each tool's end, wherever it fell: messages can come between a tool's start
+  // and its end (its own reply, the permission it waits for) and split their
+  // groups. And the tools that will never end (a denied permission gives no
+  // end): those of the main agent when its turn ends, all when the session does.
+  pairTools() {
+    this.started = new Set()
+    this.endOf = new Map()
+    this.stopped = new Set()
+    for (const it of this.items) {
+      if (it.t !== 'event' || !it.ref) continue
+      if (it.kind === 'tool_start') this.started.add(it.ref)
+      else if (it.kind === 'tool_end') this.endOf.set(it.ref, it)
+    }
+    let open = []
+    for (const it of this.items) {
+      if (it.t !== 'event') continue
+      if (it.kind === 'tool_start' && !this.endOf.has(it.ref)) open.push(it)
+      const over = it.kind === 'session_end' || (it.kind === 'session_start' && it.source !== 'compact')
+      if (over || (it.kind === 'stop' && !it.agent)) {
+        for (const t of open) if (over || !t.agent) this.stopped.add(t)
+        open = open.filter(t => !this.stopped.has(t))
+      }
+    }
+  }
+
   renderItem(it) {
     if (it.t === 'message') {
       const file = it.file ? `${it.text ? '\n' : ''}📎 ${esc(it.file.name)}` : ''
@@ -254,22 +281,21 @@ export class ChatView {
   }
 
   renderGroup(group, activity, left = { chars: Infinity, tags: Infinity }) {
-    // Pair tool_start/tool_end by tool use id.
     const tools = []
-    const byId = new Map()
     for (const ev of group.list) {
-      if (ev.kind === 'tool_start') { const t = { start: ev, end: null }; tools.push(t); if (ev.ref) byId.set(ev.ref, t) }
-      else if (ev.kind === 'tool_end') { const t = ev.ref && byId.get(ev.ref); if (t) t.end = ev; else tools.push({ start: { ...ev, summary: '' }, end: ev }) }
+      if (ev.kind === 'tool_start') tools.push({ start: ev, end: this.endOf.get(ev.ref) ?? null })
+      else if (ev.kind === 'tool_end') tools.push({ start: { ...ev, summary: '' }, end: ev }) // its start isn't loaded
       else tools.push({ sub: ev })
     }
     const real = tools.filter(t => !t.sub)
-    const running = real.filter(t => !t.end)
+    const running = real.filter(t => !t.end && !this.stopped.has(t.start))
     const failed = real.filter(t => t.end && t.end.ok === false)
+    const noResult = real.some(t => !t.end && this.stopped.has(t.start))
     const names = [...new Set(real.map(t => toolName(t.start.tool)))]
     const waitingId = activity?.state === 'waiting' ? activity.tool?.id : null
     const st = running.length
       ? (running.some(t => t.start.ref === waitingId) ? `<span class="res err">${T.waitingPermission}</span>` : `<span class="res run">⏳ ${T.running(running.length)}</span>`)
-      : failed.length ? `<span class="res err">✗ ${T.withErrors(failed.length)}</span>` : '<span class="res ok">✓</span>'
+      : failed.length ? `<span class="res err">✗ ${T.withErrors(failed.length)}</span>` : noResult ? `<span class="res">${T.noResult}</span>` : '<span class="res ok">✓</span>'
     const userChoice = this.openGroups.get(group.key)
     const open = userChoice ?? (running.length > 0)
     // Newest tools first, as many as fit in what the view has left.
@@ -293,7 +319,8 @@ export class ChatView {
 
   renderTool({ start, end }, waitingId) {
     let res
-    if (!end && start.ref === waitingId) res = `<span class="res err">${T.permShort}</span>`
+    if (!end && this.stopped.has(start)) res = `<span class="res">${T.noResult}</span>`
+    else if (!end && start.ref === waitingId) res = `<span class="res err">${T.permShort}</span>`
     else if (!end) res = `<span class="res run" data-since="${start.ts}">⏳ ${dur(now() - start.ts)}</span>`
     else if (end.ok === false) res = `<span class="res err">✗ ${end.interrupted ? T.interrupted : end.summary ? clipEsc(end, 'summary', 300) : T.error}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
     else res = `<span class="res ok">✓${end.summary ? ` ${clipEsc(end, 'summary', 300)}` : ''}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`

@@ -491,6 +491,33 @@ test('a standalone session starts plain Claude Code: no development channel, no 
   assert.ok((await dash('terminals/kill', { host: hostId, term: 'solo1' })).ok)
 })
 
+test('continuing: a session takes up its own conversation, never the folder\'s last one', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const id = '11111111-2222-4333-8444-555555555555'
+  const transcript = join(work, `${id}.jsonl`)
+  writeFileSync(transcript, '')
+  const argsOf = async (name, noted) => {
+    const dir = join(claudeDir, 'channels', 'squadra', name)
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    if (noted) writeFileSync(join(dir, 'conversation.json'), JSON.stringify(noted))
+    const r = await dash('terminals/open', { host: hostId, spec: { name, role: 'solo', folder: allowed, resume: true } })
+    assert.ok(r.ok, r.description)
+    const args = await waitFor(() => {
+      const s = execFileSync('tmux', ['-L', SOCKET, 'capture-pane', '-p', '-t', `sq-${name}`], { encoding: 'utf8' })
+      return s.includes('ARGS:') ? s.match(/ARGS:.*/)[0] : null
+    }, { what: `${name} started` })
+    assert.ok((await dash('terminals/kill', { host: hostId, term: name })).ok)
+    assert.doesNotMatch(args, /--continue/)
+    return args
+  }
+  const folder = realpathSync(allowed)
+  assert.match(await argsOf('cont1', { id, transcript, folder }), new RegExp(`--resume ${id}`))
+  // Nothing to take up: a new conversation.
+  assert.doesNotMatch(await argsOf('cont2'), /--resume/)
+  assert.doesNotMatch(await argsOf('cont3', { id, transcript, folder: outside }), /--resume/)
+  assert.doesNotMatch(await argsOf('cont4', { id, transcript: join(work, 'gone.jsonl'), folder }), /--resume/)
+  assert.doesNotMatch(await argsOf('cont5', { id: '--dangerously-skip-permissions', transcript, folder }), /--resume|--dangerously-skip/)
+})
+
 test('personas: the machine lists a folder\'s skills and agents, and opens a session with the one picked by id', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const proj = join(allowed, 'team')
   mkdirSync(join(proj, '.claude', 'skills', 'design'), { recursive: true })

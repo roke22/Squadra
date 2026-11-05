@@ -153,7 +153,7 @@ function writeJson(file, data, mode = 0o600) {
 //   allow_home        whether the whole home folder may be one of them (default
 //                     false; set by starting with --allow-home). Sessions opened
 //                     there never get their permission prompts answered remotely
-//   allow_resume      whether a session may continue the last conversation in its folder (default true)
+//   allow_resume      whether a session may continue its own last conversation (default true)
 //   max_sessions      at most this many at once
 //   allow_input       whether the dashboard may type in the terminals
 //   permission_relay  whether a session's coordinator may answer its permission
@@ -583,8 +583,7 @@ export function validateSpec(spec, settings, current) {
     }
   }
   if (spec.resume != null && typeof spec.resume !== 'boolean') throw new Error('resume must be true or false')
-  // Continuing "the last conversation in that folder" could be one the user
-  // had there by hand: only if this machine allows it.
+  // Only if this machine allows continuing a conversation.
   if (spec.resume === true && !settings.allow_resume) throw new Error('this machine does not allow continuing earlier conversations ("allow_resume": false in its settings.json)')
   // The session's identity secret, when the server reserved the name for this machine.
   if (spec.identity != null && !(typeof spec.identity === 'string' && /^sq_[A-Za-z0-9_-]{20,64}$/.test(spec.identity))) throw new Error('invalid identity')
@@ -1032,13 +1031,27 @@ function sessionEnv(s) {
   return env
 }
 
+// The conversation a session was last in, as its plugin noted it, if it can be
+// continued: in the same folder and still saved. Never --continue: that takes
+// the folder's last conversation, which can be another session's.
+function ownConversation(dir, folder) {
+  try {
+    const c = JSON.parse(readFileSync(join(dir, 'conversation.json'), 'utf8'))
+    return /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(c.id) && realpathSync(c.folder) === folder && existsSync(c.transcript) ? c.id : null
+  } catch { return null }
+}
+
 // The command a session runs, after the "env" that starts it. env: the one
 // sessionEnv gave. dir: the plugin's folder for this session.
 function sessionCommand(s, claude, dir, env) {
   // (A standalone session takes no messages: no development channel, and so
   // no dialog about it at every start. The plugin still reports its activity.)
   const argv = [...(env.CLAUDE_CONFIG_DIR ? [] : ['-u', 'CLAUDE_CONFIG_DIR']), claude, ...(s.role === 'solo' ? [] : ['--dangerously-load-development-channels', 'plugin:squadra@squadra'])]
-  if (s.resume) argv.push('--continue')
+  if (s.resume) {
+    const conversation = ownConversation(dir, s.folder)
+    if (conversation) argv.push('--resume', conversation)
+    else log(`"${s.name}" has no conversation of its own to continue: it starts a new one`)
+  }
   // The persona, in the system prompt: a skill's text from a private copy
   // (what the session reads is what was checked, not the file as it may be
   // later), an agent by its name.
@@ -1788,7 +1801,7 @@ Settings: ${SETTINGS_FILE}
   folders_from_dashboard  whether the dashboard may change them (default true)
   max_sessions            at most this many sessions at once (default 8)
   allow_input             whether the dashboard may type in the terminals (default true)
-  allow_resume            whether a session may continue its folder's last conversation (default true)
+  allow_resume            whether a session may continue its own last conversation (default true)
   permission_relay        whether a worker's coordinator may answer its permission prompts
                           from another session (default: same as allow_input)
   allow_clear             whether a worker's coordinator may have its context cleared (/clear)

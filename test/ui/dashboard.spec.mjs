@@ -103,6 +103,30 @@ test('a terminal: it shows the screen, and what is typed reaches the machine', a
   expect(machine.typed.join('')).toContain('hello')
 })
 
+test('the chat: a tool shows its end across messages, and none runs after its turn', async ({ page }) => {
+  const s = await startSession(server, 'tools1', 'worker', 'coord')
+  const t0 = Date.now()
+  const tool = (kind, id, ts, extra) => ({ kind, id, tool: 'Bash', ts: t0 + ts, ...extra })
+  await s.observe([
+    tool('tool_start', 'crossed', 0, { summary: 'crossed-tool' }),
+    { kind: 'text', text: 'a message in between', ts: t0 + 1 },
+    tool('tool_end', 'crossed', 2, { ok: true }),
+    tool('tool_start', 'denied', 3, { summary: 'denied-tool' }),
+    { kind: 'stop', ts: t0 + 4 },
+    tool('tool_start', 'running', 5, { summary: 'running-tool' }),
+  ])
+  await signIn(page, '#/s/tools1/chat')
+  const row = name => page.locator('#session .chat .tool', { hasText: name }).locator('.res')
+  const groups = page.locator('#session .chat details.tools')
+  for (let i = 0; i < 3; i++) await groups.nth(i).evaluate(d => { d.open = true })
+  await expect(row('crossed-tool')).toHaveClass(/\bok\b/)
+  await expect(row('denied-tool')).toHaveText('no result')
+  await expect(row('running-tool')).toHaveClass(/\brun\b/)
+  // Its end doesn't appear again on its own: one group each, nothing else running.
+  await expect(groups).toHaveCount(3)
+  await expect(page.locator('#session .chat .res.run')).toHaveCount(2) // the tool, and its group
+})
+
 // (Last: it adds a terminal to the machine, which the tests above count.)
 test('the Chat button: from a terminal and from the machines, it opens the chat', async ({ page }) => {
   await server.call('api/terminals/open', { host: machine.id, spec: { name: 'worker2', role: 'worker', coordinator: 'coord' } })

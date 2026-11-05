@@ -300,7 +300,7 @@ The machine's rules live in `~/.config/squadra-host/settings.json`. The dashboar
 | `allow_home` | Whether the whole home folder may be one of them (`false`; `squadra-host --allow-home` sets it) |
 | `max_sessions` | At most this many at once (8; at most 64) |
 | `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch (terminals are read-only) |
-| `allow_resume` | Whether a session may continue the last conversation in its folder (`true`) |
+| `allow_resume` | Whether a session may continue its own last conversation (`true`) |
 | `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default; never for sessions in the home folder). For sessions squadra-host opens; for sessions started by hand on the machine, put `SQUADRA_PERMISSION_RELAY=off` in the plugin `.env` |
 | `allow_clear` | Whether a worker's coordinator may have its context cleared (`/clear`, typed in its terminal) before giving it a new task (same as `allow_input` by default) |
 | `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given, and that coordinators it opens may be linked with |
@@ -356,6 +356,8 @@ Every message from a coordinator to its worker is a task, and every task ends wi
 - **Starting needs no message:** when a task starts the worker's turn, the plugin puts 👀 on it. A reaction wakes nobody, so it costs no tokens.
 - **Finishing without the report isn't possible:** a `Stop` hook keeps the turn from ending and tells Claude to send it first. Nobody can waive it, not even the coordinator ("only tell me if something goes wrong" doesn't count). It only asks about tasks Claude has already seen: one that arrives as the turn ends is left for the next turn.
 - **If it still ends without one** (asked once already, or something went wrong), the coordinator gets an automatic notice: *"w1 ended its turn without a final report on your task #123"*.
+- **A report covers what it answers:** with `reply_to` it closes that task and the earlier ones; a later one stays open and is still asked for. Without `reply_to` it closes every task Claude has seen.
+- **One task at a time:** Claude Code tells Claude to treat a channel message that arrives during a turn as untrusted information, not as instructions, so a worker may not act on it. Coordinators are told to wait for the report before the next task, and workers to report anything they leave undone.
 - **Information that needs no answer:** the coordinator sends it with `fyi: true`, and no report is expected.
 - The coordinator sees in `ping` whether each worker is **BUSY** or **free**, and the dashboard marks each report (✓ done, ⛔ blocked, ✗ failed, ? question) and each fyi message in the chat.
 

@@ -7,7 +7,7 @@ import {
   loadAccess, linkedCoordinators, assertAllowedChat, assertPeerIsPinned, call, ApiError, uploadFile,
   downloadFile,
 } from '../core/index.js'
-import { pendingTasks } from './tasks.js'
+import { closeTasks } from './tasks.js'
 import { login, logout, status } from './login.js'
 
 // Long replies are split, preferring paragraph boundaries when chunkMode is 'newline'.
@@ -68,7 +68,7 @@ export const TOOLS = [
         chat_id: { type: 'string', description: 'Session name (e.g. "coord", "worker1") or group id ("#backend").' },
         text: { type: 'string' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block.' },
-        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. Not for progress: send that without report, or not at all.' },
+        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. With reply_to, it covers that task and the earlier ones, not later ones: to report on several at once, reply_to the latest. Not for progress: send that without report, or not at all.' },
         fyi: { type: 'boolean', description: 'Coordinator, to a worker: true when the message only informs and needs no report back. Leave it out for anything it must do: every other message from you is a task it must report on when it ends.' },
         fresh: { type: 'boolean', description: 'Coordinator, to one of your workers: true clears the worker\'s context (/clear) before it gets this message, so a NEW task unrelated to what it did before starts light (cheaper turns, nothing stale). Leave it out for follow-ups, corrections or anything that builds on its last task. Only for workers opened from the dashboard and idle; the answer says whether it was cleared.' },
         files: {
@@ -296,15 +296,16 @@ export async function callTool(name, args) {
         noteOffline(sent)
       }
 
-      // The final report closes the tasks from its coordinator that this worker
-      // has seen (one still on its way is not reported on yet).
+      // The final report closes the tasks from its coordinator that it covers,
+      // of those this worker has seen (one still on its way is not reported on yet).
+      let stillOpen = ''
       if (report && S.role === 'worker' && chat_id === S.coordinator) {
         S.observer?.sync()
-        for (const id of pendingTasks(S)) S.tasks.delete(id)
-        S.stopAsked = false
+        const open = closeTasks(S, reply_to)
+        if (open.length) stillOpen = `\nStill open: your coordinator's task ${open.map(i => `#${i}`).join(', ')}, after the one this report answers. Send a final report on it too, with reply_to "${open[open.length - 1]}": say if you already covered it here, or that you left it undone and why.`
       }
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
-        (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '')
+        (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '') + stillOpen
       if (offline.size === 0) return result + freshNote
       const label = o => `${o.name} (last seen ${ago(o.last_seen_at)})`
       const queued = [...offline.values()].filter(o => o.queued && o.down_in == null)

@@ -81,7 +81,11 @@ export async function startSession(server, name, role, coordinator) {
     }
   })()
   server.onClose(async () => { stopped = true; stop.abort(); await polling })
-  return { name, send: (to, text) => server.call('sendMessage', { chat_id: to, text }, opts) }
+  return {
+    name,
+    send: (to, text) => server.call('sendMessage', { chat_id: to, text }, opts),
+    observe: events => server.call('observe', { events }, opts),
+  }
 }
 
 // A machine that shows one terminal, opens more when asked, and answers what is

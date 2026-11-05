@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -325,6 +325,24 @@ test('plugin: idle until login', async () => {
   await assert.rejects(p.tool('reply', { chat_id: 'x', text: 'y' }), /\/squadra:login/)
   await sleep(300)
   assert.equal(p.channel().length, 0)
+  p.close()
+})
+
+test('plugin: notes the conversation it is in, never a subagent\'s', async () => {
+  const p = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await p.init()
+  await p.tool('login', { role: 'coordinator', name: 'conv1' })
+  const stateDir = join(p.configDir, 'channels', 'squadra', 'conv1')
+  const noted = () => { try { return JSON.parse(readFileSync(join(stateDir, 'conversation.json'), 'utf8')) } catch { return null } }
+  await runHook(p, { hook_event_name: 'UserPromptSubmit', session_id: 'first', transcript_path: '/x/first.jsonl', cwd: '/x', prompt: 'hi' })
+  const first = await waitFor(() => (noted()?.id === 'first' ? noted() : null), { what: 'the conversation noted' })
+  assert.equal(first.transcript, '/x/first.jsonl')
+  assert.equal(first.folder, realpathSync(ROOT))
+  assert.equal(statSync(join(stateDir, 'conversation.json')).mode & 0o777, 0o600)
+  await runHook(p, { hook_event_name: 'SubagentStart', session_id: 'sub', agent_id: 'a1', transcript_path: '/x/sub.jsonl', cwd: '/x' })
+  // After /clear, another conversation.
+  await runHook(p, { hook_event_name: 'SessionStart', session_id: 'second', transcript_path: '/x/second.jsonl', cwd: '/x', source: 'clear' })
+  await waitFor(() => noted()?.id === 'second', { what: 'the new conversation noted' })
   p.close()
 })
 
@@ -1626,6 +1644,34 @@ test('task reports: a worker can\'t end a task without its final report, and its
   assert.match((await stopHook()).reason, new RegExp(`final report on its task #${t4}\\. `))
   await sleep(300)
   assert.equal(coord.channel(p => p.content.includes('ended its turn without a final report')).length, 1, 'only the first missing report was announced')
+
+  // A report that answers one task doesn't close a later one, which may be
+  // undone: it is still asked for. One that answers the latest closes them all.
+  const seen = async text => {
+    const id = idOf(await coord.tool('reply', { chat_id: 'trw', text }))
+    await wk.waitChannel(p => p.content === text, text)
+    await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: `<channel source="squadra" chat_id="trc" message_id="${id}" user="trc">${text}</channel>`, session_id: 's', cwd: '/x' })
+    return id
+  }
+  await wk.tool('reply', { chat_id: 'trc', text: 'Export button done', report: 'done' })
+  const t5 = await seen('Task: five')
+  const t6 = await seen('Task: six')
+  const five = await wk.tool('reply', { chat_id: 'trc', text: 'Five done', report: 'done', reply_to: String(t5) })
+  assert.match(five, new RegExp(`Still open: your coordinator's task #${t6}, .* with reply_to "${t6}"`))
+  // Asked again even if this turn was already kept going once: a report came in between.
+  const b6 = await stopHook(true)
+  assert.match(b6.reason, new RegExp(`final report on its task #${t6}\\. `))
+  const six = await wk.tool('reply', { chat_id: 'trc', text: 'Six left undone', report: 'blocked', reply_to: String(t6) })
+  assert.doesNotMatch(six, /Still open/)
+  assert.equal(await stopHook(), null)
+  const t7 = await seen('Task: seven')
+  const t8 = await seen('Task: eight')
+  await wk.tool('reply', { chat_id: 'trc', text: 'Seven and eight done', report: 'done', reply_to: String(t8) })
+  assert.equal(await stopHook(), null)
+  // Answering a message that is no open task, or none: everything it has seen.
+  await seen('Task: nine')
+  await wk.tool('reply', { chat_id: 'trc', text: 'Nine done', report: 'done', reply_to: String(t7) })
+  assert.equal(await stopHook(), null)
   coord.close()
   wk.close()
 })
