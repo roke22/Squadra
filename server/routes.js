@@ -40,6 +40,16 @@ export function createRoutes(platform, { observation, machines, organization, se
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': page.body.length, 'Cache-Control': 'no-store', ...page.headers })
         return res.end(page.body)
       }
+      // What the page is made of: only scripts and styles by a plain name, from
+      // its own folder. (Public, like the page; not cached, so an update takes
+      // effect at once and the parts of a page are never from two versions.)
+      const uiFile = req.method === 'GET' ? /^\/ui\/([a-z0-9-]+)\.(js|css)$/.exec(path) : null
+      if (uiFile) {
+        const f = cachedFile(new URL(`./ui/${uiFile[1]}.${uiFile[2]}`, import.meta.url))
+        if (!f) throw new ApiError(404, 'Not Found')
+        res.writeHead(200, { 'Content-Type': uiFile[2] === 'js' ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8', 'Content-Length': f.body.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+        return res.end(f.body)
+      }
       // The web terminal (xterm.js), served from here rather than a CDN.
       if (req.method === 'GET' && Object.hasOwn(VENDOR_FILES, path)) {
         const [file, type] = VENDOR_FILES[path]

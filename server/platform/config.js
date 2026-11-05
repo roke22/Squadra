@@ -114,7 +114,7 @@ if (PUBLIC_URL && !/^https?:\/\/[^\s/]+/.test(PUBLIC_URL)) {
   process.exit(2)
 }
 export const MAX_JSON_BODY = 1024 * 1024          // 1 MB
-export const UI_FILE = new URL('../ui.html', import.meta.url)
+export const UI_FILE = new URL('../ui/index.html', import.meta.url)
 
 // xterm.js for the web terminal, vendored (see vendor/README.md).
 export const VENDOR_FILES = {

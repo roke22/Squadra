@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squadra</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2215%22%20fill%3D%22%23C15F3C%22/%3E%3Cg%20fill%3D%22%23fff%22%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2219%22%20r%3D%226.4%22/%3E%3Ccircle%20cx%3D%2223.5%22%20cy%3D%2228.5%22%20r%3D%224.4%22/%3E%3Ccircle%20cx%3D%2240.5%22%20cy%3D%2228.5%22%20r%3D%224.4%22/%3E%3Ccircle%20cx%3D%2216.5%22%20cy%3D%2237%22%20r%3D%223.5%22/%3E%3Ccircle%20cx%3D%2247.5%22%20cy%3D%2237%22%20r%3D%223.5%22/%3E%3Ccircle%20cx%3D%2210.5%22%20cy%3D%2245%22%20r%3D%222.7%22/%3E%3Ccircle%20cx%3D%2253.5%22%20cy%3D%2245%22%20r%3D%222.7%22/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="/ui/styles.css">
+<script>
+  // Light or dark, first thing, so the page doesn't flash.
+  try { const t = localStorage.getItem('squadraTheme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="squadra-logo" viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="15" fill="#C15F3C"/>
+    <g fill="#fff">
+      <circle cx="32" cy="19" r="6.4"/>
+      <circle cx="23.5" cy="28.5" r="4.4" fill-opacity=".95"/><circle cx="40.5" cy="28.5" r="4.4" fill-opacity=".95"/>
+      <circle cx="16.5" cy="37" r="3.5" fill-opacity=".85"/><circle cx="47.5" cy="37" r="3.5" fill-opacity=".85"/>
+      <circle cx="10.5" cy="45" r="2.7" fill-opacity=".72"/><circle cx="53.5" cy="45" r="2.7" fill-opacity=".72"/>
+    </g>
+  </symbol>
+</svg>
+
+<div id="splash" hidden></div>
+
+<div id="login" hidden>
+  <form class="login-card" id="loginForm">
+    <div class="brand"><svg class="logo" aria-hidden="true"><use href="#squadra-logo"/></svg>Squadra</div>
+    <p id="loginIntro"></p>
+    <input id="tokenInput" type="password" autocomplete="off" required>
+    <button type="submit" id="loginBtn"></button>
+    <div class="login-err" id="loginErr"></div>
+    <div class="foot"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <aside id="side">
+    <div class="brand"><svg class="logo" aria-hidden="true"><use href="#squadra-logo"/></svg>Squadra
+      <button class="add-host" id="addHostBtn" type="button"><svg viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2" width="16" height="11.5" rx="1.8"/><path d="M6.5 18h6M9.5 13.5V18"/><circle cx="18.5" cy="15.5" r="5" fill="var(--panel)"/><path d="M18.5 13v5M16 15.5h5"/></svg></button>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot"><span class="dot" id="connDot"></span><span id="connText"></span><button id="logoutBtn"></button></div>
+    <div class="side-ver"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
+  </aside>
+  <div id="main">
+    <div class="topbar">
+      <button class="menu-btn" id="menuBtn">☰</button>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+      <span class="top-div"></span>
+      <h1 id="topTitle"></h1>
+      <span class="sub" id="topSub"></span>
+      <div class="right" id="topRight"></div>
+    </div>
+    <div id="alerts" hidden></div>
+    <div id="mosaic" hidden></div>
+    <div id="archived" hidden></div>
+    <div id="org" hidden></div>
+    <div id="session" class="full" hidden></div>
+    <div id="hosts" hidden></div>
+    <div id="terminal" hidden></div>
+  </div>
+</div>
+
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>

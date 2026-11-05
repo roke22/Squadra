@@ -481,7 +481,7 @@ That way a worker behaves correctly in its repository whoever coordinates it.
 ## Repository layout
 
 ```
-server/            squadra-server and the dashboard (ui.html; vendor/ holds xterm.js)
+server/            squadra-server and the dashboard (ui/; vendor/ holds xterm.js)
 deploy/            optional Docker Compose with Caddy in front
 plugins/squadra/   the Claude Code plugin: MCP channel server, hooks, skills
 host/              squadra-host: opens sessions on a machine for the dashboard

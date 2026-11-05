@@ -481,7 +481,7 @@ Así un worker se comporta bien en su repositorio sea quien sea su coordinador.
 ## Estructura del repositorio
 
 ```
-server/            squadra-server y el panel (ui.html; vendor/ trae xterm.js)
+server/            squadra-server y el panel (ui/; vendor/ trae xterm.js)
 deploy/            Docker Compose opcional con Caddy delante
 plugins/squadra/   el plugin de Claude Code: servidor MCP de channel, hooks, skills
 host/              squadra-host: abre sesiones en una máquina para el panel

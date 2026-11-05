@@ -191,6 +191,29 @@ test('the dashboard page carries a strict CSP and cannot be framed; xterm is ser
   for (const f of ['xterm.js', 'addon-fit.js', 'xterm.css']) assert.equal((await fetch(`${URL_}/vendor/${f}`)).status, 200, f)
 })
 
+test('the dashboard is made of scripts and styles from its own folder, and nothing else is served from there', async () => {
+  const js = await fetch(`${URL_}/ui/app.js`)
+  assert.equal(js.status, 200)
+  assert.match(js.headers.get('content-type'), /^text\/javascript/)
+  assert.equal(js.headers.get('x-content-type-options'), 'nosniff')
+  assert.match((await fetch(`${URL_}/ui/styles.css`)).headers.get('content-type'), /^text\/css/)
+  for (const p of ['/ui/nope.js', '/ui/index.html', '/ui/%2e%2e%2fserver.js', '/ui/..%2fserver.js', '/ui/Dom.js', '/ui/a/b.js']) {
+    const r = await fetch(`${URL_}${p}`)
+    assert.notEqual(r.status, 200, p)
+  }
+  // Every module the page loads is there, and only by the plain names it serves.
+  const seen = new Set(), queue = ['app.js']
+  while (queue.length) {
+    const f = queue.pop()
+    if (seen.has(f)) continue
+    seen.add(f)
+    const r = await fetch(`${URL_}/ui/${f}`)
+    assert.equal(r.status, 200, f)
+    for (const m of (await r.text()).matchAll(/^(?:import|\} from).*?'\.\/([a-z0-9-]+\.js)'/gm)) queue.push(m[1])
+  }
+  assert.ok(seen.size > 10, 'the page loads its modules')
+})
+
 // A raw WebSocket client: handshake, then masked frames we build ourselves.
 function rawWs(path, { origin, auth } = {}) {
   return new Promise((resolve, reject) => {
