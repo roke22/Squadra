@@ -2212,6 +2212,9 @@ function runningInstance() {
   try { pid = Number(readFileSync(PID_FILE, 'utf8').trim()) } catch { return null }
   if (!Number.isSafeInteger(pid) || pid <= 1 || pid === process.pid) return null
   try { process.kill(pid, 0) } catch (err) { if (err.code === 'ESRCH') return null }
+  // (On Linux a thread answers as a process, with the program's command line:
+  // in a container, where numbers repeat at every start, it can be one of ours.)
+  try { if (Number(/^Tgid:\s*(\d+)/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1]) !== pid) return null } catch {}
   // (A pid reused by another program isn't this one.)
   let cmd = ''
   try { cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8') } catch {

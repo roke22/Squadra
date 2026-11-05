@@ -463,6 +463,19 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: hostEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { second = err }
   assert.ok(second, 'a second squadra-host must not run')
   assert.match(second.stderr, /already running/)
+  // A pid file left behind that names a thread (Linux: it answers as a process,
+  // with the program's command line) isn't another squadra-host.
+  if (process.platform === 'linux') {
+    const thread = readdirSync(`/proc/${hostProc.pid}/task`).map(Number).find(t => t !== hostProc.pid)
+    const otherDir = join(work, 'stale-pid-host')
+    mkdirSync(otherDir, { recursive: true })
+    writeFileSync(join(otherDir, 'squadra-host.pid'), `${thread}\n`)
+    let stale = null
+    try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: { ...hostEnv, SQUADRA_HOST_DIR: otherDir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { stale = err }
+    assert.ok(stale, 'it stops: this machine is not enrolled')
+    assert.doesNotMatch(stale.stderr, /already running/)
+    assert.match(stale.stderr, /not enrolled/)
+  }
   // The service leaves the sessions running when it stops or restarts
   // (systemd on Linux, launchd on macOS).
   const unit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: hostEnv, encoding: 'utf8' })
