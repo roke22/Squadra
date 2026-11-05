@@ -129,10 +129,14 @@ export function createRoutes(platform, { observation, machines, organization, se
         if (!admin && (!allow('register-ip', ipKey(clientIp(req)), 10) || !allow('register', 'all', 60))) {
           throw new ApiError(429, 'Too Many Requests: retry in a minute')
         }
-        if (!admin && db.prepare('SELECT COUNT(*) AS n FROM identities').get().n >= MAX_IDENTITIES) {
-          throw new ApiError(403, `Forbidden: this server already has ${MAX_IDENTITIES} sessions; delete some in the dashboard (or raise SQUADRA_MAX_SESSIONS)`)
+        const roomForOne = () => {
+          if (!admin && db.prepare('SELECT COUNT(*) AS n FROM identities').get().n >= MAX_IDENTITIES) {
+            throw new ApiError(403, `Forbidden: this server already has ${MAX_IDENTITIES} sessions; delete some in the dashboard (or raise SQUADRA_MAX_SESSIONS)`)
+          }
         }
+        roomForOne()
         const params = await readParams(req, url, admin ? MAX_JSON_BODY : 4096, admin ? undefined : { pool: 'public' })
+        roomForOne() // (others may have registered while this body arrived)
         if (params.reset === true && !admin) {
           throw new ApiError(403, 'Forbidden: only the server (admin) token can rotate an existing identity; delete the session from the dashboard and register it again, or ask the admin')
         }

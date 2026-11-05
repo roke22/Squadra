@@ -71,9 +71,9 @@ export const cleanText = t => {
   let maybe = 0
   let out = t.replace(UNSAFE_CHARS, ch => (MAYBE_KEPT.test(ch) ? (maybe++, ch) : ''))
   // Judging each one by its neighbours costs more than the rest of the text:
-  // a text with hundreds of them (no real one has) loses them all, except
+  // a text with this many of them (no real one has) loses them all, except
   // subdivision flags.
-  if (maybe > 256) return contextPass(out, false)
+  if (maybe > 20_000) return contextPass(out, false)
   for (let i = 0; i < 4; i++) {
     const next = contextPass(out, true)
     if (next === out) return out

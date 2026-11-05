@@ -63,10 +63,15 @@ observation.restoreActivity()
 // A bug reached by some request must not take the whole server down: logged.
 // (Rate limited like every error line: nothing a client causes fills the disk.
 // Set before any server starts, also while waiting for a certificate.)
-process.on('uncaughtException', err => logError(`uncaught: ${err?.stack ?? err}`))
-process.on('unhandledRejection', err => logError(`unhandled rejection: ${err?.stack ?? err}`))
+// Before it is serving, a failure means it didn't start: it ends, with an
+// error, so that whatever started it (systemd, Docker) knows.
+let serving = false
+const failed = what => err => { logError(`${what}: ${err?.stack ?? err}`); if (!serving) process.exit(1) }
+process.on('uncaughtException', failed('uncaught'))
+process.on('unhandledRejection', failed('unhandled rejection'))
 
 const { servers } = await startListening(platform, { handle, onUpgrade: machines.onUpgrade, nowServing: sessions.nowServing })
+serving = true
 
 // Ctrl+C / SIGTERM: close right away. Dashboards keep a stream open (and
 // reconnect), sessions keep a long poll open, and browsers keep idle

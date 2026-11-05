@@ -1,6 +1,6 @@
 import { randomBytes, createPublicKey, verify as verifyBytes } from 'node:crypto'
 import {
-  cleanText, bad, ApiError, guarded, sha256, now, unix, sendError, sendJson, bodiesInFlight, readParams,
+  cleanText, cutText, bad, ApiError, guarded, sha256, now, unix, sendError, sendJson, bodiesInFlight, readParams,
   readLimit, allow,
 } from '../platform/index.js'
 
@@ -379,7 +379,7 @@ export function createSessions(platform) {
     const others = total - coordCount
     // Quoted as data: this text was written by the sender, not by the server.
     const lost = fromCoord.slice(0, 10)
-      .map(m => `${JSON.stringify((m.text ?? m.caption ?? '(attachment)').replace(/\s+/g, ' ').slice(0, 120))}`)
+      .map(m => `${JSON.stringify(cutText((m.text ?? m.caption ?? '(attachment)').replace(/\s+/g, ' '), 120))}`)
     if (coordCount > 10) lost.push(`and ${coordCount - 10} more of yours`)
     if (others) lost.push(`and ${others} from other sessions or groups`)
     const what = {
@@ -518,7 +518,7 @@ export function createSessions(platform) {
   // all it is most likely a plugin older than 0.0.2: said so.
   const notHolder = (name, inst) => inst
     ? new ApiError(409, `Conflict: "${name}" is connected from another session`, { parameters: { reason: 'name_in_use' } })
-    : new ApiError(409, `Conflict: "${name}" is connected, and this request has no session id: update the Squadra plugin (0.0.2 or later) on that machine`, { parameters: { reason: 'name_in_use' } })
+    : new ApiError(409, `Conflict: "${name}" is connected, and this request has no session id: update the Squadra plugin (0.0.2 or later) on that machine`, { parameters: { reason: 'plugin_outdated' } })
   async function readParamsAs(name, req, url) {
     const lease = leases.get(name)
     const other = lease && String(req.headers['x-squadra-instance'] ?? '') !== lease.instance

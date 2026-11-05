@@ -281,7 +281,7 @@ test('server: delivery rules by role, down notices drop pending work', async () 
 
   // Worker online (a claim counts as a sign of life): delivered, left pending.
   // A connected session only acts with its instance id.
-  assert.equal((await api('sendMessage', { chat_id: 'rw', text: 'no instance' }, c)).parameters?.reason, 'name_in_use')
+  assert.equal((await api('sendMessage', { chat_id: 'rw', text: 'no instance' }, c)).parameters?.reason, 'plugin_outdated')
   const sent = await api('sendMessage', { chat_id: 'rw', text: 'run the migration' }, c, 'coord-instance-1')
   assert.equal(sent.ok, true)
 

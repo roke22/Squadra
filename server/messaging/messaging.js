@@ -18,6 +18,7 @@ export function createMessaging(platform, { sessions }) {
   const UPLOAD_BUDGET_BYTES = 500 * 1024 * 1024 // per identity per hour
   const MAX_FILES_BYTES = Number(process.env.SQUADRA_MAX_FILES_GB ?? 10) * 1024 ** 3 // attachments kept, in all
   const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // an invitation to a group nobody used
+  const MAX_REACTIONS = 1_000_000 // kept, in all: the oldest go first
   const MAX_MESSAGES = Number(process.env.SQUADRA_MAX_MESSAGES ?? 2_000_000)   // messages kept, in all
   const FILE_TTL_MS = 7 * 24 * 60 * 60 * 1000
   const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -478,6 +479,7 @@ export function createMessaging(platform, { sessions }) {
     }
     db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE created_at < ?)').run(t - MESSAGE_TTL_MS)
     db.prepare('DELETE FROM reactions WHERE created_at < ? OR message_id NOT IN (SELECT id FROM messages)').run(t - MESSAGE_TTL_MS)
+    db.prepare('DELETE FROM reactions WHERE rowid <= (SELECT rowid FROM reactions ORDER BY rowid DESC LIMIT 1 OFFSET ?)').run(MAX_REACTIONS)
     db.prepare('DELETE FROM messages WHERE created_at < ?').run(t - MESSAGE_TTL_MS)
     // Over the cap: the oldest go first.
     db.prepare('DELETE FROM messages WHERE id <= (SELECT id FROM messages ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_MESSAGES)

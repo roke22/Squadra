@@ -176,6 +176,7 @@ export function openDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS updates_sender ON updates(recipient, sender, update_id)')
   db.exec('CREATE INDEX IF NOT EXISTS updates_by_sender ON updates(sender)')
   db.exec('CREATE INDEX IF NOT EXISTS group_members_by_name ON group_members(name, group_id)')
+  db.exec('CREATE INDEX IF NOT EXISTS groups_owner ON groups(owner)')
 
   // "Have these two written to each other?" (getChat, notices): only real
   // messages count, so a pile of automatic replies can't make it a scan.

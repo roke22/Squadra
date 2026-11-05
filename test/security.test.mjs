@@ -6,7 +6,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -800,6 +800,56 @@ test('machines connect with a one-time ticket, and their secret never goes in th
   assert.equal(old.status, 101)
   assert.equal(await closed(old.sock, 300), false)
   old.sock.destroy()
+})
+
+test('a server that cannot start ends with an error, for whatever started it', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'squadra-nostart-'))
+  const port = PORT + 3700 + Math.floor(Math.random() * 200)
+  // (Files that exist, but aren't a certificate and a key.)
+  writeFileSync(join(data, 'bad.crt'), 'not a certificate')
+  writeFileSync(join(data, 'bad.key'), 'not a key')
+  const p = spawn(process.execPath, [join(ROOT, 'server/server.js'), '--tls-cert', join(data, 'bad.crt'), '--tls-key', join(data, 'bad.key')], { env: { ...process.env, PORT: String(port), DATA_DIR: data }, stdio: 'ignore' })
+  const code = await new Promise((resolve, reject) => {
+    p.on('close', c => resolve(c))
+    setTimeout(() => { p.kill('SIGKILL'); reject(new Error('it stayed up')) }, 15000)
+  })
+  assert.notEqual(code, 0)
+})
+
+test('the cap on sessions also holds for registrations that arrive together', async t => {
+  const data = mkdtempSync(join(tmpdir(), 'squadra-cap-'))
+  const port = PORT + 3900 + Math.floor(Math.random() * 90)
+  const p = spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: data, SQUADRA_MAX_SESSIONS: '2', SQUADRA_SERVER_TOKEN: 'cap-test-server-token' }, stdio: 'ignore' })
+  t.after(() => p.kill('SIGKILL'))
+  for (let i = 0; ; i++) {
+    try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break } catch {}
+    if (i > 100) throw new Error('it did not start')
+    await new Promise(r => setTimeout(r, 100))
+  }
+  const join_ = readFileSync(join(data, 'join-token'), 'utf8').trim()
+  // Every request is counted before its body arrives: the bodies come after all of them.
+  const socks = await Promise.all(Array.from({ length: 8 }, (_, i) => new Promise((resolve, reject) => {
+    const body = JSON.stringify({ name: `cap${i}` })
+    const s = connect(port, '127.0.0.1', () => {
+      s.write(`POST /register HTTP/1.1\r\nHost: x\r\nConnection: close\r\nAuthorization: Bearer ${join_}\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\n\r\n`)
+      resolve({ s, body, answer: new Promise(done => { let out = ''; s.on('data', d => { out += d }); s.on('close', () => done(out)) }) })
+    })
+    s.on('error', reject)
+  })))
+  await new Promise(r => setTimeout(r, 500))
+  for (const { s, body } of socks) s.write(body)
+  const answers = await Promise.all(socks.map(x => x.answer))
+  const statuses = answers.map(a => a.split(' ')[1])
+  assert.equal(statuses.filter(s => s === '200').length, 2, statuses.join(','))
+})
+
+test('text with many joiners keeps them where they belong', async () => {
+  const { cleanText } = await import(join(ROOT, 'server/platform/text.js'))
+  const family = '👩\u200d💻 '.repeat(500)
+  assert.equal(cleanText(family), family)
+  const heart = '❤\ufe0f '.repeat(500)
+  assert.equal(cleanText(heart), heart)
+  assert.equal(cleanText('\u200d'.repeat(50_000)), '')
 })
 
 test('the tokens are printed the time they are made, and not at every start', async () => {
