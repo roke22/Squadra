@@ -1,6 +1,6 @@
 // Approvals from the terminal, and the groups this session is in.
 
-import { readdirSync, rmSync } from 'node:fs'
+import { lstatSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { agent } from './agent.js'
 import { log, NAME_RE } from './settings.js'
@@ -13,7 +13,11 @@ import { call } from './client.js'
 export function checkApprovals(s) {
   if (!active(s)) return
   let files
-  try { files = readdirSync(s.approvedDir) } catch { return }
+  // (A link to another folder isn't this one: what it holds is not ours to remove.)
+  try {
+    if (!lstatSync(s.approvedDir).isDirectory()) return
+    files = readdirSync(s.approvedDir)
+  } catch { return }
   // (Removed whatever it is — a folder too — so it isn't sent again every
   // poll; and confirmed only to a name really paired.)
   const drop = file => { try { rmSync(file, { recursive: true, force: true }) } catch (err) { log(`cannot remove ${file}: ${err.message}`) } }

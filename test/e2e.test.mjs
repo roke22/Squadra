@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -325,6 +325,51 @@ test('plugin: idle until login', async () => {
   await assert.rejects(p.tool('reply', { chat_id: 'x', text: 'y' }), /\/squadra:login/)
   await sleep(300)
   assert.equal(p.channel().length, 0)
+  p.close()
+})
+
+test('plugin: a .env edited on Windows (CRLF) reads the same: the relay stays off', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'crlfc' })
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'crlfc', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('crlfw', 'lfw')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const request = { tool_name: 'Bash', description: 'List', input_preview: '{"command":"ls"}' }
+  // Control: without the setting, its coordinator gets the prompt.
+  const on = new Plugin('lfw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'crlfc' })
+  await on.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 lfw connected'), 'greeting')
+  on.notify('notifications/claude/channel/permission_request', { request_id: 'abcde', ...request })
+  await coord.waitChannel(p => p.content.includes('yes abcde'), 'relayed prompt')
+  // Every line has CRLF, also the server's.
+  const off = new Plugin('crlfw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'crlfc' }, { noServer: true, envFile: `SQUADRA_URL=${URL_}\r\nSQUADRA_SERVER_TOKEN=${SERVER_TOKEN}\r\nSQUADRA_PERMISSION_RELAY=off\r\n` })
+  await off.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 crlfw connected'), 'greeting over CRLF settings')
+  off.notify('notifications/claude/channel/permission_request', { request_id: 'fghij', ...request })
+  await sleep(800)
+  assert.equal(coord.channel(p => p.content.includes('fghij')).length, 0, 'not relayed')
+  coord.close()
+  on.close()
+  off.close()
+})
+
+test('plugin: approved/ as a link to another folder empties nothing', async () => {
+  const p = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await p.init()
+  await p.tool('login', { role: 'coordinator', name: 'applink' })
+  const stateDir = join(p.configDir, 'channels', 'squadra', 'applink')
+  const other = mkdtempSync(join(tmpdir(), 'squadra-precious-'))
+  writeFileSync(join(other, 'keep.txt'), 'mine')
+  symlinkSync(other, join(stateDir, 'approved'))
+  await sleep(6000) // (it looks every 5 s)
+  assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'mine')
+  // Control: the same look at a real folder clears it.
+  rmSync(join(stateDir, 'approved'))
+  mkdirSync(join(stateDir, 'approved'))
+  writeFileSync(join(stateDir, 'approved', 'nobody'), 'x')
+  await waitFor(() => !existsSync(join(stateDir, 'approved', 'nobody')), { timeout: 8000, what: 'the approvals folder looked at' })
   p.close()
 })
 

@@ -141,8 +141,12 @@ function readJson(file, fallback) {
 }
 function writeJson(file, data, mode = 0o600) {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(file, JSON.stringify(data, null, 2) + '\n', { mode })
-  chmodSync(file, mode)
+  // (Whole or not at all: a crash here can't leave half a credentials file.)
+  const tmp = `${file}.${process.pid}.tmp`
+  rmSync(tmp, { force: true })
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', { mode, flag: 'wx' })
+  chmodSync(tmp, mode)
+  renameSync(tmp, file)
 }
 
 // Settings are this machine's own rules. The server can read them (to offer
@@ -930,7 +934,7 @@ const claudeHome = () => { const c = process.env.CLAUDE_CONFIG_DIR; return c && 
 function pluginEnv() {
   const out = {}
   try {
-    for (const line of readFileSync(join(claudeHome(), 'channels', 'squadra', '.env'), 'utf8').split('\n')) {
+    for (const line of readFileSync(join(claudeHome(), 'channels', 'squadra', '.env'), 'utf8').split(/\r?\n/)) {
       const m = line.match(/^(\w+)=(.*)$/)
       if (m) out[m[1].replace(/^SWARM_/, 'SQUADRA_')] = m[2]
     }
@@ -2208,7 +2212,8 @@ const launcherOnPath = () => String(process.env.PATH ?? '').split(':').some(d =>
 const cli = () => (existsSync(LAUNCHER) && launcherOnPath() ? 'squadra-host' : `node ${INSTALLED_SCRIPT}`)
 function installLauncher() {
   const q = v => `'${String(v).replace(/'/g, `'\\''`)}'`
-  try { if (!readFileSync(LAUNCHER, 'utf8').includes(LAUNCHER_MARK)) return { skipped: true } } catch {} // (someone else's: left alone)
+  // (Someone else's, or one that can't be read: left alone.)
+  try { if (!readFileSync(LAUNCHER, 'utf8').includes(LAUNCHER_MARK)) return { skipped: true } } catch (err) { if (err.code !== 'ENOENT') return { skipped: true } }
   mkdirSync(dirname(LAUNCHER), { recursive: true, mode: 0o755 })
   const tmp = `${LAUNCHER}.${process.pid}.tmp`
   writeFileSync(tmp, `#!/bin/sh\n${LAUNCHER_MARK}\nN=${q(process.execPath)}\n[ -x "$N" ] || N=node\nexec "$N" ${q(INSTALLED_SCRIPT)} "$@"\n`, { mode: 0o755, flag: 'wx' })

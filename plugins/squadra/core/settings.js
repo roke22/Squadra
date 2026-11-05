@@ -48,7 +48,7 @@ const ENV_RELAY = process.env.SQUADRA_PERMISSION_RELAY
 const FILE_ENV = {}
 try {
   chmodSync(ROOT_ENV_FILE, 0o600)
-  for (const line of readFileSync(ROOT_ENV_FILE, 'utf8').split('\n')) {
+  for (const line of readFileSync(ROOT_ENV_FILE, 'utf8').split(/\r?\n/)) { // (edited on Windows: CRLF)
     const m = line.match(/^(\w+)=(.*)$/)
     if (!m) continue
     const key = m[1].startsWith('SWARM_') ? `SQUADRA_${m[1].slice(6)}` : m[1]

@@ -458,6 +458,9 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), '--no-allow-home', 'folders'], { env: hostEnv, stdio: 'ignore' })
   await waitFor(async () => !(await shown()).home && !(await shown()).folders?.includes(myHome), { what: 'home no longer allowed' })
 
+  // Settings are replaced whole: no temporary file left, and still private.
+  assert.deepEqual(readdirSync(hostDir).filter(f => f.endsWith('.tmp')), [])
+  assert.equal(statSync(join(hostDir, 'settings.json')).mode & 0o777, 0o600)
   // One squadra-host at a time: a second one (by hand, next to the service) says so and stops.
   let second = null
   try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: hostEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { second = err }
