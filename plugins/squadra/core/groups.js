@@ -46,6 +46,8 @@ export function syncGroups(s) {
   s.groupRetry ??= new Map()
   const waiting = key => (s.groupRetry.get(key)?.at ?? 0) > Date.now()
   const failed = key => { const d = Math.min((s.groupRetry.get(key)?.delay ?? 2_500) * 2, 60_000); s.groupRetry.set(key, { at: Date.now() + d, delay: d }) }
+  // (Invited again now and then: an invitation lasts 7 days on the server.)
+  if (Date.now() - (s.groupInvitesAt ?? 0) > 6 * 3600_000) { s.groupInvites.clear(); s.groupInvitesAt = Date.now() }
   const inviteAll = g => {
     const cfg = access.groups[g] ?? {}
     for (const who of new Set([...(cfg.invite ?? []), ...(cfg.allowFrom ?? [])])) {

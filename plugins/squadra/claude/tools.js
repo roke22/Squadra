@@ -68,7 +68,7 @@ export const TOOLS = [
         chat_id: { type: 'string', description: 'Session name (e.g. "coord", "worker1") or group id ("#backend").' },
         text: { type: 'string' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block.' },
-        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. With reply_to, it covers that task and the earlier ones, not later ones: to report on several at once, reply_to the latest. Not for progress: send that without report, or not at all.' },
+        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. With reply_to, it covers that message and the earlier ones, not later ones: to report on several at once, reply_to the latest. Not for progress: send that without report, or not at all.' },
         fyi: { type: 'boolean', description: 'Coordinator, to a worker: true when the message only informs and needs no report back. Leave it out for anything it must do: every other message from you is a task it must report on when it ends.' },
         fresh: { type: 'boolean', description: 'Coordinator, to one of your workers: true clears the worker\'s context (/clear) before it gets this message, so a NEW task unrelated to what it did before starts light (cheaper turns, nothing stale). Leave it out for follow-ups, corrections or anything that builds on its last task. Only for workers opened from the dashboard and idle; the answer says whether it was cleared.' },
         files: {
@@ -304,7 +304,7 @@ export async function callTool(name, args) {
       if (report && S.role === 'worker' && chat_id === S.coordinator) {
         S.observer?.sync()
         const open = closeTasks(S, reply_to)
-        if (open.length) stillOpen = `\nStill open: your coordinator's task ${open.map(i => `#${i}`).join(', ')}, after the one this report answers. Send a final report on it too, with reply_to "${open[open.length - 1]}": say if you already covered it here, or that you left it undone and why.`
+        if (open.length) stillOpen = `\nStill open: your coordinator's task ${open.map(i => `#${i}`).join(', ')}, after the message this report answers. Send a final report on it too, with reply_to "${open[open.length - 1]}": say if you already covered it here, or that you left it undone and why.`
       }
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
         (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '') + stillOpen
@@ -343,6 +343,7 @@ export async function callTool(name, args) {
       assertAllowedChat(String(args.chat_id))
       await assertPeerIsPinned(String(args.chat_id))
       if (S?.relayIds?.has(Number(args.message_id))) throw new Error('that message is a permission request sent by Squadra: it cannot be edited')
+      if (String(args.text ?? '').length > 1024 * 1024) throw new Error('that text is too long for a message')
       const { text: editText, masked: editMasked } = maskOutgoing(String(args.text))
       const edited = await call('editMessageText', {
         chat_id: String(args.chat_id),

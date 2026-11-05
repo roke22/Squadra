@@ -356,8 +356,9 @@ Every message from a coordinator to its worker is a task, and every task ends wi
 - **Starting needs no message:** when a task starts the worker's turn, the plugin puts 👀 on it. A reaction wakes nobody, so it costs no tokens.
 - **Finishing without the report isn't possible:** a `Stop` hook keeps the turn from ending and tells Claude to send it first. Nobody can waive it, not even the coordinator ("only tell me if something goes wrong" doesn't count). It only asks about tasks Claude has already seen: one that arrives as the turn ends is left for the next turn.
 - **If it still ends without one** (asked once already, or something went wrong), the coordinator gets an automatic notice: *"w1 ended its turn without a final report on your task #123"*.
-- **A report covers what it answers:** with `reply_to` it closes that task and the earlier ones; a later one stays open and is still asked for. Without `reply_to` it closes every task Claude has seen.
+- **A report covers what it answers:** with `reply_to` it closes the tasks up to that message; a later one stays open and is still asked for. Without `reply_to` it closes every task Claude has seen.
 - **One task at a time:** Claude Code tells Claude to treat a channel message that arrives during a turn as untrusted information, not as instructions, so a worker may not act on it. Coordinators are told to wait for the report before the next task, and workers to report anything they leave undone.
+- **Work left running in the background:** while something the turn started still runs, nothing is asked: the work isn't over. It is asked for when the turn that follows it ends.
 - **Information that needs no answer:** the coordinator sends it with `fyi: true`, and no report is expected.
 - The coordinator sees in `ping` whether each worker is **BUSY** or **free**, and the dashboard marks each report (✓ done, ⛔ blocked, ✗ failed, ? question) and each fyi message in the chat.
 

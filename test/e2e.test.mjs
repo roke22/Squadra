@@ -1747,10 +1747,23 @@ test('task reports: a worker can\'t end a task without its final report, and its
   const t8 = await seen('Task: eight')
   await wk.tool('reply', { chat_id: 'trc', text: 'Seven and eight done', report: 'done', reply_to: String(t8) })
   assert.equal(await stopHook(), null)
-  // Answering a message that is no open task, or none: everything it has seen.
-  await seen('Task: nine')
-  await wk.tool('reply', { chat_id: 'trc', text: 'Nine done', report: 'done', reply_to: String(t7) })
+  // Answering a task already closed doesn't close a later one (it was seen in
+  // a real session: the turn's notice had closed the first one).
+  const t9 = await seen('Task: nine')
+  assert.match(await wk.tool('reply', { chat_id: 'trc', text: 'About seven again', report: 'done', reply_to: String(t7) }), new RegExp(`Still open: your coordinator's task #${t9},`))
+  // Answering none: everything it has seen.
+  await wk.tool('reply', { chat_id: 'trc', text: 'Nine done', report: 'done' })
   assert.equal(await stopHook(), null)
+  // Something it started still runs in the background: the task isn't over,
+  // nothing is asked and nobody is told, until the turn that follows ends.
+  const announced = () => coord.channel(p => p.content.includes('ended its turn without a final report')).length
+  const before = announced()
+  const t10 = await seen('Task: ten')
+  const running = await runHookOut(wk, { hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [{ id: 'b1' }], session_id: 's', cwd: '/x' }, ['--stop'])
+  assert.equal(running || null, null)
+  await sleep(300)
+  assert.equal(announced(), before)
+  assert.match((await stopHook()).reason, new RegExp(`final report on its task #${t10}\\. `))
   coord.close()
   wk.close()
 })
@@ -1954,8 +1967,13 @@ test('secrets: camelCase names, a MySQL password in a message, and files named i
   for (const t of ['dbPass=hunter2hunter2', 'userPwd: abc12345678', 'adminPw=Xy12345678', 'hmacKey=deadbeef1234']) assert.ok(maskOutgoing(t).masked >= 1, t)
   assert.equal(maskOutgoing('mysql -uroot -pS3cretPw1 db').text, 'mysql -uroot -p[REDACTED] db')
   for (const t of ['const pass = getPass(req1)', 'compassPoint=north12345', 'passThrough=abc12345678']) assert.equal(maskOutgoing(t).text, t)
-  const { value } = maskDeep({ dbPass: 'hunter2', hmacKey: 'abcd1234', adminPw: 'abcd', password: 'x12345', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' }, redact)
-  assert.deepEqual({ ...value }, { dbPass: '[REDACTED]', hmacKey: '[REDACTED]', adminPw: '[REDACTED]', password: '[REDACTED]', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' })
+  assert.ok(maskOutgoing('DBPass=abc12345xyz').masked >= 1)
+  assert.ok(maskOutgoing('APIPass: abc12345xyz').masked >= 1)
+  assert.equal(maskOutgoing('mysql -P3306 -h db').text, 'mysql -P3306 -h db', 'the port')
+  const { value } = maskDeep({ dbPass: 'hunter2', DBPass: 'hunter22', hmacKey: 'abcd1234', adminPw: 'abcd', password: 'x12345', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' }, redact)
+  assert.deepEqual({ ...value }, { dbPass: '[REDACTED]', DBPass: '[REDACTED]', hmacKey: '[REDACTED]', adminPw: '[REDACTED]', password: '[REDACTED]', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' })
+  // A pwd is a folder only if it reads like one.
+  for (const v of ['/Xk29sJfh3', '~hunter22']) assert.equal(maskDeep({ pwd: v }, redact).value.pwd, '[REDACTED]', v)
   assert.equal(touchesSecrets('mcp__fs__read', { paths: ['/p/.env'] }), true)
   assert.equal(touchesSecrets('mcp__fs__read', { uri: 'file:///home/u/.ssh/id_rsa' }), true)
   assert.equal(touchesSecrets('mcp__fs__read', { nested: { a: [{ b: '/p/server.pem' }] } }), true)

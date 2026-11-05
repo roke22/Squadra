@@ -78,6 +78,9 @@ const OTHER_CLI = /(\bmachine\s+\S{1,200}\s+login\s+\S{1,200}\s+password\s+|\bss
 // Cookie headers.
 const COOKIE = /\b((?:Set-)?Cookie:\s{0,5})[^\n]{1,4000}/gi
 
+// (-P is mysql's port, not its password.)
+const cliShort = (m, a, c, user) => (a ? (a.endsWith('-P') ? m : `${a}[REDACTED]`) : `${c}${user}:[REDACTED]`)
+
 // The text is cut before matching: what is sent is clipped well below this.
 const REDACT_MAX = 25_000
 export function redact(text) {
@@ -90,7 +93,7 @@ export function redact(text) {
   out = out.replace(COOKIE, '$1[REDACTED]')
   out = out.replace(CLI_FLAGS, '$1[REDACTED]')
   out = out.replace(OTHER_CLI, '$1[REDACTED]')
-  out = out.replace(CLI_SHORT, (m, a, _p, c, user) => (a ? `${a}[REDACTED]` : `${c}${user}:[REDACTED]`))
+  out = out.replace(CLI_SHORT, (m, a, _p, c, user) => cliShort(m, a, c, user))
   out = out.replace(KEY_VALUE, (_, k, sep) => `${k}${sep}[REDACTED]`)
   return out
 }
@@ -102,7 +105,7 @@ export function redact(text) {
 const SECRET_KEY = /^(?:[A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|account[_-]?key|credentials?|authorization|cookie|contrase(?:ñ|n)a|clave))[A-Za-z0-9_.-]{0,40}$/i
 // (Words of a camelCase name count as words: dbPass, hmacKey. Not a secret by
 // name alone: pass_through, and a pwd that is a folder.)
-const secretName = (k, v) => SECRET_KEY.test(k.replace(/([a-z0-9])([A-Z])/g, '$1_$2')) && !/tokens$|^pass[_-]?through$/i.test(k) && !(/^pwd$/i.test(k) && /^[/~]/.test(v))
+const secretName = (k, v) => SECRET_KEY.test(k.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')) && !/tokens$|^pass[_-]?through$/i.test(k) && !(/^pwd$/i.test(k) && /^(~|\/[^/]+)\//.test(v))
 export function maskDeep(value, mask, depth = 0) {
   let masked = 0
   const walk = (v, d) => {
@@ -129,7 +132,7 @@ export function maskDeep(value, mask, depth = 0) {
 // `const token = getToken(req)` stays as written. The whole text is checked.
 const OUT_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|account[_-]?key|credentials?)[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/gi
 // The same for camelCase names, where case tells the words apart: dbPass=…, hmacKey=…
-const OUT_CAMEL_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:[a-z0-9](?:Pw|Pwd|Pass|Hmac|PW|PWD|PASS|HMAC)(?![a-z])|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?=[A-Z]))[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/g
+const OUT_CAMEL_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:[A-Za-z0-9](?:Pw|Pwd|Pass|Hmac)(?![a-z])|[a-z0-9](?:PW|PWD|PASS|HMAC)(?![a-z])|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?=[A-Z]))[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/g
 const NOT_SECRET = /^(true|false|null|none|undefined|required|optional|string|number|boolean|redacted|\[redacted\]|example|changeme|xxx+|\*+)$/i
 export function maskOutgoing(text) {
   if (typeof text !== 'string' || !text) return { text, masked: 0 }
@@ -139,7 +142,7 @@ export function maskOutgoing(text) {
   for (const re of SECRET_PATTERNS) out = out.replace(re, count(() => '[REDACTED]'))
   out = out.replace(URL_CREDENTIALS, count((_, a, b) => `${a}${b}:[REDACTED]@`))
   out = out.replace(BEARER, count((_, k) => `${k} [REDACTED]`))
-  out = out.replace(CLI_SHORT, count((m, a, _p, c, user) => (a ? `${a}[REDACTED]` : `${c}${user}:[REDACTED]`)))
+  out = out.replace(CLI_SHORT, (m, a, _p, c, user) => { const r = cliShort(m, a, c, user); if (r !== m) masked++; return r })
   const keyValue = (m, k, sep, q, v) => {
     // A secret has letters and digits; names in code don't (process.env.API_KEY,
     // os.environ["X"], my-tls-secret, /auth/reset-password).
@@ -311,7 +314,7 @@ const MAX_HOOK_BYTES = 64 * 1024 * 1024
 // onPrompt(prompt): each prompt about to be sent, whole (a worker's tasks start).
 // onChannelSeen(ids): message_ids of channel messages the transcript shows
 // reached Claude, also those put into a turn already going (no prompt for them).
-// stopCheck(): when the turn is about to end, a reason to go on, or ''
+// stopCheck(background): when the turn is about to end, a reason to go on, or ''
 // (asked for by the Stop hook through the same socket).
 // onConversation(id, transcript): the conversation this session is in, when
 // first known and whenever it changes (/clear, /resume), at every level.
@@ -545,7 +548,7 @@ export function createObserver({ level = 'full', send, log = () => {}, contextPr
           if (msg?.want === 'stop') {
             // Up to date first: what reached Claude in this turn counts.
             readTail()
-            Promise.resolve().then(() => stopCheck?.())
+            Promise.resolve().then(() => stopCheck?.(msg.background === true))
               .catch(err => { log(`observe: stop check failed: ${err.message}`); return '' })
               .then(block => conn.end(JSON.stringify({ block: typeof block === 'string' ? block : '' })))
             return

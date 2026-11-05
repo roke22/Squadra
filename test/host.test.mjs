@@ -470,6 +470,18 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   assert.ok(second, 'a second squadra-host must not run')
   assert.match(second.stderr, /already running/)
   assert.equal(second.status, 2, 'its service does not start it again and again')
+  // Started by its service, it waits its turn instead: one started by hand may
+  // end, and nothing would start it after that.
+  {
+    const waiting = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: { ...hostEnv, SQUADRA_SERVICE: '1' }, stdio: ['ignore', 'ignore', 'pipe'] })
+    let said = ''
+    waiting.stderr.on('data', d => { said += d })
+    await waitFor(() => /waiting for it to end/.test(said), { what: 'waiting its turn' })
+    assert.equal(waiting.exitCode, null)
+    waiting.kill('SIGKILL')
+    await new Promise(r => waiting.once('close', r))
+  }
+  assert.match(execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: hostEnv, encoding: 'utf8' }), /SQUADRA_SERVICE/)
   // A pid that is another program with the name in its arguments isn't another
   // squadra-host (an editor on the file, a tail of its log).
   {
@@ -917,6 +929,27 @@ test('folders: at most 50, and a name with a space at its end can be managed', (
   assert.ok(run('remove', list[0]).ok)
   writeFileSync(join(dir, 'settings.json'), JSON.stringify({ settings_version: 4, folders: [extra] }))
   assert.ok(run('remove', extra).ok, 'the space is part of its name')
+})
+
+test('settings: a file locked by hand stays locked, and a link stays a link', { skip: process.getuid?.() === 0 && 'root writes anywhere' }, () => {
+  const dir = join(work, 'locked-settings')
+  mkdirSync(dir, { recursive: true })
+  const folder = join(work, 'locked-folder')
+  mkdirSync(folder, { recursive: true })
+  const env = { ...process.env, SQUADRA_HOST_DIR: dir, SQUADRA_HOST_TEST_ALLOW_TMP: '1' }
+  const add = () => { try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'folders', 'add', folder], { env, stdio: ['ignore', 'pipe', 'pipe'] }); return true } catch { return false } }
+  const file = join(dir, 'settings.json')
+  writeFileSync(file, JSON.stringify({ settings_version: 4, folders: [] }))
+  chmodSync(file, 0o444)
+  assert.equal(add(), false)
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).folders, [])
+  rmSync(file, { force: true })
+  const real = join(dir, 'real-settings.json')
+  writeFileSync(real, JSON.stringify({ settings_version: 4, folders: [] }))
+  symlinkSync(real, file)
+  assert.equal(add(), true)
+  assert.ok(lstatSync(file).isSymbolicLink())
+  assert.equal(JSON.parse(readFileSync(real, 'utf8')).folders.length, 1)
 })
 
 test('the service of another configuration folder is left alone', { skip: (process.platform !== 'linux' || process.getuid() === 0) && 'a user service on Linux' }, () => {

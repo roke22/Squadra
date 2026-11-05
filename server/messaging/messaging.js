@@ -345,7 +345,7 @@ export function createMessaging(platform, { sessions }) {
       }
       const owner = db.prepare('SELECT owner FROM groups WHERE id = ?').get(id)?.owner
       if (owner && owner !== name) throw new ApiError(403, `Forbidden: only the group's owner ("${owner}") invites to ${id}`)
-      db.prepare('INSERT OR IGNORE INTO group_invites (group_id, name, invited_by, created_at) VALUES (?, ?, ?, ?)').run(id, who, name, now())
+      db.prepare('INSERT INTO group_invites (group_id, name, invited_by, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (group_id, name) DO UPDATE SET invited_by = excluded.invited_by, created_at = excluded.created_at').run(id, who, name, now())
       return true
     },
 

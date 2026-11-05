@@ -128,6 +128,13 @@ test('the chat: what is opened stays open when more arrives, and text being sele
   await expect(page.locator('#session .chat')).not.toContainText('arrived while selecting')
   await page.evaluate(() => getSelection().removeAllRanges())
   await expect(page.locator('#session .chat')).toContainText('arrived while selecting')
+  // Left selected, it doesn't hide what arrives for ever.
+  await page.clock.install()
+  await page.evaluate(() => { const p = [...document.querySelectorAll('#session .assistant')].find(x => x.textContent.includes('selectable')); getSelection().selectAllChildren(p) })
+  await s.observe([{ kind: 'text', text: 'arrived and left selected', ts: Date.now() }])
+  await page.waitForTimeout(100)
+  await page.clock.runFor(21_000)
+  await expect(page.locator('#session .chat')).toContainText('arrived and left selected')
   await expect(page.locator('#session .chat .older')).not.toContainText(/Loading/)
 })
 

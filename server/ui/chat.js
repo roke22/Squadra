@@ -34,15 +34,32 @@ export class ChatView {
       if (d.classList?.contains('tools')) this.openGroups.set(d.dataset.g, d.open)
       else if (d.dataset?.d) { if (d.open) this.openDetails.add(d.dataset.d); else this.openDetails.delete(d.dataset.d) }
     }, true)
-    // Text being selected isn't redrawn away: the view catches up when it ends.
-    this.onSelection = () => { if (this.heldRender && !this.selecting()) { this.heldRender = false; this.render() } }
+    // Text being selected isn't redrawn away: the view catches up when it ends
+    // (a moment later: the click that ended it lands on what it was aimed at),
+    // or after a while (left selected, it must not hide what arrives).
+    this.onSelection = () => { if (this.heldRender && !this.selecting()) setTimeout(() => this.catchUp(), 300) }
     document.addEventListener('selectionchange', this.onSelection)
     views.add(this)
     this.renderStatus()
     this.loadOlder(true)
   }
 
-  destroy() { views.delete(this); document.removeEventListener('selectionchange', this.onSelection) }
+  destroy() {
+    views.delete(this)
+    document.removeEventListener('selectionchange', this.onSelection)
+    clearTimeout(this.heldTimer)
+    this.heldRender = false
+  }
+
+  catchUp() {
+    clearTimeout(this.heldTimer)
+    this.heldTimer = null
+    if (!this.heldRender) return
+    this.heldRender = false
+    this.render({ force: true })
+    if (this.heldStick) this.toBottom()
+    this.heldStick = false
+  }
 
   selecting() {
     const s = document.getSelection()
@@ -186,16 +203,20 @@ export class ChatView {
     if (!this.frame) {
       this.frame = requestAnimationFrame(() => {
         this.frame = null
-        this.render()
-        if (this.stick) this.toBottom()
+        if (this.render() === false) this.heldStick ||= this.stick
+        else if (this.stick) this.toBottom()
         this.stick = false
       })
     }
   }
 
   // --- rendering ---------------------------------------------------------------
-  render() {
-    if (this.selecting()) { this.heldRender = true; return }
+  render({ force = false } = {}) {
+    if (!force && this.selecting()) {
+      this.heldRender = true
+      this.heldTimer ??= setTimeout(() => this.catchUp(), 20_000)
+      return false
+    }
     const html = []
     if (this.hasMore) html.push(`<div class="older">${this.loading ? T.loading : T.scrollMore}</div>`)
     else {

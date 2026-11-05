@@ -284,9 +284,10 @@ export function forgetCoordinatorPin(s, coordinator) {
 export function readAllowPins(s) {
   try {
     const p = JSON.parse(readFileSync(s.allowPinsFile, 'utf8'))
-    if (p && typeof p === 'object' && !Array.isArray(p)) return p
+    // (No prototype: a session can be called __proto__.)
+    if (p && typeof p === 'object' && !Array.isArray(p)) return Object.assign(Object.create(null), p)
   } catch {}
-  return {}
+  return Object.create(null)
 }
 export function pinAllowed(s, senderId, identity) {
   if (!s || !identity) return true // (a server that doesn't say: nothing to compare)

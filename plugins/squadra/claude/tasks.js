@@ -30,22 +30,23 @@ export function tasksStarting(s, ids) {
 }
 
 // A final report (replyTo: the message it answers, if any) closes the tasks it
-// covers: all those Claude has seen or, when it answers one of them, that one
-// and the earlier ones. A later task stays open: Claude may have left it undone
+// covers: all those Claude has seen or, when it answers a message, those up to
+// that one. A later task stays open: Claude may have left it undone
 // (Claude Code tells it to treat a message that arrives during a turn as
 // information only), and its coordinator is waiting for it. Returns what is
 // left, for the answer to tell Claude.
 export function closeTasks(s, replyTo) {
-  const ids = pendingTasks(s)
-  for (const id of ids) if (!ids.includes(replyTo) || id <= replyTo) s.tasks.delete(id)
+  for (const id of pendingTasks(s)) if (replyTo == null || id <= replyTo) s.tasks.delete(id)
   s.stopAsked = false
   return pendingTasks(s)
 }
 
 // The turn is about to end (Stop hook): a reason to go on, or '' to let it.
 // (It can't go on forever: it asks again only after a report or a new task.)
-export async function stopCheck(s) {
-  if (S !== s || s.role !== 'worker') return ''
+// background: something this turn started still runs, and the turn that follows
+// it comes when it ends. The work isn't over: nothing to ask for yet.
+export async function stopCheck(s, { background = false } = {}) {
+  if (S !== s || s.role !== 'worker' || background) return ''
   const ids = pendingTasks(s)
   if (!ids.length) return ''
   const list = ids.map(i => `#${i}`).join(', ')

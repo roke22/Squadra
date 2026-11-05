@@ -118,7 +118,7 @@ export async function login({ name, role, coordinator, staticAccess = false, see
     onChannelSeen: ids => { if (S === s) tasksStarting(s, ids) },
     // For squadra-host, to open this session again in its own conversation.
     onConversation: (id, transcript) => { if (S === s) writePrivateFile(join(s.stateDir, 'conversation.json'), JSON.stringify({ id, transcript, folder: process.cwd() }) + '\n') },
-    stopCheck: () => stopCheck(s),
+    stopCheck: background => stopCheck(s, { background }),
     onToolInput: (tool, input) => {
       const now = Date.now()
       s.toolInputs.push({ tool, input, at: now })

@@ -86,10 +86,10 @@ const STOP_MODE = process.argv.includes('--stop')
 // Claude Code as additionalContext, so the session still knows its name, role
 // and task after compacting (or who it is after a /clear), and a coordinator
 // learns what its squad is for when the user sets or changes it.
-function askContext(sock, source, { want = 'context', field = 'context' } = {}) {
+function askContext(sock, source, { want = 'context', field = 'context', extra = {} } = {}) {
   return new Promise(resolve => {
     const chunks = []
-    const c = connect(sock, () => c.end(JSON.stringify({ want, source })))
+    const c = connect(sock, () => c.end(JSON.stringify({ want, source, ...extra })))
     c.on('data', d => chunks.push(d))
     c.on('close', () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))[field] ?? '') } catch { resolve('') }
@@ -104,7 +104,9 @@ async function main() {
   if (!sock) return
   const raw = await readStdin()
   if (STOP_MODE) {
-    const block = await askContext(sock, 'stop', { want: 'stop', field: 'block' })
+    let input = {}
+    try { input = JSON.parse(raw) ?? {} } catch {}
+    const block = await askContext(sock, 'stop', { want: 'stop', field: 'block', extra: { background: Array.isArray(input.background_tasks) && input.background_tasks.length > 0 } })
     if (block) process.stdout.write(JSON.stringify({ decision: 'block', reason: block }))
     return
   }

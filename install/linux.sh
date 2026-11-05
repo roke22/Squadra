@@ -60,7 +60,10 @@ main() {
 
   # 2. Node.js 22.13 or later (with nvm, in your home, if missing or older)
   # (On WSL, what Windows installed isn't usable here: /mnt/c/…)
-  native() { p="$(command -v "$1" 2>/dev/null)" && case "$p" in /mnt/*) return 1 ;; esac; }
+  native() {
+    p="$(command -v "$1" 2>/dev/null)" || return 1
+    case "$(uname -r)" in *[Mm]icrosoft*) case "$p" in /mnt/*) return 1 ;; esac ;; esac
+  }
   node_ok() { native node && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
   if ! node_ok; then
     say "Installing Node.js 22 (with nvm, in your home folder)"
