@@ -221,6 +221,8 @@ export async function callTool(name, args) {
   switch (name) {
     case 'reply': {
       const chat_id = String(args.chat_id ?? '')
+      // (Looking for secrets in it takes a second per MB.)
+      if (String(args.text ?? '').length > 1024 * 1024) throw new Error('that text is too long for a message: send it as a file (files)')
       const { text, masked } = maskOutgoing(String(args.text ?? ''))
       const reply_to = args.reply_to != null && args.reply_to !== '' ? Number(args.reply_to) : undefined
       const files = Array.isArray(args.files) ? args.files.map(String) : []

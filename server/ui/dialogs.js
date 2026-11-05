@@ -11,7 +11,7 @@ import { showLogin } from './app.js'
 
 export function closeMenu() { state.menuEl?.remove(); state.menuEl = null }
 document.addEventListener('click', e => { if (state.menuEl && !e.target.closest('.menu') && !e.target.closest('[data-menu], [data-hmenu], [data-orgmenu], [data-la]')) closeMenu() })
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); document.querySelector('.modal-bg')?.querySelector('[data-cancel]')?.click() } })
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); [...document.querySelectorAll('.modal-bg')].at(-1)?.querySelector('[data-cancel]')?.click() } })
 
 export function openMenu(anchor, name) {
   closeMenu()

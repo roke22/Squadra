@@ -170,8 +170,7 @@ export function openDatabase() {
   // When a machine first connected (null: enrolled, never connected yet). The
   // machines already there when the column is added have connected before.
   if (!db.prepare('PRAGMA table_info(hosts)').all().some(c => c.name === 'first_connected_at')) {
-    db.exec('ALTER TABLE hosts ADD COLUMN first_connected_at INTEGER')
-    db.exec('UPDATE hosts SET first_connected_at = last_seen_at')
+    db.exec('BEGIN; ALTER TABLE hosts ADD COLUMN first_connected_at INTEGER; UPDATE hosts SET first_connected_at = last_seen_at; COMMIT')
   }
   db.exec('CREATE INDEX IF NOT EXISTS updates_sender ON updates(recipient, sender, update_id)')
   db.exec('CREATE INDEX IF NOT EXISTS updates_by_sender ON updates(sender)')

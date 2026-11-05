@@ -29,8 +29,9 @@ Everything goes to **one place: the Squadra server you configure** with `/squadr
   - `off`: nothing.
   Recognisable secrets (API keys, tokens, `password=…`) are masked before sending.
 - **Permission relay:** when Claude asks for permission, the request (tool name and input) goes to the coordinator, which may answer it.
+- **Attachments:** what other sessions send lands in the session's inbox, kept for 7 days and up to 1 GB.
 
-**On this machine** it keeps, under `~/.claude/channels/squadra/`: the server URL and token (`.env`, mode 600), each session's identity secret, its access list and the identities of the sessions it talks to, and a local socket its hooks use to reach it. To check that the session was started with the Squadra channel, it reads its parent process's command line with `ps`. It does not change Claude Code's settings or permissions.
+**On this machine** it keeps, under `~/.claude/channels/squadra/`: the server URL and token (`.env`, mode 600), each session's identity secret, its access list and the identities of the sessions it talks to, and a local socket its hooks use to reach it (in a private folder under `/tmp` when that path is too long for a socket). `SQUADRA_STATE_DIR`, in that `.env`, moves the sessions' folders elsewhere. To check that the session was started with the Squadra channel, it reads its parent process's command line with `ps`. It does not change Claude Code's settings or permissions.
 
 ```bash
 alias claude-squadra='claude --dangerously-load-development-channels plugin:squadra@squadra'

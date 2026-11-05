@@ -20,6 +20,7 @@ export class ChatView {
     this.loading = false
     this.unseen = 0
     this.openGroups = new Map() // group key -> user choice
+    this.openDetails = new Set() // a tool's input or output the user opened
     this.el = document.createElement('div')
     this.el.className = 'chat'
     this.el.innerHTML = `<div class="scroll"><div class="items"></div></div><button class="jump" hidden>${T.jump(0)}</button><div class="status"><span class="dot"></span><span class="txt"></span></div>`
@@ -31,13 +32,22 @@ export class ChatView {
     this.itemsEl.addEventListener('toggle', e => {
       const d = e.target
       if (d.classList?.contains('tools')) this.openGroups.set(d.dataset.g, d.open)
+      else if (d.dataset?.d) { if (d.open) this.openDetails.add(d.dataset.d); else this.openDetails.delete(d.dataset.d) }
     }, true)
+    // Text being selected isn't redrawn away: the view catches up when it ends.
+    this.onSelection = () => { if (this.heldRender && !this.selecting()) { this.heldRender = false; this.render() } }
+    document.addEventListener('selectionchange', this.onSelection)
     views.add(this)
     this.renderStatus()
     this.loadOlder(true)
   }
 
-  destroy() { views.delete(this) }
+  destroy() { views.delete(this); document.removeEventListener('selectionchange', this.onSelection) }
+
+  selecting() {
+    const s = document.getSelection()
+    return !!s && !s.isCollapsed && !!s.anchorNode && this.itemsEl.contains(s.anchorNode)
+  }
 
   // The chat was cleared on the server: start over.
   reset() {
@@ -137,18 +147,19 @@ export class ChatView {
       // Live items were dropped while this page was on its way: the page
       // would leave a hole above them. Dropped; the next scroll asks again
       // from the right place.
-      if ((this.evictions ?? 0) !== evicted) { this.hasMore = true; this.render(); return }
+      if ((this.evictions ?? 0) !== evicted) { this.hasMore = true; this.loading = false; this.render(); return }
       this.nextBefore = r.next_before
       this.hasMore = r.has_more && r.items.length > 0
       const fromBottom = this.scrollEl.scrollHeight - this.scrollEl.scrollTop
       this.add(r.items, { older: !first })
+      this.loading = false
       this.render()
       if (first) this.toBottom()
       else this.scrollEl.scrollTop = this.scrollEl.scrollHeight - fromBottom // keep the reader in place
     } catch (e) {
       if (e.status === 401) return showLogin(T.tokenInvalid)
       // The server refused the request: don't ask again on every scroll.
-      if (e.status >= 400 && e.status < 500) { this.hasMore = false; this.render() }
+      if (e.status >= 400 && e.status < 500) { this.hasMore = false; this.loading = false; this.render() }
     } finally {
       if (gen === this.gen) this.loading = false
     }
@@ -184,6 +195,7 @@ export class ChatView {
 
   // --- rendering ---------------------------------------------------------------
   render() {
+    if (this.selecting()) { this.heldRender = true; return }
     const html = []
     if (this.hasMore) html.push(`<div class="older">${this.loading ? T.loading : T.scrollMore}</div>`)
     else {
@@ -220,6 +232,8 @@ export class ChatView {
     let hidden = 0
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i]
+      // (Nothing left for what a group of tools holds: no empty shells of them.)
+      if (p.group && left.chars <= 4000) { for (let j = 0; j <= i; j++) hidden += parts[j].n; break }
       const h = p.group ? this.renderGroup(p.group, a, left) : this.renderItem(p.it)
       const tags = tagsIn(h)
       if (h.length > left.chars || tags > left.tags) { for (let j = 0; j <= i; j++) hidden += parts[j].n; break }
@@ -284,14 +298,14 @@ export class ChatView {
     const tools = []
     for (const ev of group.list) {
       if (ev.kind === 'tool_start') tools.push({ start: ev, end: this.endOf.get(ev.ref) ?? null })
-      else if (ev.kind === 'tool_end') tools.push({ start: { ...ev, summary: '' }, end: ev }) // its start isn't loaded
+      else if (ev.kind === 'tool_end') tools.push({ start: { ...ev, summary: '', detail: '' }, end: ev }) // its start isn't loaded
       else tools.push({ sub: ev })
     }
     const real = tools.filter(t => !t.sub)
     const running = real.filter(t => !t.end && !this.stopped.has(t.start))
     const failed = real.filter(t => t.end && t.end.ok === false)
     const noResult = real.some(t => !t.end && this.stopped.has(t.start))
-    const names = [...new Set(real.map(t => toolName(t.start.tool)))]
+    const names = [...new Set(real.map(t => toolName(t.start.tool)))].slice(0, 12)
     const waitingId = activity?.state === 'waiting' ? activity.tool?.id : null
     const st = running.length
       ? (running.some(t => t.start.ref === waitingId) ? `<span class="res err">${T.waitingPermission}</span>` : `<span class="res run">⏳ ${T.running(running.length)}</span>`)
@@ -300,7 +314,7 @@ export class ChatView {
     const open = userChoice ?? (running.length > 0)
     // Newest tools first, as many as fit in what the view has left.
     const rows = []
-    let chars = left.chars - 4000, tags = left.tags - 40, k = tools.length
+    let chars = left.chars - 4000 - esc(names.join(', ')).length, tags = left.tags - 40, k = tools.length
     for (; k > 0; k--) {
       const t = tools[k - 1]
       const row = t.sub ? `<div class="tool"><div class="line">🤖 <span class="arg">${T.subagent(t.sub.kind === 'subagent_start')}</span></div>${t.sub.text ? `<details><summary>${T.result}</summary><pre>${clipEsc(t.sub, 'text')}</pre></details>` : ''}</div>` : this.renderTool(t, waitingId)
@@ -325,8 +339,10 @@ export class ChatView {
     else if (end.ok === false) res = `<span class="res err">✗ ${end.interrupted ? T.interrupted : end.summary ? clipEsc(end, 'summary', 300) : T.error}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
     else res = `<span class="res ok">✓${end.summary ? ` ${clipEsc(end, 'summary', 300)}` : ''}${end.duration_ms ? ` · ${dur(end.duration_ms)}` : ''}</span>`
     const det = []
-    if (start.detail) det.push(`<details><summary>${T.input}</summary><pre>${clipEsc(start, 'detail')}</pre></details>`)
-    if (end?.detail) det.push(`<details><summary>${end.ok === false ? T.error : T.output}</summary><pre>${clipEsc(end, 'detail')}</pre></details>`)
+    const opened = key => (this.openDetails.has(key) ? ' open' : '')
+    const inKey = `i${start.id ?? ''}`, outKey = `o${end?.id ?? ''}`
+    if (start.detail) det.push(`<details data-d="${inKey}"${opened(inKey)}><summary>${T.input}</summary><pre>${clipEsc(start, 'detail')}</pre></details>`)
+    if (end?.detail) det.push(`<details data-d="${outKey}"${opened(outKey)}><summary>${end.ok === false ? T.error : T.output}</summary><pre>${clipEsc(end, 'detail')}</pre></details>`)
     const sum = clipEsc(start, 'summary', 300)
     const tip = esc(String(start.summary ?? '').slice(0, 300)) // an attribute: plain text only
     return `<div class="tool"><div class="line"><span>${toolIcon(start.tool)}</span><span class="tn">${esc(toolName(start.tool))}</span>${start.agent ? `<span class="agent">${esc(start.agent)}</span>` : ''}<span class="arg" title="${tip}">${sum}</span>${res}</div>${det.join('')}</div>`

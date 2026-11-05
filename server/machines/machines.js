@@ -4,7 +4,7 @@ import {
 } from 'node:crypto'
 import {
   bad, ApiError, allow, ipKey, cachedFile, now, sha256, serverBaseUrl, clientIp, refuseSocket, logError,
-  VERSION, PUBLIC_URL, cleanText, acceptWebSocket,
+  VERSION, PUBLIC_URL, cleanText, cutText, acceptWebSocket,
 } from '../platform/index.js'
 
 export function createMachines(platform, { sessions, observation }) {
@@ -169,7 +169,7 @@ export function createMachines(platform, { sessions, observation }) {
         linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
         macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
         // (PowerShell's quotes. "--server-key x", not "=": a .bat splits its arguments at "=".)
-        windows: `irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}`,
+        windows: `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}`,
       },
       // Just squadra-host, on a machine that already has what it needs.
       // Downloaded into a new private folder: nobody can swap the file between the check and the run.
@@ -233,7 +233,7 @@ export function createMachines(platform, { sessions, observation }) {
   // What a host says about itself is shown in the dashboard: keep it small and typed.
   function sanitizeHostInfo(info) {
     if (!info || typeof info !== 'object') return null
-    const str = (v, n = 200) => typeof v === 'string' ? cleanText(v.slice(0, n * 2)).slice(0, n) : null
+    const str = (v, n = 200) => typeof v === 'string' ? cutText(cleanText(v.slice(0, n * 2)), n) : null
     const terminals = (Array.isArray(info.terminals) ? info.terminals : []).slice(0, 64).map(t => ({
       id: str(t?.id, 40),
       // A terminal is shown by its session's name, which is its id (a machine
@@ -348,7 +348,7 @@ export function createMachines(platform, { sessions, observation }) {
         case 'ping':
           // (Answered: the machine notices a server that silently went away.
           // Not to one that doesn't read its answers, and a few a minute.)
-          if (ws.buffered > 64 * 1024) { ws.close(4008, 'not reading'); break }
+          if (ws.buffered > 64 * 1024) break
           if (allow('hostping', hostId, 30)) ws.send(JSON.stringify({ t: 'pong' }))
           break
         case 'info':
@@ -382,6 +382,7 @@ export function createMachines(platform, { sessions, observation }) {
             if (v.ws.buffered > 4 * 1024 * 1024) { if (withData) v.stale = true; continue }
             // Caught up after missing output: ask the machine for a fresh screen.
             if (v.stale && v.ws.buffered < 1024 * 1024) { v.stale = false; link.ws.send(JSON.stringify({ t: 'refresh', term })) }
+            if (link.viewers.get(term) !== set) break // (that send closed the machine's link: they were told)
             v.ws.send(out)
           }
           if (m.t === 'exit') link.viewers.delete(term)

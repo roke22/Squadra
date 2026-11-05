@@ -149,7 +149,8 @@ export async function checkCoordinator(s, { fresh = false, batch = false } = {})
   // Without a pin for this coordinator (first time, or it changed), the one
   // in allow-pins.json counts: a former coordinator registered again by
   // someone else isn't taken on trust.
-  const paired = readAllowPins(s)[s.coordinator]
+  const pins = readAllowPins(s)
+  const paired = Object.hasOwn(pins, s.coordinator) ? pins[s.coordinator] : undefined
   const mismatch = (pin && pin.name === s.coordinator && !same) ||
     ((!pin || pin.name !== s.coordinator) && paired !== undefined && identity && paired !== `i:${identity}`)
   if (mismatch) {

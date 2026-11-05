@@ -355,6 +355,40 @@ test('plugin: a .env edited on Windows (CRLF) reads the same: the relay stays of
   off.close()
 })
 
+test('a coordinator can have a name like toString, and a description shows what languages use every day', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'toString' })
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'toString', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('protow')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const w = new Plugin('protow', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'toString' })
+  await w.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 protow connected'), 'greeting')
+  await assert.rejects(coord.tool('reply', { chat_id: 'protow', text: 'x'.repeat(1024 * 1024 + 1) }), /too long for a message/)
+  await coord.tool('reply', { chat_id: 'protow', text: 'hello from the coordinator' })
+  await w.waitChannel(p => p.content === 'hello from the coordinator', 'its message')
+  const relayed = async (id, description) => {
+    w.notify('notifications/claude/channel/permission_request', { request_id: id, tool_name: 'Bash', description, input_preview: '{"command":"ls"}' })
+    return (await coord.waitChannel(p => p.content.includes(`yes ${id}`), `prompt ${id}`)).content
+  }
+  // (The ids: five letters, without l.)
+  const ids = ['abcde', 'fghij', 'kmnop', 'qrstu', 'vwxyz', 'abcdf']
+  for (const text of ['👩🏽\u200d💻 listo', '🏳️\u200d🌈 listo', 'ශ්\u200dරී', '1\ufe0f\u20e3 uno', '東京\u3000都', 'שלום\u200f ok']) {
+    const out = await relayed(ids.shift(), text)
+    // (The receiving session's text drops what can't be seen; what matters is
+    // that the prompt isn't flagged: it stays something that can be approved.)
+    const line = out.split('\n').find(l => l.startsWith('Description'))
+    assert.doesNotMatch(line, /NOT SHOWN|\\u\{/, JSON.stringify(text))
+  }
+  // What really hides text is still shown as what it is.
+  const out = await relayed('bcdfg', 'ok\u202eevil')
+  assert.match(out, /\\u\{202e\}/)
+  coord.close()
+  w.close()
+})
+
 test('plugin: approved/ as a link to another folder empties nothing', async () => {
   const p = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
   await p.init()

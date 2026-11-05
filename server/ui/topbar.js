@@ -73,7 +73,7 @@ export function renderTop() {
     const h = r.host && hosts.get(r.host)
     setHtml($('topTitle'), h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines)
     $('topSub').textContent = h ? hostLine(h) : T.machinesSub
-    setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn" data-hact="templates">${T.templates}</button><button class="btn primary" data-hact="new">${T.newSession}</button>`)
+    setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn" data-hact="templates">${T.templates}</button><button class="btn primary" data-hact="new"${h ? ` data-h="${esc(h.id)}"` : ''}>${T.newSession}</button>`)
   } else if (r.view === 'terminal') {
     const h = hosts.get(r.host)
     const t = h?.info?.terminals?.find(x => x.id === r.term)

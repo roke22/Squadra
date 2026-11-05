@@ -103,12 +103,53 @@ test('a terminal: it shows the screen, and what is typed reaches the machine', a
   expect(machine.typed.join('')).toContain('hello')
 })
 
+test('the chat: what is opened stays open when more arrives, and text being selected is not redrawn away', async ({ page }) => {
+  const s = await startSession(server, 'keep1', 'worker', 'coord')
+  const t0 = Date.now()
+  await s.observe([
+    { kind: 'tool_start', id: 'k1', tool: 'Bash', ts: t0, summary: 'kept-tool', detail: 'kept input' },
+    { kind: 'tool_end', id: 'k1', tool: 'Bash', ts: t0 + 1, ok: true, detail: 'kept output' },
+    { kind: 'text', text: 'selectable words here', ts: t0 + 2 },
+  ])
+  await signIn(page, '#/s/keep1/chat')
+  const group = page.locator('#session .chat details.tools').first()
+  await group.locator('summary').first().click()
+  const input = group.locator('details[data-d^="i"]').first()
+  await input.locator('summary').click()
+  await expect(input).toHaveAttribute('open', '')
+  await s.observe([{ kind: 'text', text: 'one more line', ts: Date.now() }])
+  await expect(page.locator('#session .chat')).toContainText('one more line')
+  await expect(page.locator('#session .chat details[data-d^="i"]').first()).toHaveAttribute('open', '')
+  // Selecting: nothing is redrawn until it ends.
+  await page.evaluate(() => { const p = [...document.querySelectorAll('#session .assistant')].find(x => x.textContent.includes('selectable')); getSelection().selectAllChildren(p) })
+  await s.observe([{ kind: 'text', text: 'arrived while selecting', ts: Date.now() }])
+  await page.waitForTimeout(400)
+  expect(await page.evaluate(() => getSelection().toString())).toContain('selectable words')
+  await expect(page.locator('#session .chat')).not.toContainText('arrived while selecting')
+  await page.evaluate(() => getSelection().removeAllRanges())
+  await expect(page.locator('#session .chat')).toContainText('arrived while selecting')
+  await expect(page.locator('#session .chat .older')).not.toContainText(/Loading/)
+})
+
+test('dialogs: Escape closes the one on top', async ({ page }) => {
+  await signIn(page, `#/h/${machine.id}`)
+  await page.locator('#topRight [data-hact="new"]').click()
+  const dialogs = page.locator('.modal-bg')
+  await expect(dialogs).toHaveCount(1)
+  // The new session dialog is for the machine on screen.
+  await expect(dialogs.first().locator('select').first()).toHaveValue(machine.id)
+  await page.evaluate(() => { const bg = document.createElement('div'); bg.className = 'modal-bg'; bg.innerHTML = '<button data-cancel>x</button>'; bg.querySelector('button').onclick = () => bg.remove(); document.body.appendChild(bg) })
+  await expect(dialogs).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(dialogs).toHaveCount(1)
+})
+
 test('the chat: a link whose host is written with % shows the real host', async ({ page }) => {
   const s = await startSession(server, 'links1', 'worker', 'coord')
   const url = 'https://github.com%2Eevil.example/x'
   await s.observe([{ kind: 'text', text: `[${url}](${url})`, ts: Date.now() }])
   await signIn(page, '#/s/links1/chat')
-  await expect(page.locator('#session .chat a[href*="evil.example"] + .more')).toHaveText('(github.com.evil.example)')
+  await expect(page.locator('#session .chat a[href*="evil.example"] + .dim-note')).toHaveText('(github.com.evil.example)')
 })
 
 test('the chat: a tool shows its end across messages, and none runs after its turn', async ({ page }) => {

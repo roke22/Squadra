@@ -185,7 +185,7 @@ warned that its messages are being ignored).
 3. Set `groups[<#group>] = { requireMention: !hasFlag("--no-mention"),
    allowFrom: parsedAllowList, invite: parsedInviteList }`.
 4. Write. The channel server joins the group on the Squadra server within a
-   few seconds.
+   few seconds (up to a minute if an earlier attempt failed).
 
 Groups are private on the server: the first session to add a group creates
 it, and the others can only join after the owner invites them. Only the

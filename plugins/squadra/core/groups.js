@@ -41,11 +41,11 @@ export function syncGroups(s) {
   const access = loadAccess(s)
   s.groupInvites ??= new Set()
   s.groupErrors ??= new Map()
-  // Failed invites and joins wait longer each time (5 s up to 5 min), so a
+  // Failed invites and joins wait longer each time (5 s up to 1 min), so a
   // list naming someone who isn't there doesn't spend the sending budget.
   s.groupRetry ??= new Map()
   const waiting = key => (s.groupRetry.get(key)?.at ?? 0) > Date.now()
-  const failed = key => { const d = Math.min((s.groupRetry.get(key)?.delay ?? 2_500) * 2, 300_000); s.groupRetry.set(key, { at: Date.now() + d, delay: d }) }
+  const failed = key => { const d = Math.min((s.groupRetry.get(key)?.delay ?? 2_500) * 2, 60_000); s.groupRetry.set(key, { at: Date.now() + d, delay: d }) }
   const inviteAll = g => {
     const cfg = access.groups[g] ?? {}
     for (const who of new Set([...(cfg.invite ?? []), ...(cfg.allowFrom ?? [])])) {

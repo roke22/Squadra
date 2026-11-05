@@ -22,7 +22,7 @@ main() {
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --sha256) SHA="${2:-}"; shift 2 ;;
+      --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
       *) ARGS+=("$1"); shift ;;
     esac
   done
@@ -69,8 +69,8 @@ main() {
   # New terminals find the "claude" and "squadra-host" commands in ~/.local/bin.
   for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
     if [ "$rc" = "$HOME/.zshrc" ] || [ -f "$rc" ]; then
-      touch "$rc"
-      grep -q '\.local/bin' "$rc" || printf '\n# Added by the Squadra installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
+      # (Managed elsewhere and read-only, as with home-manager: not worth stopping for.)
+      { touch "$rc" && { grep -q '\.local/bin' "$rc" || printf '\n# Added by the Squadra installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"; }; } 2>/dev/null || echo "Could not add ~/.local/bin to $rc: add it to your PATH yourself." >&2
     fi
   done
 

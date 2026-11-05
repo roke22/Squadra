@@ -20,7 +20,7 @@ export function clipEsc(it, field, max = MAX_RENDER_DETAIL) {
   if (!m) clipCache.set(it, m = new Map())
   if (!m.has(field)) {
     const t = String(it[field] ?? '')
-    m.set(field, esc(t.length > max ? t.slice(0, max) : t) + (t.length > max ? ` <span class="more">${T.moreChars(t.length - max)}</span>` : ''))
+    m.set(field, esc(t.length > max ? t.slice(0, max) : t) + (t.length > max ? ` <span class="dim-note">${T.moreChars(t.length - max)}</span>` : ''))
   }
   return m.get(field)
 }
@@ -72,7 +72,7 @@ function md(src) {
         const written = decode(href).replace(/^https?:\/\//i, '').split(/[/?#\\]/)[0].replace(/^[^@]*@/, '')
         if ((l !== decode(href) && l !== u.href) || /[^\x21-\x7e]|%/.test(written) || /(^|\.)xn--/i.test(u.hostname)) realHost = u.host
       } catch {}
-      return own ? `${label} (${href})` : `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>${realHost ? ` <span class="more">(${esc(realHost)})</span>` : ''}`
+      return own ? `${label} (${href})` : `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>${realHost ? ` <span class="dim-note">(${esc(realHost)})</span>` : ''}`
     })
   // Line by line: runs of "- " / "1. " lines become lists, headings stand
   // alone, other lines join into paragraphs; blank lines end a paragraph.
@@ -109,7 +109,7 @@ export function status(s) {
   switch (a.state) {
     case 'tool': return { dot: 'warn pulse', text: `${a.tool?.name ?? T.tool} · ${dur(now() - (a.tool?.since ?? now()))} · ${a.tool?.summary ?? ''}` }
     case 'working': return { dot: 'ok pulse', text: T.working(dur(now() - (a.since ?? now()))) }
-    case 'waiting': return { dot: 'err pulse', waiting: true, text: a.tool ? T.waitingTool(a.tool.name, a.tool.summary ?? '') : T.waitingInput(a.waiting) }
+    case 'waiting': return { dot: 'err pulse', waiting: true, text: a.tool?.name ? T.waitingTool(a.tool.name, a.tool.summary ?? '') : T.waitingInput(a.waiting) }
     case 'compacting': return { dot: 'info pulse', text: T.compacting }
     case 'idle': return { dot: 'ok', text: T.idle(dur(now() - (a.since ?? now()))) }
     case 'ended': return { dot: '', text: T.ended }

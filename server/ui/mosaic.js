@@ -54,7 +54,7 @@ function squadRow(key, coord, workers) {
   // Rewritten only when something changed, so a click on its buttons is never lost.
   const html = `<span class="dot ${status(coord).dot}"></span><span class="n">👥 ${esc(T.squadOf(coord.name))}</span><span class="m">${esc(T.squadCount(on, workers.length))}</span>
       <span class="acts"><button class="btn" data-go="#/q/${encodeURIComponent(coord.name)}" title="${esc(T.viewSquadTitle(coord.name))}">${T.viewSquad}</button><button class="btn" data-addworker="${esc(coord.name)}" title="${esc(T.addWorkerTo(coord.name))}">${T.addWorker}</button></span>`
-  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html }
+  if (el.dataset.html !== html) { setHtml(el, html); el.dataset.html = html }
   return el
 }
 
@@ -164,7 +164,7 @@ export function alertBox(text) {
 // archived view
 export function renderArchived() {
   const list = sortedSessions({ archived: true })
-  $('archived').innerHTML = `<div class="arch-list">${list.length ? list.map(s => `
+  setHtml($('archived'), `<div class="arch-list">${list.length ? list.map(s => `
       <div class="arch ${s.role ?? ''}">
         <div class="info">
           <div class="n"><span class="dot ${status(s).dot}"></span>${esc(s.name)} ${roleTag(s.role)}</div>
@@ -175,7 +175,7 @@ export function renderArchived() {
           <button class="btn" data-act="unarchive" data-s="${esc(s.name)}">${T.unarchive}</button>
           <button class="btn danger" data-act="delete" data-s="${esc(s.name)}" ${s.online ? 'disabled' : ''}>${T.delete}</button>
         </div>
-      </div>`).join('') : `<div class="mosaic-empty">${T.noArchived}</div>`}</div>`
+      </div>`).join('') : `<div class="mosaic-empty">${T.noArchived}</div>`}</div>`)
 }
 
 $('archived').addEventListener('click', e => {

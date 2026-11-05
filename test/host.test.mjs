@@ -908,7 +908,9 @@ test('folders: at most 50, and a name with a space at its end can be managed', (
   const run = (...args) => { try { return { ok: true, out: execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'folders', ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } } catch (err) { return { ok: false, out: err.stderr } } }
   const extra = join(base, 'one more ')
   mkdirSync(extra, { recursive: true })
-  const full = run('add', extra)
+  const fiftyFirst = join(base, 'f50')
+  mkdirSync(fiftyFirst, { recursive: true })
+  const full = run('add', fiftyFirst)
   assert.equal(full.ok, false)
   assert.match(full.out, /at most 50/)
   assert.equal(run().out.trim().split('\n').length, 50)

@@ -54,7 +54,8 @@ async function verifiedApprovers(s, list) {
       // registered, or the server didn't answer): pinned now.
       if (!s.approverPins.has(n)) s.approverPins.set(n, identityOf(info))
       // Nor one that isn't the session this one paired with (allow-pins.json).
-      const paired = readAllowPins(s)[n]
+      const pins = readAllowPins(s)
+      const paired = Object.hasOwn(pins, n) ? pins[n] : undefined
       if (identityOf(info) === s.approverPins.get(n) && (paired === undefined || paired === identityOf(info))) ok.push(n)
       else log(`permission approver "${n}" was registered again on the server: not asking it`)
     } catch {}
@@ -115,19 +116,26 @@ function shown(value, max, maskedBefore = 0, { letters = true } = {}) {
   // a zero-width non-joiner inside a word (Persian), an emoji's joiner and
   // presentation selector.)
   const PICTO = /\p{Extended_Pictographic}/u
+  const JOINS = /[\p{L}\p{M}]/u
   const proseOk = k => {
     const c = chars[k], before = chars[k - 1] ?? '', after = chars[k + 1] ?? ''
-    if (c === '\u00a0' || c === '\u202f' || c === '\u2009') return true
-    if (c === '\u200c') return /\p{L}/u.test(before) && /\p{L}/u.test(after)
-    if (c === '\u200d') return PICTO.test(before) && PICTO.test(after)
+    if (c === '\u00a0' || c === '\u202f' || c === '\u2009' || c === '\u3000') return true
+    // (Text direction marks, in the languages that need them.)
+    if (c === '\u200e' || c === '\u200f') return true
+    if (c === '\u200c') return JOINS.test(before) && /\p{L}/u.test(after)
+    // An emoji's joiner comes after the emoji, its selector or its skin tone;
+    // in Indic scripts, between a virama and a letter.
+    if (c === '\u200d') return PICTO.test(after) ? /[\p{Extended_Pictographic}\ufe0f\u{1F3FB}-\u{1F3FF}]/u.test(before) : /\p{M}/u.test(before) && /\p{L}/u.test(after)
     if (c === '\ufe0f') return PICTO.test(before) || /[\p{S}#*0-9]/u.test(before)
+    if (c === '\u20e3') return /[\ufe0f#*0-9]/u.test(before)
     return false
   }
   const BLANK = /^[\u{13441}\u{13442}\u{1D159}\u2800\u3164\uFFA0\u115F\u1160]$/u
   const r = chars.map((c, k) => {
     // (DEL too: the server drops it, the shell doesn't.)
     if (c.charCodeAt(0) < 0x7f) return c
-    if (BLANK.test(c) || (/\p{M}/u.test(c) && !onLetter(k))) { lookalikes++; return `\\u{${c.codePointAt(0).toString(16)}}` }
+    // (In the description, what proseOk allows comes first: FE0F is a mark too.)
+    if (BLANK.test(c) || (/\p{M}/u.test(c) && !onLetter(k) && (letters || !proseOk(k)))) { lookalikes++; return `\\u{${c.codePointAt(0).toString(16)}}` }
     // (Also any default-ignorable one: joiners, variation selectors, fillers —
     // the server may drop them, and the shell doesn't.)
     // (In the description — the session's own words, not what runs — only

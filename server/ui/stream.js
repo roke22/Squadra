@@ -140,8 +140,15 @@ export async function connect() {
       const reader = r.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
+      // The server pings every 20 s: nothing for 45 s means a connection that
+      // silently died (it would stay "live" for ever): made again.
+      const read = () => {
+        let timer
+        const silent = new Promise((_, reject) => { timer = setTimeout(() => { reader.cancel().catch(() => {}); reject(new Error('silent')) }, 45_000) })
+        return Promise.race([reader.read(), silent]).finally(() => clearTimeout(timer))
+      }
       for (;;) {
-        const { value, done } = await reader.read()
+        const { value, done } = await read()
         if (done) break
         buf += dec.decode(value, { stream: true })
         let i
@@ -190,7 +197,7 @@ function renderAlerts() {
   box.dataset.key = key
   box.hidden = !items.length
   const shown = items.slice(0, 4)
-  box.innerHTML = items.length ? `<span class="lbl">${T.needsYou}</span>${shown.map(i => `<button class="alert ${i.cls}" data-go="#/s/${encodeURIComponent(i.name)}">${i.html}</button>`).join('')}${items.length > shown.length ? `<span class="t">${T.alertMore(items.length - shown.length)}</span>` : ''}` : ''
+  setHtml(box, items.length ? `<span class="lbl">${T.needsYou}</span>${shown.map(i => `<button class="alert ${i.cls}" data-go="#/s/${encodeURIComponent(i.name)}">${i.html}</button>`).join('')}${items.length > shown.length ? `<span class="t">${T.alertMore(items.length - shown.length)}</span>` : ''}` : '')
 }
 $('alerts').addEventListener('click', e => {
   const b = e.target.closest('[data-go]')

@@ -25,7 +25,7 @@ main() {
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --sha256) SHA="${2:-}"; shift 2 ;;
+      --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
       --server-key) ARGS+=("--server-key=${2:-}"); shift 2 ;; # (from windows.bat: no "=" there)
       --allow-root) ROOT_OK=1; shift ;;
       *) ARGS+=("$1"); shift ;;
@@ -35,7 +35,7 @@ main() {
   say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
   as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi }
   install_pkg() {
-    if command -v apt-get >/dev/null 2>&1; then as_root apt-get update -qq && as_root apt-get install -y "$@"
+    if command -v apt-get >/dev/null 2>&1; then { as_root apt-get update -qq || true; } && as_root apt-get install -y "$@"
     elif command -v dnf >/dev/null 2>&1; then as_root dnf install -y "$@"
     elif command -v pacman >/dev/null 2>&1; then as_root pacman -S --needed --noconfirm "$@"
     elif command -v zypper >/dev/null 2>&1; then as_root zypper install -y "$@"
@@ -59,7 +59,9 @@ main() {
   fi
 
   # 2. Node.js 22.13 or later (with nvm, in your home, if missing or older)
-  node_ok() { command -v node >/dev/null 2>&1 && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
+  # (On WSL, what Windows installed isn't usable here: /mnt/c/…)
+  native() { p="$(command -v "$1" 2>/dev/null)" && case "$p" in /mnt/*) return 1 ;; esac; }
+  node_ok() { native node && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
   if ! node_ok; then
     say "Installing Node.js 22 (with nvm, in your home folder)"
     export NVM_DIR="$HOME/.nvm"
@@ -70,7 +72,7 @@ main() {
 
   # 3. Claude Code
   export PATH="$HOME/.local/bin:$PATH"
-  if ! command -v claude >/dev/null 2>&1; then
+  if ! native claude; then
     say "Installing Claude Code"
     curl -fsSL https://claude.ai/install.sh | bash
   fi
@@ -78,7 +80,8 @@ main() {
   # New terminals find the "claude" and "squadra-host" commands in ~/.local/bin.
   for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
     if [ -f "$rc" ] && ! grep -q '\.local/bin' "$rc"; then
-      printf '\n# Added by the Squadra installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
+      # (Managed elsewhere and read-only, as with home-manager: not worth stopping for.)
+      { printf '\n# Added by the Squadra installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"; } 2>/dev/null || echo "Could not add ~/.local/bin to $rc: add it to your PATH yourself." >&2
     fi
   done
 
