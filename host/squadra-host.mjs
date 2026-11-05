@@ -53,7 +53,7 @@ const PREFIX = 'sq-'
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const COMPACT_MIN = 50_000
 const COMPACT_MAX = 1_000_000
-const DEFAULT_SETTINGS = { folders: [], max_sessions: 8, allow_input: true, allow_resume: true, claude_command: 'claude' }
+const DEFAULT_SETTINGS = { folders: [], max_sessions: 8, allow_input: true, claude_command: 'claude' }
 // The user's home from the user database (not $HOME).
 const HOME = (() => { try { return userInfo().homedir || homedir() } catch { return homedir() } })()
 // Never allowed as a place to open sessions, whatever settings.json says:
@@ -62,6 +62,7 @@ const HOME = (() => { try { return userInfo().homedir || homedir() } catch { ret
 // those or your home (/home, /Users…).
 const FORBIDDEN_TREES = [
   '.claude', '.ssh', '.config', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.local', '.cache', 'Library',
+  '.mozilla', '.cargo', '.password-store', '.m2', 'snap', '.var', '.gradle', '.terraform.d',
 ].map(d => join(HOME, d)).concat([
   CONFIG_DIR, process.env.CLAUDE_CONFIG_DIR, process.env.XDG_CONFIG_HOME,
   '/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/usr', '/bin', '/sbin', '/lib', '/opt/homebrew', '/System', '/Library',
@@ -85,20 +86,20 @@ function withinById(path, dir) {
   let id
   try { const st = statSync(dir, { bigint: true }); id = `${st.dev}:${st.ino}` } catch { return false }
   for (let x = path; ; x = dirname(x)) {
-    try { const st = statSync(x, { bigint: true }); if (`${st.dev}:${st.ino}` === id) return true } catch {}
+    try { const st = statSync(x, { bigint: true }); if (`${st.dev}:${st.ino}` === id && st.ino !== 0n) return true } catch {}
     if (dirname(x) === x) return false
   }
 }
 // The home folder itself (not a folder inside it).
-const isHome = real => [HOME, realOr(HOME)].some(h => within(real, h) && within(h, real))
+const isHome = real => [HOME, realOr(HOME)].some(h => withinById(real, h) && withinById(h, real))
 // allowHome: the home folder itself is fine (started with --allow-home);
 // a folder that contains it, and the credentials folders inside it, never.
 function forbiddenFolder(real, { allowHome = false } = {}) {
   const home = allowHome && isHome(real)
-  if (real === '/' || (!home && (within(HOME, real) || within(realOr(HOME), real)))) return allowHome ? 'a folder that contains your home' : 'your whole home, or a folder that contains it (start squadra-host with --allow-home to allow the home folder itself)'
+  if (real === '/' || (!home && (withinById(HOME, real) || withinById(realOr(HOME), real)))) return allowHome ? 'a folder that contains your home' : 'your whole home, or a folder that contains it (start squadra-host with --allow-home to allow the home folder itself)'
   const trees = FORBIDDEN_TREES.map(realOr)
-  if (trees.some(d => within(real, d))) return 'a system, temporary, credentials or configuration folder'
-  if (!home && trees.some(d => within(d, real))) return 'a folder that contains a system or credentials folder'
+  if (trees.some(d => withinById(real, d))) return 'a system, temporary, credentials or configuration folder'
+  if (!home && trees.some(d => withinById(d, real))) return 'a folder that contains a system or credentials folder'
   // Someone else's folder, or one anyone can write to (a shared drop-box) —
   // the folder itself or any folder above it, where someone else could swap
   // it for another one.
@@ -153,11 +154,11 @@ function writeJson(file, data, mode = 0o600) {
 // the right folders); from the dashboard only the folders can be changed, and
 // only within the rules below (unless folders_from_dashboard is false).
 //   folders           where sessions may be opened (and anything inside)
-//   folders_from_dashboard  whether the dashboard may add and remove folders (default true)
+//   folders_from_dashboard  whether the dashboard may add and remove folders (same as allow_input by default)
 //   allow_home        whether the whole home folder may be one of them (default
 //                     false; set by starting with --allow-home). Sessions opened
 //                     there never get their permission prompts answered remotely
-//   allow_resume      whether a session may continue its own last conversation (default true)
+//   allow_resume      whether a session may continue its own last conversation (same as allow_input by default)
 //   max_sessions      at most this many at once
 //   allow_input       whether the dashboard may type in the terminals
 //   permission_relay  whether a session's coordinator may answer its permission
@@ -211,8 +212,8 @@ function loadSettings() {
   s.allow_input = bool('allow_input', true)
   s.permission_relay = bool('permission_relay', s.allow_input)
   s.allow_clear = bool('allow_clear', s.allow_input)
-  s.allow_resume = bool('allow_resume', true)
-  s.folders_from_dashboard = bool('folders_from_dashboard', true)
+  s.allow_resume = bool('allow_resume', s.allow_input)
+  s.folders_from_dashboard = bool('folders_from_dashboard', s.allow_input)
   // A coordinators pin that can't be read refuses every coordinator (it
   // never turns into "any").
   if (s.coordinators === undefined || (Array.isArray(s.coordinators) && s.coordinators.length === 0)) s.coordinators = []
@@ -1817,7 +1818,7 @@ Settings: ${SETTINGS_FILE}
   folders_from_dashboard  whether the dashboard may change them (default true)
   max_sessions            at most this many sessions at once (default 8)
   allow_input             whether the dashboard may type in the terminals (default true)
-  allow_resume            whether a session may continue its own last conversation (default true)
+  allow_resume            whether a session may continue its own last conversation (default: allow_input)
   permission_relay        whether a worker's coordinator may answer its permission prompts
                           from another session (default: same as allow_input)
   allow_clear             whether a worker's coordinator may have its context cleared (/clear)
@@ -2300,13 +2301,15 @@ async function update({ allowUnsigned = false, allowDowngrade = false } = {}) {
 
 // settings.json written by an older version: what were only its defaults
 // then become today's (once; "settings_version" says it was done). Up to
-// 0.0.2 every file was written with "allow_resume": false, the old default.
-const SETTINGS_VERSION = 3
+// 0.0.2 every file was written with "allow_resume": false, the old default;
+// up to 0.0.7, true, which now follows allow_input.
+const SETTINGS_VERSION = 4
 function migrateSettings() {
   let raw
   try { raw = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) } catch { return }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Number.isInteger(raw.settings_version)) return
-  if (raw.allow_resume === false) { delete raw.allow_resume; log('settings.json: continuing the last conversation is now allowed (the new default; set "allow_resume": false to turn it off)') }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.settings_version >= SETTINGS_VERSION) return
+  if (raw.allow_resume === true && raw.settings_version === 3) delete raw.allow_resume
+  if (raw.allow_resume === false && !Number.isInteger(raw.settings_version)) { delete raw.allow_resume; log('settings.json: continuing the last conversation is now allowed (the new default; set "allow_resume": false to turn it off)') }
   raw.settings_version = SETTINGS_VERSION
   try { writeJson(SETTINGS_FILE, raw) } catch {}
 }

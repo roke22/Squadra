@@ -718,6 +718,21 @@ test('disconnecting a machine revokes it and stops squadra-host there', { skip: 
   assert.ok(existsSync(join(hostDir, 'credentials.json')))
 })
 
+test('a machine that only watches takes no folders and continues no conversation, unless it says so', () => {
+  const dir = join(work, 'watch-host')
+  mkdirSync(dir, { recursive: true })
+  const settingsWith = extra => {
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ settings_version: 4, allow_input: false, ...extra }))
+    return JSON.parse(execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'status'], { env: { ...process.env, SQUADRA_HOST_DIR: dir }, encoding: 'utf8' })).settings
+  }
+  const watching = settingsWith({})
+  assert.equal(watching.folders_from_dashboard, false)
+  assert.equal(watching.allow_resume, false)
+  const chosen = settingsWith({ folders_from_dashboard: true, allow_resume: true })
+  assert.equal(chosen.folders_from_dashboard, true)
+  assert.equal(chosen.allow_resume, true)
+})
+
 test('fourth audit: a settings.json that cannot be read means the strictest settings', () => {
   const dir = join(work, 'broken-host')
   mkdirSync(dir, { recursive: true })
@@ -738,11 +753,21 @@ test('a settings.json from 0.0.2 gets the new defaults once (continuing a conver
   run()
   const s = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
   assert.equal(s.allow_resume, undefined)
-  assert.equal(s.settings_version, 3)
+  assert.equal(s.settings_version, 4)
   // Turned off again by hand afterwards: that choice stays.
   writeFileSync(join(dir, 'settings.json'), JSON.stringify({ ...s, allow_resume: false }))
   run()
   assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).allow_resume, false)
+  // What up to 0.0.7 wrote at enrollment: true, which now follows allow_input.
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ folders: [], allow_input: false, allow_resume: true, settings_version: 3 }))
+  run()
+  const later = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+  assert.equal(later.allow_resume, undefined)
+  assert.equal(later.settings_version, 4)
+  // Chosen again afterwards: it stays.
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ ...later, allow_resume: true }))
+  run()
+  assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).allow_resume, true)
 })
 
 // --- squadra-host update ---------------------------------------------------------------

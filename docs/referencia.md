@@ -296,11 +296,11 @@ Las reglas de la máquina están en `~/.config/squadra-host/settings.json`. El p
 | Ajuste | |
 |---|---|
 | `folders` | Dónde se pueden abrir sesiones, y todo lo que contienen. Nunca una carpeta del sistema o de credenciales, ni la carpeta personal entera salvo con `allow_home` |
-| `folders_from_dashboard` | Si el panel puede añadir y quitar carpetas (`true`). Ponlo a `false` para cambiarlas solo en la máquina |
+| `folders_from_dashboard` | Si el panel puede añadir y quitar carpetas (igual que `allow_input` por defecto). Ponlo a `false` para cambiarlas solo en la máquina |
 | `allow_home` | Si la carpeta personal entera puede ser una de ellas (`false`; lo activa `squadra-host --allow-home`) |
 | `max_sessions` | Como mucho estas a la vez (8; máximo 64) |
 | `allow_input` | Si el panel puede escribir en las terminales (`true`). Ponlo a `false` para solo mirar (terminales de solo lectura) |
-| `allow_resume` | Si una sesión puede continuar su propia última conversación (`true`) |
+| `allow_resume` | Si una sesión puede continuar su propia última conversación (igual que `allow_input` por defecto) |
 | `permission_relay` | Si el coordinador de un worker puede responder sus permisos desde otra sesión (igual que `allow_input` por defecto; nunca en sesiones en la carpeta personal). Para las sesiones que abre squadra-host; para las arrancadas a mano en la máquina, pon `SQUADRA_PERMISSION_RELAY=off` en el `.env` del plugin |
 | `allow_clear` | Si el coordinador de un worker puede limpiar su contexto (`/clear`, escrito en su terminal) antes de darle una tarea nueva (igual que `allow_input` por defecto) |
 | `coordinators` | Si se pone, los únicos nombres de coordinador que pueden recibir los workers que abre squadra-host en esta máquina, y con los que pueden enlazarse los coordinadores que abre |

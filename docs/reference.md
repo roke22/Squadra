@@ -296,11 +296,11 @@ The machine's rules live in `~/.config/squadra-host/settings.json`. The dashboar
 | Setting | |
 |---|---|
 | `folders` | Where sessions may be opened, and anything inside. Never a system or credentials folder, nor the whole home folder unless `allow_home` |
-| `folders_from_dashboard` | Whether the dashboard may add and remove folders (`true`). Set it to `false` to change them only on the machine |
+| `folders_from_dashboard` | Whether the dashboard may add and remove folders (same as `allow_input` by default). Set it to `false` to change them only on the machine |
 | `allow_home` | Whether the whole home folder may be one of them (`false`; `squadra-host --allow-home` sets it) |
 | `max_sessions` | At most this many at once (8; at most 64) |
 | `allow_input` | Whether the dashboard may type in the terminals (`true`). Set it to `false` to only watch (terminals are read-only) |
-| `allow_resume` | Whether a session may continue its own last conversation (`true`) |
+| `allow_resume` | Whether a session may continue its own last conversation (same as `allow_input` by default) |
 | `permission_relay` | Whether a worker's coordinator may answer its permission prompts from another session (same as `allow_input` by default; never for sessions in the home folder). For sessions squadra-host opens; for sessions started by hand on the machine, put `SQUADRA_PERMISSION_RELAY=off` in the plugin `.env` |
 | `allow_clear` | Whether a worker's coordinator may have its context cleared (`/clear`, typed in its terminal) before giving it a new task (same as `allow_input` by default) |
 | `coordinators` | If set, the only coordinator names that workers squadra-host opens on this machine may be given, and that coordinators it opens may be linked with |

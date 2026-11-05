@@ -65,7 +65,7 @@ export function within(p, d) {
   let id
   try { const st = statSync(d, { bigint: true }); id = `${st.dev}:${st.ino}` } catch { return false }
   for (let x = p; ; x = dirname(x)) {
-    try { const st = statSync(x, { bigint: true }); if (`${st.dev}:${st.ino}` === id) return true } catch {}
+    try { const st = statSync(x, { bigint: true }); if (`${st.dev}:${st.ino}` === id && st.ino !== 0n) return true } catch {}
     if (dirname(x) === x) return false
   }
 }
