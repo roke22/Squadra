@@ -419,7 +419,9 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   // The machine checks it: a missing folder, and the home folder without --allow-home.
   const missing = await dash('hosts/folders', { host: hostId, action: 'add', path: join(work, 'nope') })
   assert.equal(missing.ok, false)
-  assert.match(missing.description, /does not exist/)
+  // (Without saying which: whoever controls the server can't probe what exists here.)
+  assert.match(missing.description, /can't be allowed on this machine/)
+  assert.doesNotMatch(missing.description, /does not exist|nope/)
   const home = await dash('hosts/folders', { host: hostId, action: 'add', path: '~' })
   assert.equal(home.ok, false)
   assert.match(home.description, /--allow-home/)
@@ -467,6 +469,30 @@ test('folders from the dashboard, and the home folder only with --allow-home', {
   try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: hostEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { second = err }
   assert.ok(second, 'a second squadra-host must not run')
   assert.match(second.stderr, /already running/)
+  assert.equal(second.status, 2, 'its service does not start it again and again')
+  // A pid that is another program with the name in its arguments isn't another
+  // squadra-host (an editor on the file, a tail of its log).
+  {
+    const dir = join(work, 'name-in-args')
+    mkdirSync(dir, { recursive: true })
+    const other = spawn('sh', ['-c', 'sleep 30', 'squadra-host.mjs'], { stdio: 'ignore' })
+    writeFileSync(join(dir, 'squadra-host.pid'), `${other.pid}\n`)
+    let out = null
+    try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: { ...hostEnv, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { out = err }
+    other.kill()
+    assert.match(out.stderr, /not enrolled/)
+    assert.equal(out.status, 2)
+  }
+  // Credentials that can't be read just now aren't "not enrolled": it can start again later.
+  {
+    const dir = join(work, 'broken-creds')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'credentials.json'), '{ half a fil')
+    let out = null
+    try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs')], { env: { ...hostEnv, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { out = err }
+    assert.equal(out.status, 1, out.stderr)
+    assert.match(out.stderr, /cannot read/)
+  }
   // A pid file left behind that names a thread (Linux: it answers as a process,
   // with the program's command line) isn't another squadra-host.
   if (process.platform === 'linux') {
@@ -869,6 +895,26 @@ test('update: only a signed release, and not an older one', async t => {
   served.body = newer; served.sig = signed(newer)
   r = await update()
   assert.equal(r.ok, false); assert.match(r.text, /no release key/)
+})
+
+test('folders: at most 50, and a name with a space at its end can be managed', () => {
+  const dir = join(work, 'many-folders')
+  mkdirSync(dir, { recursive: true })
+  const base = join(work, 'many')
+  mkdirSync(base, { recursive: true })
+  const list = Array.from({ length: 50 }, (_, i) => { const d = join(base, `f${i}`); mkdirSync(d, { recursive: true }); return d })
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ settings_version: 4, folders: list }))
+  const env = { ...process.env, SQUADRA_HOST_DIR: dir, SQUADRA_HOST_TEST_ALLOW_TMP: '1' }
+  const run = (...args) => { try { return { ok: true, out: execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'folders', ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } } catch (err) { return { ok: false, out: err.stderr } } }
+  const extra = join(base, 'one more ')
+  mkdirSync(extra, { recursive: true })
+  const full = run('add', extra)
+  assert.equal(full.ok, false)
+  assert.match(full.out, /at most 50/)
+  assert.equal(run().out.trim().split('\n').length, 50)
+  assert.ok(run('remove', list[0]).ok)
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ settings_version: 4, folders: [extra] }))
+  assert.ok(run('remove', extra).ok, 'the space is part of its name')
 })
 
 test('the service of another configuration folder is left alone', { skip: (process.platform !== 'linux' || process.getuid() === 0) && 'a user service on Linux' }, () => {

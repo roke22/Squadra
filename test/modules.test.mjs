@@ -152,6 +152,7 @@ test('modules: the checks the plugin and the host each keep are the same', () =>
     assert.equal(definition(file, name), definition(HOST, name), name)
   }
   assert.deepEqual(body(HOST, 'privateChain'), body(PATHS, 'safeChain'))
+  assert.deepEqual(body(HOST, 'realNearest'), body(PATHS, 'realNearest'))
   assert.deepEqual(body(HOST, 'serverSigned'), body('plugins/squadra/signing.js', 'signedBy'))
   // (Remembered differently in each.)
   const noMemo = list => list.filter(l => !/privateGroupMemo|privateGroupCache|\bcached\b/.test(l))

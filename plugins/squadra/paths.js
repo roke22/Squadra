@@ -100,7 +100,7 @@ export function privateGroup(gid) {
     const others = passwd.filter(f => f.length > 3 && Number(f[3]) === gid && f[0] !== me)
     if (passwd.some(f => f[0] === me)) ok = alone(local) && others.length === 0
     else if (gid === process.getuid() && others.length === 0 && local.every(f => f[0] === me)) {
-      const getent = ['/usr/bin/getent', '/bin/getent'].find(f => existsSync(f))
+      const getent = ['/usr/bin/getent', '/bin/getent', '/run/current-system/sw/bin/getent'].find(f => existsSync(f))
       if (getent) ok = alone(lines(execFileSync(getent, ['group', String(gid)], { encoding: 'utf8', timeout: 5000 })))
     }
   } catch {}

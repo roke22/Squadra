@@ -29,7 +29,7 @@
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
 import { homedir, hostname, platform, arch, userInfo, tmpdir } from 'node:os'
-import { join, resolve, sep, isAbsolute, dirname } from 'node:path'
+import { join, resolve, sep, isAbsolute, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync, randomBytes, sign, verify } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -78,6 +78,16 @@ const realOr = p => { try { return realpathSync.native(p) } catch { return resol
 // macOS file systems ignore case: compare that way there.
 const norm = p => (platform() === 'darwin' ? p.toLowerCase() : p)
 const within = (path, dir) => norm(path) === norm(dir) || norm(path).startsWith(norm(dir.endsWith(sep) ? dir : dir + sep))
+// A path's real one: the nearest folder that exists, resolved, plus the part
+// that doesn't exist yet. (The plugin's: both must pick the same folder.)
+function realNearest(p) {
+  const tail = []
+  for (let d = resolve(p); ; d = dirname(d)) {
+    try { return join(realpathSync(d), ...tail.reverse()) } catch {}
+    if (dirname(d) === d) return resolve(p)
+    tail.push(basename(d))
+  }
+}
 // The same, also by the folders' identity (device and inode), as the plugin
 // judges CLAUDE_CONFIG_DIR: where case or Unicode normalization is ignored
 // (WSL's /mnt/c, casefold folders, macOS) two spellings are one folder.
@@ -197,7 +207,7 @@ function loadSettings() {
   }
   const s = { ...DEFAULT_SETTINGS, ...raw }
   s.allow_home = raw.allow_home === true
-  s.folders = (Array.isArray(s.folders) ? s.folders : [])
+  s.folders = (Array.isArray(s.folders) ? s.folders : []).slice(0, MAX_FOLDERS)
     .filter(f => typeof f === 'string' && isAbsolute(f) && !forbiddenFolder(realOr(f), { allowHome: s.allow_home }))
   if (raw.max_sessions === undefined) s.max_sessions = DEFAULT_SETTINGS.max_sessions
   else if (Number.isInteger(s.max_sessions) && s.max_sessions >= 0) s.max_sessions = Math.min(s.max_sessions, 64)
@@ -296,7 +306,7 @@ function privateGroup(gid) {
     const others = passwd.filter(f => f.length > 3 && Number(f[3]) === gid && f[0] !== me)
     if (passwd.some(f => f[0] === me)) ok = alone(local) && others.length === 0
     else if (gid === process.getuid() && others.length === 0 && local.every(f => f[0] === me)) {
-      const getent = ['/usr/bin/getent', '/bin/getent'].find(f => existsSync(f))
+      const getent = ['/usr/bin/getent', '/bin/getent', '/run/current-system/sw/bin/getent'].find(f => existsSync(f))
       if (getent) ok = alone(lines(execFileSync(getent, ['group', String(gid)], { encoding: 'utf8', timeout: 5000 })))
     }
   } catch {}
@@ -987,7 +997,7 @@ function pluginStateDir(name) {
   // (The plugin only accepts a custom folder that is this user's and that
   // others can't write to: the same rule here, or the two would disagree.)
   let custom = pluginEnv().SQUADRA_STATE_DIR
-  if (custom && isAbsolute(custom)) custom = privateChain(realOr(custom)) ? realOr(custom) : null
+  if (custom && isAbsolute(custom)) custom = privateChain(realNearest(custom)) ? realNearest(custom) : null
   else custom = null
   return join(custom ?? join(claudeHome(), 'channels', 'squadra'), name)
 }
@@ -1017,7 +1027,8 @@ async function prepareSession(s, settings) {
     if (top && withinById(cfg, top)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) is inside ${top}, like the session's folder: the Squadra plugin would ignore it. Move it, or open sessions in folders elsewhere`)
     // Nor one that isn't private, it or a folder above it (the plugin
     // ignores that too: the same rule).
-    if (!privateChain(join(cfg, 'channels', 'squadra'), cfg)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) must be a folder of this user that others can't write to, inside folders nobody else can change`)
+    const state = realNearest(join(cfg, 'channels', 'squadra'))
+    if (!privateChain(state, withinById(state, cfg) ? cfg : state)) throw new Error(`CLAUDE_CONFIG_DIR (${cfg}) must be a folder of this user that others can't write to, inside folders nobody else can change`)
   }
   // The secret the server reserved goes only to that server: the plugin
   // here must be configured for it (same origin), or the session isn't opened.
@@ -1532,9 +1543,12 @@ async function connect(creds) {
   }
   // The server answers every ping (25 s): nothing from it for 90 s means it
   // silently went away (network change, sleep, a stalled proxy).
-  // And a handshake that gets no answer in 30 s is given up (the socket's
-  // own wait is 300 s, one more left hanging per retry): its handlers go
-  // first, so closing it can't fire them, and a late open just closes it.
+  // And a handshake that gets no answer in 30 to 45 s (looked at every 15) is
+  // given up (the socket's own wait is 300 s, one more left hanging per retry):
+  // its handlers go first, so closing it can't fire them, and a late open just
+  // closes it. Node 22 doesn't let go of such a socket: after many of them this
+  // program ends with an error, for its service to start it again (the sessions stay).
+  let abandoned = 0
   setInterval(() => {
     if (ws?.readyState === 1 && Date.now() - lastFromServer > 90_000) dropConnection('nothing from the server for 90 seconds')
     if (ws?.readyState === 0 && settleNow && Date.now() - lastFromServer > 30_000) {
@@ -1542,6 +1556,7 @@ async function connect(creds) {
       sock.onmessage = sock.onerror = sock.onclose = null
       sock.onopen = () => { try { sock.close(1000) } catch {} }
       try { sock.close() } catch {}
+      if (++abandoned >= 20) die(`${abandoned} connections to the server were never answered: starting again to let go of them`, 1)
       settle({ code: 0, reason: 'the server did not answer the connection in 30 seconds' })
     }
   }, 15_000).unref()
@@ -1581,7 +1596,12 @@ async function connect(creds) {
     // here, unless this machine keeps its folders to itself.
     async folders(m) {
       if (!loadSettings().folders_from_dashboard) throw new Error(`this machine doesn't let the dashboard change its folders ("folders_from_dashboard": false): change them there with "squadra-host folders add <path>"`)
-      const list = changeFolders(m.action, m.path)
+      let list
+      try { list = changeFolders(m.action, m.path) } catch (err) {
+        if (!(err instanceof FolderRefused)) throw err
+        log(`folder refused from the dashboard: ${err.message}`)
+        throw new Error('that folder can\'t be allowed on this machine: it may not exist, not be a folder, or be off limits (this machine\'s squadra-host log says which; your whole home folder needs --allow-home)')
+      }
       log(`folder ${m.action === 'add' ? 'allowed' : 'removed'} from the dashboard: ${plain(m.path)}`)
       await pushInfo()
       return { folders: list }
@@ -1598,6 +1618,7 @@ async function connect(creds) {
     termMsgs.push(now)
     if (m.t === 'welcome') {
       diagnosed = false
+      abandoned = 0
       if (connectedAt) return // once per connection
       log(`connected to ${creds.server} as "${plain(m.host?.name).slice(0, 64)}"`); connectedAt = Date.now(); return pushInfo(true)
     }
@@ -1721,38 +1742,43 @@ async function connect(creds) {
       lastFromServer = Date.now()
       // The credential goes with the request (as a subprotocol): the server
       // accepts no socket it can't authenticate first.
-      try { ws = new WebSocket(wsUrl(creds.server), ['squadra', `auth.${credential}`]) } catch (err) { return resolveClose({ code: 0, reason: err.message }) }
-      ws.onopen = async () => {
+      // (Each handler with its own socket: one given up on can still fire late,
+      // when "ws" is already the next one.)
+      let mine
+      try { mine = ws = new WebSocket(wsUrl(creds.server), ['squadra', `auth.${credential}`]) } catch (err) { return resolveClose({ code: 0, reason: err.message }) }
+      mine.onopen = async () => {
         // A server that doesn't speak this protocol (older than this program).
-        if (ws.protocol !== 'squadra') { try { ws.close(1000) } catch {} ; return resolveClose({ code: 0, reason: 'the server is older than this squadra-host: update the server' }) }
+        if (mine.protocol !== 'squadra') { try { mine.close(1000) } catch {} ; return resolveClose({ code: 0, reason: 'the server is older than this squadra-host: update the server' }) }
         // A small hello: the full info follows the server's welcome.
         send({ t: 'hello', id: creds.id })
       }
       const thisLink = link
-      ws.onmessage = ev => {
+      mine.onmessage = ev => {
+        if (mine !== ws) return
         lastFromServer = Date.now()
         // Nothing the server legitimately sends is this big (once encrypted, a third more).
-        if (typeof ev.data !== 'string' || ev.data.length > (thisLink ? 1.5 : 1) * 1024 * 1024) { try { ws.close(4009, 'message too big') } catch {} ; return }
+        if (typeof ev.data !== 'string' || ev.data.length > (thisLink ? 1.5 : 1) * 1024 * 1024) { try { mine.close(4009, 'message too big') } catch {} ; return }
         const text = thisLink ? thisLink.open(ev.data) : ev.data
         // Changed, repeated or dropped on the way: this connection can't be trusted any more.
-        if (text === null) { log('⚠️  a message from the server does not check: reconnecting'); try { ws.close(4003, 'a message that does not check') } catch {} ; return }
+        if (text === null) { log('⚠️  a message from the server does not check: reconnecting'); try { mine.close(4003, 'a message that does not check') } catch {} ; return }
         let m
         try { m = JSON.parse(text) } catch { return }
         onMessage(m).catch(err => log(`${plain(m?.t)}: ${err.message}`))
       }
-      ws.onerror = ev => {
-        const sock = ws
-        sock.onerror = null // (closing it fires "error" again)
-        const opened = sock.readyState === 1 || sock.readyState === 2
+      // (From Node 24 "close" follows the "error": it waits for what is being asked.)
+      let diagnosing = false
+      mine.onerror = ev => {
+        mine.onerror = null // (closing it fires "error" again)
+        const opened = mine.readyState === 1 || mine.readyState === 2
         const reason = ev?.message ?? ev?.error?.message ?? 'could not connect'
-        try { sock.close() } catch {}
+        try { mine.close() } catch {}
         // The handshake failed: WebSocket doesn't say why, so the server is
         // asked plainly once (per run of failures) to tell what's wrong.
         if (opened || diagnosed) return resolveClose({ code: 0, reason })
-        diagnosed = true
+        diagnosed = diagnosing = true
         diagnose(creds.server).then(why => resolveClose({ code: 0, reason: why ?? reason }), () => resolveClose({ code: 0, reason }))
       }
-      ws.onclose = ev => resolveClose({ code: ev.code, reason: ev.reason })
+      mine.onclose = ev => { if (!diagnosing) resolveClose({ code: ev.code, reason: ev.reason }) }
     })
     for (const v of viewers.values()) v.close()
     viewers.clear()
@@ -1778,7 +1804,7 @@ async function diagnose(server) {
     const j = await res.json().catch(() => null)
     const v = typeof j?.version === 'string' ? j.version : null
     if (v && olderVersion(v, VERSION)) return `the server is version ${plain(v)}, older than this squadra-host (${VERSION}): update the server`
-    return `the server is up${v ? ` (version ${plain(v)})` : ''} but refused the connection (is this machine still enrolled there?)`
+    return `the server is up${v ? ` (version ${plain(v)})` : ''} but refused the connection (it may be limiting connections, or this machine may no longer be enrolled there)`
   } catch (err) {
     const c = err?.cause
     return `cannot reach the server: ${plain(c?.code ?? '')} ${plain(c?.message ?? err?.message ?? '')}`.trim()
@@ -1836,7 +1862,7 @@ function checkScheme(server, insecure) {
   if (u.protocol !== 'https:' && u.protocol !== 'http:') die('the server URL must start with https:// (or http:// on this machine)', 2)
   const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(u.hostname)
   if (u.protocol === 'http:' && !loopback && !insecure) {
-    die(`refusing plain http to ${u.host}: credentials and terminals would travel unencrypted. Use https, or add --insecure if this is a trusted private network.`, 2)
+    die(`refusing plain http to ${u.host}: credentials and terminals would travel unencrypted. Use https. On a trusted private network: enroll with --insecure, or, for a machine already enrolled, add "insecure": true to ${CREDENTIALS_FILE}.`, 2)
   }
 }
 
@@ -2032,10 +2058,15 @@ function rawSettings() {
 
 // Add or remove an allowed folder (from this machine, or from the dashboard).
 // "~" and "~/…" are the home folder. Returns the folders now allowed.
+// What depends on the disk (FolderRefused) is told in full here, and only as a
+// refusal to the dashboard: whoever controls the server can't probe what exists.
+class FolderRefused extends Error {}
+const MAX_FOLDERS = 50
 function changeFolders(action, path) {
   if (action !== 'add' && action !== 'remove') throw new Error('the action must be add or remove')
   if (typeof path !== 'string' || !path.trim() || path.length > 4096) throw new Error('a folder path is needed')
-  path = path.trim()
+  // (Spaces around it are a slip, unless they are in the name of an allowed folder.)
+  if (!rawSettings().folders.includes(path)) path = path.trim()
   if (/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(path)) throw new Error('the path contains control characters')
   if (path === '~' || path.startsWith('~/')) path = join(HOME, path.slice(1))
   if (!isAbsolute(path)) throw new Error(`${plain(path)} is not an absolute path (start it with / or ~/)`)
@@ -2045,11 +2076,14 @@ function changeFolders(action, path) {
     if (/[#;]/.test(abs)) throw new Error('folders with # or ; in their path cannot be used')
     let st = null
     try { st = statSync(abs) } catch {}
-    if (!st) throw new Error(`${plain(abs)} does not exist on this machine`)
-    if (!st.isDirectory()) throw new Error(`${plain(abs)} is not a folder`)
+    if (!st) throw new FolderRefused(`${plain(abs)} does not exist on this machine`)
+    if (!st.isDirectory()) throw new FolderRefused(`${plain(abs)} is not a folder`)
     const why = forbiddenFolder(realOr(abs), { allowHome: s.allow_home === true })
-    if (why) throw new Error(`${plain(abs)} can't be allowed: it is ${why}`)
-    if (!s.folders.includes(abs)) s.folders.push(abs)
+    if (why) throw new FolderRefused(`${plain(abs)} can't be allowed: it is ${why}`)
+    if (!s.folders.includes(abs)) {
+      if (s.folders.length >= MAX_FOLDERS) throw new Error(`at most ${MAX_FOLDERS} folders: remove one first`)
+      s.folders.push(abs)
+    }
   } else {
     const before = s.folders.length
     s.folders = s.folders.filter(f => f !== abs && resolve(f) !== abs)
@@ -2135,7 +2169,8 @@ RestartSec=5
 # (Stopping or restarting it leaves the sessions it opened running: tmux
 # started from here would otherwise be stopped along with it.)
 KillMode=process
-# (2: not enrolled, or refused for good: starting it again won't help.)
+# (2: not enrolled, or what it needs is missing: starting it again won't help.
+# Refused for good by the server, it ends with 0.)
 RestartPreventExitStatus=2
 ${serviceEnv().map(([k, v]) => `Environment=${sdEnv(`${k}=${v}`)}`).join('\n')}
 
@@ -2247,11 +2282,16 @@ function runningInstance() {
   try { cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8') } catch {
     try { cmd = execFileSync(systemTool('ps') ?? '/bin/ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 5000 }) } catch {}
   }
-  return cmd.includes('squadra-host') ? pid : null
+  // (Only this program itself, not anything with the name in its arguments:
+  // an editor on this file, a tail of its log.)
+  const args = cmd.includes('\0') ? cmd.split('\0') : cmd.trim().split(/\s+/)
+  return /(^|\/)node[^/]*$/.test(args[0] ?? '') && /squadra-host[^/]*\.mjs$/.test(args[1] ?? '') ? pid : null
 }
 function claimInstance() {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 })
+  // (One left behind was already judged: only a race with another start is lost here.)
+  rmSync(PID_FILE, { force: true })
+  try { writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600, flag: 'wx' }) } catch { die('another squadra-host is starting on this machine: nothing to do', 2) }
   const release = () => { try { if (readFileSync(PID_FILE, 'utf8').trim() === String(process.pid)) rmSync(PID_FILE, { force: true }) } catch {} }
   process.on('exit', release)
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { release(); process.exit(0) })
@@ -2375,9 +2415,9 @@ async function main() {
     process.stdout.write(JSON.stringify({ server: creds?.server ?? null, running: runningInstance() ? { pid: runningInstance() } : false, service: existsSync(serviceFile().path) ? serviceFile().path : null, settings: loadSettings(), terminals: await listTerminals() }, null, 2) + '\n')
     return
   }
-  if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`)
+  if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`, 2)
   const tv = await tmuxVersion()
-  if (tv && (tv.major < 3 || (tv.major === 3 && tv.minor < 2))) die(`${tv.text} is too old: squadra-host needs tmux 3.2 or newer`)
+  if (tv && (tv.major < 3 || (tv.major === 3 && tv.minor < 2))) die(`${tv.text} is too old: squadra-host needs tmux 3.2 or newer`, 2)
   CLAUDE_VERSION = claudeCode.programOrNull() ? await claudeCode.version(claudeCode.programOrNull()) : null
   if (cmd === 'plugin') {
     try { const st = await claudeCode.plugin.ensure({ update: true }); return log(`Squadra plugin ${st.version ?? ''} is installed and up to date. Restart open sessions to use a new version.`) }
@@ -2390,10 +2430,12 @@ async function main() {
   else if (cmd !== 'run') die(`unknown command "${plain(cmd)}"\n\n${USAGE}`, 2)
   {
     const other = runningInstance()
-    if (other) die(`squadra-host is already running on this machine (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`)
+    if (other) die(`squadra-host is already running on this machine (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`, 2)
     claimInstance()
   }
-  const creds = readJson(CREDENTIALS_FILE, null)
+  // (Exit 2 is "not enrolled", for good. A file that can't be read just now is not that.)
+  let creds = null
+  try { creds = JSON.parse(readFileSync(CREDENTIALS_FILE, 'utf8')) } catch (err) { if (err.code !== 'ENOENT') die(`cannot read ${CREDENTIALS_FILE}: ${err.message}`, 1) }
   if (creds?.server) checkScheme(creds.server, creds.insecure === true)
   if (creds?.insecure) claudeCode.plugin.acceptPlainHttp(creds.server)
   if (!creds?.server || !creds?.secret) die(`this machine is not enrolled yet. In the dashboard, open Machines → + Add machine and run the command it shows.\n\n${USAGE}`, 2)
