@@ -20,3 +20,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Only Playwright, for the dashboard's tests: nothing from npm is shipped.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly

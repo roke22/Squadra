@@ -784,7 +784,7 @@ test('preparing a release: the version everywhere, signed, or nothing changes', 
   const { createPublicKey, verify } = await import('node:crypto')
   const { cpSync } = await import('node:fs')
   const dir = mkdtempSync(join(tmpdir(), 'squadra-release-'))
-  const files = ['scripts', 'package.json', 'server/package.json', 'plugins/squadra/package.json', 'plugins/squadra/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'host/squadra-host.mjs', '.github/ISSUE_TEMPLATE/bug_report.yml', 'README.md', 'README-es.md']
+  const files = ['scripts', 'package.json', 'package-lock.json', 'server/package.json', 'plugins/squadra/package.json', 'plugins/squadra/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'host/squadra-host.mjs', '.github/ISSUE_TEMPLATE/bug_report.yml', 'README.md', 'README-es.md']
   for (const f of files) cpSync(join(ROOT, f), join(dir, f), { recursive: true })
   mkdirSync(join(dir, 'docs'))
   writeFileSync(join(dir, 'docs/reference.md'), `· v${VERSION}</p>\n`); writeFileSync(join(dir, 'docs/referencia.md'), `· v${VERSION}</p>\n`)

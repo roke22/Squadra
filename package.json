@@ -9,11 +9,15 @@
   },
   "scripts": {
     "server": "node server/server.js",
-    "test": "node --test test/e2e.test.mjs test/host.test.mjs test/security.test.mjs test/upgrade.test.mjs"
+    "test": "node --test test/modules.test.mjs test/e2e.test.mjs test/host.test.mjs test/security.test.mjs test/upgrade.test.mjs",
+    "test:ui": "playwright test -c test/ui/playwright.config.mjs"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/roke22/Squadra.git"
   },
-  "homepage": "https://github.com/roke22/Squadra"
+  "homepage": "https://github.com/roke22/Squadra",
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
 }

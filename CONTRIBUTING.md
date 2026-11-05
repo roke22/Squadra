@@ -13,10 +13,20 @@ Thanks for helping. Squadra is small on purpose: one Node.js server with no depe
 ```bash
 git clone https://github.com/roke22/Squadra.git squadra && cd squadra
 node server/server.js            # dashboard at http://127.0.0.1:7787
-npm test                         # end-to-end, host, security and upgrade tests (needs tmux)
+npm test                         # module rules, end-to-end, host, security and upgrade tests (needs tmux)
+npm install && npm run test:ui   # the dashboard in a browser (uses your Chrome)
 ```
 
-Node 22.13 or newer. The tests run on Linux and macOS in CI; Windows is supported through WSL.
+Node 22.13 or newer. The tests run on Linux and macOS in CI; Windows is supported through WSL. `npm install` only brings Playwright, for `test:ui`: the server, the plugin and `squadra-host` need nothing from npm. With another browser, set `PLAYWRIGHT_CHANNEL`, or run `npx playwright install chromium` and set `CI=1`.
+
+## How the code is divided
+
+The server and the plugin are being split into modules by subject (`server/messaging/`, `plugins/squadra/core/`…). `test/modules.test.mjs` holds the list and checks the rules on every `npm test`:
+
+- A module uses another only through its `index.js`, and only if the list allows it. Dependencies go one way, with no circles.
+- A new folder has to be added to the list, with what it may use.
+- `plugins/squadra/core/` is what any agent could reuse: it doesn't use `plugins/squadra/claude/`.
+- `host/squadra-host.mjs` stays a single file, because that is what machines download and verify.
 
 ## Pull requests
 

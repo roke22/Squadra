@@ -42,7 +42,17 @@ const currentVersion = () => JSON.parse(read('package.json')).version
 const parts = v => v.split('.').map(Number)
 const compareVersions = (a, b) => { const [x, y] = [parts(a), parts(b)]; return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] }
 const signTool = (...args) => execFileSync(process.execPath, [join(ROOT, 'scripts/release-sign.mjs'), ...args], { stdio: ['ignore', 'inherit', 'inherit'] })
-const spotsOff = version => SPOTS.filter(([file, text]) => times(read(file), text(version)) !== 1).map(([file]) => file)
+// (The lockfile says it twice, and only as JSON tells which ones are ours.)
+const lockSays = version => { const l = JSON.parse(read('package-lock.json')); return l.version === version && l.packages[''].version === version }
+const setLockVersion = version => {
+  const l = JSON.parse(read('package-lock.json'))
+  l.version = l.packages[''].version = version
+  writeFileSync(join(ROOT, 'package-lock.json'), `${JSON.stringify(l, null, 2)}\n`)
+}
+const spotsOff = version => [
+  ...SPOTS.filter(([file, text]) => times(read(file), text(version)) !== 1).map(([file]) => file),
+  ...(lockSays(version) ? [] : ['package-lock.json']),
+]
 
 function tagExists(tag) {
   try {
@@ -81,6 +91,7 @@ function prepare(version, keyFile = DEFAULT_KEY, previousKeyFile) {
   try { signTool(...signArgs) } catch { process.exit(1) }
   if (order > 0) {
     for (const [file, text] of SPOTS) writeFileSync(join(ROOT, file), read(file).replace(text(current), text(version)))
+    setLockVersion(version)
     signTool(...signArgs)
   }
   check()

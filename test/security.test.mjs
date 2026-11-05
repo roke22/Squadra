@@ -534,6 +534,8 @@ test('release: every version string matches', () => {
   assert.ok(JSON.parse(read('.claude-plugin/marketplace.json')).plugins.every(x => x.version === v), 'marketplace.json')
   assert.match(read('host/squadra-host.mjs'), new RegExp(`const VERSION = '${v.replace(/\./g, '\\.')}'`))
   for (const p of ['README.md', 'README-es.md']) assert.ok(read(p).includes(`· v${v}<`), p)
+  const lock = JSON.parse(read('package-lock.json'))
+  assert.deepEqual([lock.version, lock.packages[''].version], [v, v], 'package-lock.json')
 })
 
 test('sixteenth audit: a request whose body arrives after a disconnect does nothing; slow bodies are capped per session', async () => {
