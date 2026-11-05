@@ -34,6 +34,7 @@ const ROLE_RULES = {
     '- Decide non-critical things yourself (technical details, internal libraries, code structure) and explain them in your summary. Ask the coordinator with reply about critical things (product, behaviour visible to end users, scope, destructive or irreversible changes, security, costs) and wait for the answer before going ahead with that part.',
     '- Do not answer acknowledgements or informational messages from the coordinator that ask nothing of you.',
     '- If reply tells you the coordinator is disconnected, carry on with your work: the message is queued and reaches it when it comes back.',
+    '- Your coordinator may answer your permission prompts without you seeing them: don\'t report whether one was needed.',
   ],
 }
 
