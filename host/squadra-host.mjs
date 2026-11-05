@@ -2105,7 +2105,7 @@ function serviceFile() {
   if (platform() === 'darwin') {
     const logFile = join(HOME, 'Library', 'Logs', 'squadra-host.log')
     const x = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    return { path: LAUNCHD_PLIST, text: `<?xml version="1.0" encoding="UTF-8"?>
+    return { path: LAUNCHD_PLIST, script: x(INSTALLED_SCRIPT), text: `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Written by squadra-host. Log: ${x(logFile)} -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -2123,7 +2123,7 @@ function serviceFile() {
 </plist>
 ` }
   }
-  return { path: SYSTEMD_UNIT, text: `# Written by squadra-host.
+  return { path: SYSTEMD_UNIT, script: sd(INSTALLED_SCRIPT), text: `# Written by squadra-host.
 [Unit]
 Description=Squadra host
 After=network-online.target
@@ -2196,8 +2196,17 @@ async function removeService() {
   if (systemctl) await run(systemctl, [...userFlag, 'daemon-reload'], { timeout: 30_000 }).catch(() => {})
 }
 
+// The service on this machine, if it runs another copy of this program (one
+// with its own SQUADRA_HOST_DIR, say). There is only one: it isn't ours to change.
+function someoneElsesService() {
+  const f = serviceFile()
+  try { return readFileSync(f.path, 'utf8').includes(f.script) ? null : f.path } catch { return null }
+}
+
 async function service(action) {
   if (action === 'print') return process.stdout.write(serviceFile().text)
+  const other = someoneElsesService()
+  if (other) die(`the service on this machine (${other}) runs another squadra-host, from another configuration folder: nothing was changed. Run this from that one (with its SQUADRA_HOST_DIR), or delete that file to use this one`, 2)
   if (action === 'remove') { await removeService(); return log('service removed: squadra-host no longer starts by itself (run it with: squadra-host)') }
   if (action && action !== 'install') die(`service ${plain(action)}: use "service", "service remove" or "service print"`, 2)
   const r = await installService()
@@ -2287,16 +2296,28 @@ async function update({ allowUnsigned = false, allowDowngrade = false } = {}) {
   if (!v) die('the server did not send squadra-host: nothing was changed')
   if (olderVersion(v, VERSION) && !allowDowngrade) die(`the server has squadra-host ${plain(v)}, older than this one (${VERSION}): nothing was changed. If you did mean to go back, run: squadra-host update --allow-downgrade`)
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-  const tmp = `${INSTALLED_SCRIPT}.${process.pid}.tmp`
+  // (.mjs: what is checked is read as what it will run as.)
+  const tmp = `${INSTALLED_SCRIPT}.${process.pid}.tmp.mjs`
   writeFileSync(tmp, body, { mode: 0o600, flag: 'wx' })
+  try { execFileSync(process.execPath, ['--check', tmp], { stdio: 'ignore', timeout: 60_000 }) } catch {
+    rmSync(tmp, { force: true })
+    die('what the server sent is not a program that can run: nothing was changed')
+  }
+  // The copy this replaces stays next to it, to go back to.
+  const backup = `${INSTALLED_SCRIPT}.bak`
+  if (existsSync(INSTALLED_SCRIPT)) copyFileSync(INSTALLED_SCRIPT, backup)
   renameSync(tmp, INSTALLED_SCRIPT)
   log(v === VERSION ? `squadra-host ${v} is the server's version` : `squadra-host updated: ${VERSION} → ${plain(v)}`)
   // (The new copy does the rest: its plugin version, its service file.)
-  const again = args => { try { execFileSync(process.execPath, [INSTALLED_SCRIPT, ...args], { stdio: 'inherit', timeout: 600_000 }) } catch {} }
+  const failed = []
+  const again = args => { try { execFileSync(process.execPath, [INSTALLED_SCRIPT, ...args], { stdio: 'inherit', timeout: 600_000 }) } catch { failed.push(args[0]) } }
   again(['plugin'])
-  if (existsSync(serviceFile().path)) again(['service'])
+  const other = someoneElsesService()
+  if (other) log(`the service on this machine (${other}) runs another squadra-host: left as it is`)
+  else if (existsSync(serviceFile().path)) again(['service'])
   else if (runningInstance()) log('restart squadra-host to use the new version')
   try { installLauncher() } catch {}
+  if (failed.length) die(`the update is installed, but this step failed: ${failed.join(', ')}. Run "squadra-host ${failed[0]}" to try again${existsSync(backup) ? `; the previous program is in ${backup}` : ''}`)
 }
 
 // settings.json written by an older version: what were only its defaults

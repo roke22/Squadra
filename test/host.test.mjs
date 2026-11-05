@@ -853,11 +853,37 @@ test('update: only a signed release, and not an older one', async t => {
   served.body = release('0.0.2'); served.sig = signed(served.body)
   r = await update('--allow-downgrade')
   assert.equal(r.ok, true, r.text); assert.ok(has('0.0.2'))
+  // The copy it replaced stays next to it.
+  assert.ok(readFileSync(`${installed}.bak`, 'utf8').includes(`'9.9.10'`))
+  // Signed, but it can't run: nothing changes, and nothing is left behind.
+  served.body = Buffer.from(`const VERSION = '9.9.11'\nnot a program (\n`); served.sig = signed(served.body)
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /not a program that can run/); assert.ok(has('0.0.2'))
+  assert.deepEqual(readdirSync(hostHome).filter(f => f.includes('.tmp')), [])
+  // A step after it fails: said, and the update doesn't pass for finished.
+  served.body = Buffer.from(`const VERSION = '9.9.12'\nprocess.exit(3)\n`); served.sig = signed(served.body)
+  r = await update()
+  assert.equal(r.ok, false); assert.match(r.text, /this step failed: plugin/); assert.ok(has('9.9.12'))
   // A copy with no key has nothing to check with.
   writeFileSync(program, copyWith(''))
   served.body = newer; served.sig = signed(newer)
   r = await update()
   assert.equal(r.ok, false); assert.match(r.text, /no release key/)
+})
+
+test('the service of another configuration folder is left alone', { skip: (process.platform !== 'linux' || process.getuid() === 0) && 'a user service on Linux' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-service-'))
+  const unit = join(dir, 'xdg', 'systemd', 'user', 'squadra-host.service')
+  mkdirSync(dirname(unit), { recursive: true })
+  writeFileSync(unit, 'ExecStart=/usr/bin/node /elsewhere/squadra-host.mjs\n')
+  const env = { ...process.env, SQUADRA_HOST_DIR: join(dir, 'host'), XDG_CONFIG_HOME: join(dir, 'xdg') }
+  for (const args of [['service'], ['service', 'remove']]) {
+    let failed = null
+    try { execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (err) { failed = err }
+    assert.equal(failed?.status, 2, args.join(' '))
+    assert.match(failed.stderr, /runs another squadra-host/)
+    assert.equal(readFileSync(unit, 'utf8'), 'ExecStart=/usr/bin/node /elsewhere/squadra-host.mjs\n')
+  }
 })
 
 test('preparing a release: the version everywhere, signed, or nothing changes', async () => {

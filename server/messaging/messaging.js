@@ -17,6 +17,7 @@ export function createMessaging(platform, { sessions }) {
   const MAX_FILE_BYTES = 50 * 1024 * 1024    // 50 MB
   const UPLOAD_BUDGET_BYTES = 500 * 1024 * 1024 // per identity per hour
   const MAX_FILES_BYTES = Number(process.env.SQUADRA_MAX_FILES_GB ?? 10) * 1024 ** 3 // attachments kept, in all
+  const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // an invitation to a group nobody used
   const MAX_MESSAGES = Number(process.env.SQUADRA_MAX_MESSAGES ?? 2_000_000)   // messages kept, in all
   const FILE_TTL_MS = 7 * 24 * 60 * 60 * 1000
   const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -355,6 +356,8 @@ export function createMessaging(platform, { sessions }) {
       if (!GROUP_RE.test(id)) throw bad('chat_id must be a group (#name)')
       if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(id, name)) throw bad('not a member of that group')
       db.prepare('DELETE FROM group_members WHERE group_id = ? AND name = ?').run(id, name)
+      // (Whoever left can't keep bringing others in.)
+      db.prepare('DELETE FROM group_invites WHERE group_id = ? AND invited_by = ?').run(id, name)
       // The last one out closes the group (it can be created again from scratch).
       if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ?').get(id)) closeGroup(id)
       else handOverGroup(id, name)
@@ -468,6 +471,7 @@ export function createMessaging(platform, { sessions }) {
     const t = now()
     // Groups nobody is in (left behind by older versions) are closed.
     for (const g of db.prepare('SELECT id FROM groups WHERE NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = groups.id)').all()) closeGroup(g.id)
+    db.prepare('DELETE FROM group_invites WHERE created_at < ?').run(t - INVITE_TTL_MS)
     for (const f of db.prepare('SELECT file_id, path FROM files WHERE created_at < ?').all(t - FILE_TTL_MS)) {
       try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
       db.prepare('DELETE FROM files WHERE file_id = ?').run(f.file_id)
