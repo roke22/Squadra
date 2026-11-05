@@ -16,10 +16,9 @@ RUN apt-get update \
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force
 
 WORKDIR /app
-COPY server/server.js server/acme.js server/ws.js server/ui.html server/package.json ./
+COPY server ./
 COPY host/squadra-host.mjs* ./
 COPY install ./install
-COPY server/vendor ./vendor
 # The plugin from this repository, as a local marketplace (not a published
 # release), with an id of its contents to reinstall it when the image changes.
 COPY .claude-plugin /opt/squadra/.claude-plugin

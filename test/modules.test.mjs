@@ -16,9 +16,9 @@ const SERVER_MODULES = {
   platform: [],
   sessions: ['platform'],
   messaging: ['platform', 'sessions'],
-  observation: ['platform', 'sessions'],
-  machines: ['platform', 'sessions', 'messaging', 'observation'],
-  organization: ['platform', 'sessions', 'machines'],
+  observation: ['platform'],
+  machines: ['platform', 'sessions', 'observation'],
+  organization: ['platform', 'sessions', 'messaging', 'observation', 'machines'],
   dashboard: ['platform', 'sessions', 'messaging', 'observation', 'machines', 'organization'],
   ui: [],
 }
@@ -57,6 +57,15 @@ function violations(files, programs = PROGRAMS) {
     const from = moduleOf(program, file)
     if (from && !Object.hasOwn(program.modules, from) && !program.otherFolders.includes(from)) {
       out.push(`${file}: "${program.dir}/${from}" is not a known module: add it, with what it may use, to test/modules.test.mjs`)
+    }
+    // A module gets the ones below it as arguments (see server/server.js):
+    // the same rule, for what it asks for.
+    if (from) {
+      for (const m of source.matchAll(/function create\w+\(\s*\w+\s*,\s*\{([^}]*)\}/g)) {
+        for (const asked of m[1].split(',').map(x => x.trim()).filter(Boolean)) {
+          if (Object.hasOwn(program.modules, asked) && !program.modules[from]?.includes(asked)) out.push(`${file}: module "${from}" may not use "${asked}"`)
+        }
+      }
     }
     for (const imp of importsOf(source)) {
       if (imp.dynamic !== undefined) { out.push(`${file}: import(${imp.dynamic}) can't be checked: import a literal path`); continue }
@@ -107,6 +116,8 @@ test('modules: only along the arrows, and never in a circle', () => {
   for (const [name, uses] of Object.entries(SERVER_MODULES)) {
     for (const u of uses) assert.ok(!SERVER_MODULES[u].includes(name), `${name} and ${u} use each other`)
   }
+  const asked = { 'server/sessions/x.js': `export function createSessions(platform, { messaging }) {}` }
+  assert.match(violations(asked).join(), /"sessions" may not use "messaging"/)
   const claude = { 'plugins/squadra/core/x.js': `import('../claude/index.js')` }
   assert.match(violations(claude).join(), /"core" may not use "claude"/)
 })

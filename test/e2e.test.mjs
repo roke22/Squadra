@@ -1996,7 +1996,7 @@ test('signed messages: the first contact is taken on trust, and a later change o
 
 test('signing: it ignores exactly what the server may remove from a text', () => {
   const rx = file => /(?:UNSAFE_CHARS|INVISIBLE) = (\/.*\/gu)$/m.exec(readFileSync(join(ROOT, file), 'utf8'))[1]
-  assert.equal(rx('plugins/squadra/signing.js'), rx('server/server.js'))
+  assert.equal(rx('plugins/squadra/signing.js'), rx('server/platform/text.js'))
 })
 
 test('signing: text that only differs in what the server removes still verifies', async () => {
