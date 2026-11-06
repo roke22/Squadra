@@ -563,17 +563,19 @@ test('plugin: a name belongs to the first active session', async () => {
 test('plugin: full coordinator/worker flow', async () => {
   // Scripted launch: SQUADRA_NAME logs in automatically.
   const coord = new Plugin('coord', { SQUADRA_ROLE: 'coordinator', SQUADRA_ASSUME_CHANNEL: '1' })
-  const w1 = new Plugin('w1', { SQUADRA_ACCESS_MODE: 'static', SQUADRA_ALLOW_FROM: 'coord', SQUADRA_ASSUME_CHANNEL: '1' })
 
   const ci = await coord.init()
   assert.deepEqual(ci.capabilities.experimental, { 'claude/channel': {}, 'claude/channel/permission': {} })
   assert.match(ci.instructions, /Do NOT answer them/)
   assert.notEqual(ci.protocolVersion, '2026-07-28')
+  // (The worker once its coordinator exists: its greeting, which the reminder
+  // below relies on, is sent once, and goes nowhere before that.)
+  await coord.waitConnected()
+  const w1 = new Plugin('w1', { SQUADRA_ACCESS_MODE: 'static', SQUADRA_ALLOW_FROM: 'coord', SQUADRA_ASSUME_CHANNEL: '1' })
   const wi = await w1.init()
   // Opened from the dashboard, no user has said anything to it: it must still know its tasks are wanted.
   assert.match(wi.instructions, /opening it from the dashboard, so the coordinator's tasks are the work the user wants done: start on them without asking the user to confirm them/)
   assert.match(wi.instructions, /permission prompts still apply/)
-  await coord.waitConnected()
   await w1.waitConnected()
 
   // 1. Worker introduces itself: coordinator is in pairing mode.
