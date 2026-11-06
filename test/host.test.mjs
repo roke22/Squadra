@@ -707,6 +707,16 @@ test('links between squads: a coordinator opens with the ones the dashboard set,
   assert.match(refused.description, /only accepts these coordinators/)
   writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
   assert.ok((await dash('links/delete', { a: 'lk1', b: 'lk2' })).ok)
+  // Settings that can't be read are no pin at all: they refuse everyone.
+  for (const broken of ['not json', '[]']) {
+    writeFileSync(join(hostDir, 'settings.json'), broken)
+    const r = await dash('links/add', { a: 'lk1', b: 'lk2' })
+    assert.ok(r.ok, r.description)
+    assert.ok(r.result.warnings.some(w => /^lk2: this machine only accepts these coordinators/.test(w)), JSON.stringify(r.result.warnings))
+    assert.deepEqual(linksOf('lk2'), { name: 'lk2', coordinators: [] })
+    assert.ok((await dash('links/delete', { a: 'lk1', b: 'lk2' })).ok)
+  }
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
   assert.ok((await dash('terminals/kill', { host: hostId, term: 'lk2' })).ok)
 })
 
@@ -775,6 +785,50 @@ test('fresh start: a coordinator has its idle worker\'s context cleared before a
     assert.ok(!screen(name).includes('GOT:/clear'), screen(name))
     assert.ok((await dash('terminals/kill', { host: hostId, term: name })).ok)
   }
+})
+
+test('a copy of squadra-host keeps to its own sessions, and what is open stays out of the next server unless asked', { skip: !hasTmux && 'tmux not installed' }, () => {
+  const script = join(ROOT, 'host/squadra-host.mjs')
+  const dir = join(work, 'copy-a')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const base = { ...process.env, SQUADRA_HOST_TEST_ALLOW_TMP: '1', CLAUDE_CONFIG_DIR: claudeDir }
+  delete base.SQUADRA_TMUX_SOCKET
+  const status = env => JSON.parse(execFileSync(process.execPath, [script, 'status'], { env: { ...base, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
+  // A setup of its own has a tmux server of its own.
+  const [a, b] = [status({ SQUADRA_HOST_DIR: dir }), status({ SQUADRA_HOST_DIR: join(work, 'copy-b') })]
+  assert.match(a.tmux_socket, /^squadra-[0-9a-f]{12}$/)
+  assert.notEqual(a.tmux_socket, b.tmux_socket)
+  // Sharing one by hand: each with its own sessions, and none from before there were marks.
+  const socket = `${SOCKET}-shared`
+  const env = { ...base, SQUADRA_HOST_DIR: dir, SQUADRA_TMUX_SOCKET: socket }
+  const tmux = (...args) => execFileSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+  const open = (name, owner) => {
+    tmux('new-session', '-d', '-s', `sq-${name}`, 'sleep', '600')
+    if (owner) tmux('set-option', '-t', `=sq-${name}:`, '@squadra', JSON.stringify({ owner, role: 'worker' }))
+  }
+  const run = (...args) => spawnSync(process.execPath, [script, ...args], { env, encoding: 'utf8' })
+  try {
+    open('mine', a.owner)
+    open('theirs', 'someone-else')
+    open('unmarked')
+    // With sessions open, it doesn't leave...
+    let r = run('forget')
+    assert.equal(r.status, 2)
+    assert.match(r.stderr, /still open here \(mine\)/)
+    // ...and with no server yet, they don't go to the first one to come.
+    r = run('enroll', URL_, 'AAAA-BBBB')
+    assert.notEqual(r.status, 0)
+    assert.match(r.stderr, /open on this copy \(mine\).*nothing was done/)
+    // Asked for: closes its own, and only its own.
+    r = run('forget', '--close-sessions')
+    assert.equal(r.status, 0, r.stderr)
+    assert.match(r.stderr, /credential deleted/)
+    const left = tmux('list-sessions', '-F', '#{session_name}').trim().split('\n').sort()
+    assert.deepEqual(left, ['sq-theirs', 'sq-unmarked'])
+    // Nothing of its own open: enrolling goes on (to a code that isn't one).
+    r = run('enroll', URL_, 'AAAA-BBBB', '--no-plugin', '--no-service')
+    assert.doesNotMatch(r.stderr, /open on this copy/)
+  } finally { try { tmux('kill-server') } catch {} }
 })
 
 test('a worker opened with no coordinator named follows the default from the start: a new "coord" gives it no orders', { skip: !hasTmux && 'tmux not installed' }, async () => {

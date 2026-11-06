@@ -68,7 +68,12 @@ const HOST_KEY_FILE = join(CONFIG_DIR, 'host-key.json')
 const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json')
 const INSTALLED_SCRIPT = join(CONFIG_DIR, 'squadra-host.mjs')
 
-const TMUX_SOCKET = process.env.SQUADRA_TMUX_SOCKET ?? (COMPANY ? `squadra-${COMPANY}` : 'squadra')
+// A setup of its own (SQUADRA_HOST_DIR) has its own tmux server too. And each
+// copy marks its sessions: sharing a socket by hand, none takes another's.
+// (No mark: from before there were any, so the plain copy's on its plain socket.)
+const OWNER_TAG = createHash('sha256').update(CONFIG_DIR).digest('hex').slice(0, 12)
+const OWN_SETUP = process.env.SQUADRA_HOST_DIR != null || process.env.SQUADRA_TMUX_SOCKET != null
+const TMUX_SOCKET = process.env.SQUADRA_TMUX_SOCKET ?? `${COMPANY ? `squadra-${COMPANY}` : 'squadra'}${process.env.SQUADRA_HOST_DIR ? `-${OWNER_TAG}` : ''}`
 const PREFIX = 'sq-'
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const COMPACT_MIN = 50_000
@@ -240,17 +245,19 @@ function warnSettings(msg) {
   log(msg)
 }
 
+// Refuses every coordinator: in a list, no name can be this. (An empty list means no pin.)
+const NO_COORDINATOR = ['(invalid "coordinators" setting)']
 function loadSettings() {
   let raw = {}
   try { raw = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) } catch (err) {
     // Settings that exist but can't be read: the strictest ones, never the defaults.
     if (err.code !== 'ENOENT') {
       if (!loadSettings.warned) { loadSettings.warned = true; log(`⚠️  cannot read ${SETTINGS_FILE} (${err.message}): no folders, no typing, no permission relay until it is fixed`) }
-      return { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
+      return { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: NO_COORDINATOR }
     }
   }
   loadSettings.warned = false
-  const strict = { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: [] }
+  const strict = { ...DEFAULT_SETTINGS, folders: [], allow_input: false, permission_relay: false, allow_resume: false, allow_clear: false, allow_home: false, folders_from_dashboard: false, coordinators: NO_COORDINATOR }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     warnSettings(`⚠️  ${SETTINGS_FILE} must hold a JSON object: no folders, no typing, no permission relay until it is fixed`)
     return strict
@@ -280,7 +287,7 @@ function loadSettings() {
   else if (Array.isArray(s.coordinators) && s.coordinators.every(c => typeof c === 'string' && NAME_RE.test(c))) s.coordinators = [...s.coordinators]
   else {
     warnSettings(`⚠️  coordinators in ${SETTINGS_FILE} must be a list of session names: no coordinator is accepted until it is fixed`)
-    s.coordinators = ['(invalid "coordinators" setting)']
+    s.coordinators = NO_COORDINATOR
   }
   s.claude_command = typeof s.claude_command === 'string' && s.claude_command ? s.claude_command : 'claude'
   return s
@@ -595,6 +602,7 @@ async function listTerminals() {
     if (!tname?.startsWith(PREFIX) || !NAME_RE.test(tname.slice(PREFIX.length))) continue
     let spec = {}
     try { spec = JSON.parse(meta || '{}') } catch {}
+    if (spec.owner ? spec.owner !== OWNER_TAG : OWN_SETUP) continue
     list.push({
       id: tname.slice(PREFIX.length),
       name: tname.slice(PREFIX.length),
@@ -1287,7 +1295,7 @@ async function startSession(s, settings, claude, dir) {
   // simply run "tmux send-keys" into another session. (They run as the same
   // user, so this is a speed bump, not a wall: see the README.)
   const argv = ['/usr/bin/env', '-u', 'TMUX', '-u', 'TMUX_PANE', ...claudeCode.sessionCommand(s, claude, dir, env)]
-  const meta = JSON.stringify({ role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window, persona: s.personaInfo ? { id: s.personaInfo.id, kind: s.personaInfo.kind, name: s.personaInfo.name } : null })
+  const meta = JSON.stringify({ owner: OWNER_TAG, role: s.role, coordinator: s.coordinator, folder: s.folder, compact_window: s.compact_window, persona: s.personaInfo ? { id: s.personaInfo.id, kind: s.personaInfo.kind, name: s.personaInfo.name } : null })
   await tmux([
     'start-server', ';',
     'set-option', '-g', 'history-limit', '10000', ';',
@@ -1909,7 +1917,7 @@ const USAGE = `Usage: squadra-host [command] [options]
   squadra-host plugin                Install or update the Squadra plugin in Claude Code
   squadra-host service               Run in the background and start with the computer
                                      (service remove: stop doing that; service print: show the file)
-  squadra-host forget                Delete this machine's credential
+  squadra-host forget                Delete this machine's credential (with --close-sessions, if any are open)
   squadra-host --company=<id> ...    The same, for that company's copy on this machine (each has its own
                                      folder, tmux, Claude Code login and service)
   squadra-host enroll <server> --code-file=<file>  Join a Squadra server: the dashboard gives you this
@@ -2047,7 +2055,7 @@ function pinServerKeyForPlugin(server, key) {
 }
 
 // Returns true when it left squadra-host running in the background (service).
-async function enroll(server, code, { plugin = true, insecure = false, service = true, serverKey = null } = {}) {
+async function enroll(server, code, { plugin = true, insecure = false, service = true, serverKey = null, keepSessions = false } = {}) {
   if (!server || !code) die(`enroll needs the server URL and a code.\n\n${USAGE}`, 2)
   // (Before the code is spent: its secret could not be kept.)
   try { if (existsSync(CREDENTIALS_FILE)) accessSync(realOr(CREDENTIALS_FILE), FS.W_OK) } catch { die(`${CREDENTIALS_FILE} can't be written: nothing was done`, 2) }
@@ -2061,6 +2069,11 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   const heldBy = enrolled?.company ?? /^sh_([a-z0-9]{8})_/.exec(String(enrolled?.secret ?? ''))?.[1] ?? ''
   if (enrolled?.secret && heldBy !== COMPANY) die(`this copy of squadra-host already belongs to another company: nothing was done. To leave it first: ${cli()} forget`, 2)
   if (enrolled?.server && enrolled.server !== server) die(`this machine already belongs to ${plain(enrolled.server)}: nothing was done. To leave it first: ${cli()} forget`, 2)
+  // Sessions with no server here: they would appear in this one, as its own.
+  if (!enrolled?.secret && !keepSessions) {
+    const open = (await listTerminals()).map(t => t.id)
+    if (open.length) die(`sessions are open on this copy (${open.map(plain).join(', ')}) and they would go to ${plain(server)}, which can then read and type in them: nothing was done. Close them, or add --keep-sessions if that is what you want`, 2)
+  }
   // The dashboard's command says which server this should be: with it, nothing
   // here depends on who answers first.
   let proved = null
@@ -2534,7 +2547,7 @@ async function main() {
   migrateSettings()
   const flags = new Set(argv.filter(a => a.startsWith('--')))
   const [cmd = 'run', ...rest] = argv.filter(a => !a.startsWith('--'))
-  const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade']
+  const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade', '--close-sessions', '--keep-sessions']
   const serverKeyArg = argv.find(a => a.startsWith('--server-key='))?.slice('--server-key='.length)
   if (serverKeyArg !== undefined && !/^[0-9a-f]{64}$/.test(serverKeyArg)) die('--server-key must be the 64 hex characters the dashboard gives', 2)
   for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=') && !f.startsWith('--code-file=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
@@ -2548,10 +2561,20 @@ async function main() {
   if (cmd === 'folders') return folders(rest[0], rest[1])
   if (cmd === 'service') return service(rest[0])
   if (cmd === 'update') return update({ allowUnsigned: flags.has('--allow-unsigned'), allowDowngrade: flags.has('--allow-downgrade') })
-  if (cmd === 'forget') { rmSync(CREDENTIALS_FILE, { force: true }); return log('credential deleted') }
+  if (cmd === 'forget') {
+    // What is open here would go to whichever server this copy joins next.
+    const open = (await listTerminals()).map(t => t.id)
+    if (open.length && !flags.has('--close-sessions')) die(`sessions are still open here (${open.map(plain).join(', ')}): the next server this copy joins would get them. Close them first, or run: ${cli()} forget --close-sessions`, 2)
+    for (const id of open) await killTerminal(id)
+    rmSync(CREDENTIALS_FILE, { force: true })
+    log('credential deleted')
+    if (runningInstance()) log('squadra-host is still running with it, and stays connected until it is stopped')
+    if (loadSettings().folders.length) log(`the allowed folders stay in ${SETTINGS_FILE}: the next server gets them too`)
+    return
+  }
   if (cmd === 'status') {
     const creds = readJson(CREDENTIALS_FILE, null)
-    process.stdout.write(JSON.stringify({ server: creds?.server ?? null, ...(COMPANY ? { company: COMPANY } : {}), running: runningInstance() ? { pid: runningInstance() } : false, service: existsSync(serviceFile().path) ? serviceFile().path : null, settings: loadSettings(), terminals: await listTerminals() }, null, 2) + '\n')
+    process.stdout.write(JSON.stringify({ server: creds?.server ?? null, tmux_socket: TMUX_SOCKET, owner: OWNER_TAG, ...(COMPANY ? { company: COMPANY } : {}), running: runningInstance() ? { pid: runningInstance() } : false, service: existsSync(serviceFile().path) ? serviceFile().path : null, settings: loadSettings(), terminals: await listTerminals() }, null, 2) + '\n')
     return
   }
   if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`, 2)
@@ -2570,7 +2593,7 @@ async function main() {
     if (codeFile) {
       try { code = readFileSync(codeFile, 'utf8').trim(); rmSync(codeFile, { force: true }) } catch (err) { die(`--code-file: ${plain(err.message)}`, 2) }
     }
-    if (await enroll(rest[0], code, { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service'), serverKey: serverKeyArg ?? null })) return
+    if (await enroll(rest[0], code, { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service'), serverKey: serverKeyArg ?? null, keepSessions: flags.has('--keep-sessions') })) return
   }
   else if (cmd !== 'run') die(`unknown command "${plain(cmd)}"\n\n${USAGE}`, 2)
   {
