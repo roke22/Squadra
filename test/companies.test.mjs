@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { randomBytes } from 'node:crypto'
 import { serverNoticeIsGood } from '../plugins/squadra/signing.js'
 import { execFileSync } from 'node:child_process'
 
@@ -306,6 +307,27 @@ test('on a disk about to fill up, sessions can add nothing, and can still be del
     await new Promise(r => low.once('exit', r))
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('exports: the copy is not made on the thread that answers everyone, and one runs at a time in the server', async () => {
+  assert.doesNotMatch(readFileSync(join(ROOT, 'server/company-export.js'), 'utf8').split('const COPY_DATABASE')[0], /VACUUM/)
+  const [a, b] = [await newCompany('Export one'), await newCompany('Export two')]
+  // Enough that the answer doesn't fit in what the sockets hold while nobody reads it.
+  const direct = new DatabaseSync(join(dataDir, 'companies', a.id, 'squadra.db'))
+  direct.prepare('INSERT INTO events (session, ts, kind, data) VALUES (?, ?, ?, ?)').run('filler', Date.now(), 'status', randomBytes(15 * 1024 * 1024).toString('hex'))
+  direct.close()
+  const open = c => fetch(`${URL_}/${api(c, 'company/export')}`, { headers: { Authorization: `Bearer ${ADMIN}` } })
+  const first = await open(a)
+  assert.equal(first.status, 200)
+  // Other companies go on being answered, and a second export waits for its turn.
+  await read(b, 'state')
+  const second = await open(b)
+  assert.equal(second.status, 409)
+  await second.text()
+  assert.ok((await first.arrayBuffer()).byteLength > 1024 * 1024)
+  const again = await waitFor(async () => { const r = await open(b); if (r.status === 200) return r; await r.text(); return false }, { what: 'its turn' })
+  assert.ok((await again.arrayBuffer()).byteLength > 0)
+  assert.deepEqual(readdirSync(join(dataDir, 'companies', a.id)).filter(f => f.startsWith('export-')), [])
 })
 
 // A machine's end of the terminal link, and a dashboard's.

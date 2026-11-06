@@ -231,7 +231,8 @@ export function createCompanies(server) {
     'company/export': {
       role: 'owner', method: 'GET', streams: true,
       async run({ company, res }) {
-        if (exporting.has(company.id)) throw new ApiError(409, 'Conflict: an export of this company is under way')
+        // (One at a time in the whole server: it takes a disk and a processor.)
+        if (exporting.size) throw new ApiError(409, 'Conflict: an export is under way on this server; try again when it ends')
         if (!company.platform.allow('export', 'all', 5, 3600_000)) throw new ApiError(429, 'Too Many Requests: at most 5 exports an hour')
         exporting.add(company.id)
         try { await streamExport(company, { id: company.id, name: row(company.id).name, squadra: VERSION }, res) } finally { exporting.delete(company.id) }

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { Worker } from 'node:worker_threads'
 import { createGzip } from 'node:zlib'
 
 // A company as a .tar.gz: its database and its attachments, and what it is.
@@ -48,11 +49,28 @@ async function* tarOf(entries) {
   yield Buffer.alloc(BLOCK * 2)
 }
 
+// The copy in a thread of its own, with its own connection: on the one that
+// answers every company, nobody would get an answer until it ended.
+const COPY_DATABASE = `
+  const { workerData } = require('node:worker_threads')
+  const { DatabaseSync } = require('node:sqlite')
+  const db = new DatabaseSync(workerData.file, { readOnly: true })
+  db.prepare('VACUUM INTO ?').run(workerData.copy)
+  db.close()`
+function copyDatabase(file, copy) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(COPY_DATABASE, { eval: true, workerData: { file, copy }, execArgv: ['--no-warnings'] })
+    worker.once('error', reject)
+    worker.once('exit', code => (code === 0 ? resolve() : reject(new Error(`copying the database ended with ${code}`))))
+    worker.unref()
+  })
+}
+
 export async function streamExport(company, about, res) {
-  const { db, dataDir } = company.platform
+  const { dataDir } = company.platform
   const copy = join(dataDir, `export-${randomBytes(8).toString('hex')}.db`)
   try {
-    db.prepare('VACUUM INTO ?').run(copy)
+    await copyDatabase(join(dataDir, 'squadra.db'), copy)
     const files = []
     for (const f of readdirSync(join(dataDir, 'files'))) {
       const path = join(dataDir, 'files', f)
