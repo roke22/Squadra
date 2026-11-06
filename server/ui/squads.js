@@ -1,5 +1,5 @@
 import { T } from './i18n.js'
-import { hosts, sessions, state, templateListeners, hostListeners } from './state.js'
+import { hosts, sessions, state, templateListeners, hostListeners, can } from './state.js'
 import { esc } from './format.js'
 import { sortedSessions } from './content.js'
 import { setHtml, soon } from './nav.js'
@@ -67,7 +67,7 @@ export function saveTemplateDialog(coord) {
 
 export function templatesDialog() {
   const list = () => state.templates.length
-    ? `<div class="tpl-list">${state.templates.map(t => `<div class="tpl-row"><span class="n">${esc(t.name)}</span><span class="m">${esc(T.tplSummary(t.coordinator?.name ?? '?', t.workers.length))}</span><button class="btn primary" data-launch="${esc(t.name)}">${T.tplLaunch}</button><button class="btn danger" data-del="${esc(t.name)}">${T.delete}</button></div>`).join('')}</div>`
+    ? `<div class="tpl-list">${state.templates.map(t => `<div class="tpl-row"><span class="n">${esc(t.name)}</span><span class="m">${esc(T.tplSummary(t.coordinator?.name ?? '?', t.workers.length))}</span><button class="btn primary" data-launch="${esc(t.name)}">${T.tplLaunch}</button>${can('manager') ? `<button class="btn danger" data-del="${esc(t.name)}">${T.delete}</button>` : ''}</div>`).join('')}</div>`
     : `<p class="hint">${T.noTemplates}</p>`
   const d = dialog(`<h3>${T.templates}</h3><div data-list>${list()}</div><div class="err" style="color:var(--err);font-size:13px;min-height:1.2em"></div><div class="actions"><button class="btn" data-cancel>${T.done}</button></div>`, { wide: true })
   const refresh = () => setHtml(d.el.querySelector('[data-list]'), list())
@@ -234,7 +234,7 @@ export function newSessionDialog(hostId, preset = {}) {
   const noteFolder = () => {
     const h = hosts.get(f('host').value)
     const editable = h?.info?.folders_from_dashboard === true
-    if (!(h?.info?.folders ?? []).length) folderHint.innerHTML = `${T.noFoldersHere}${editable ? ` <button type="button" class="btn" data-addf>${T.addFolder}</button>` : ''}`
+    if (!(h?.info?.folders ?? []).length) folderHint.innerHTML = `${T.noFoldersHere}${editable && can('manager') ? ` <button type="button" class="btn" data-addf>${T.addFolder}</button>` : ''}`
     else folderHint.innerHTML = h?.info?.home && f('folder').value === h.info.home && !f('sub').value.trim() ? `⚠ ${T.homeSession}` : ''
     loadPersonas()
   }

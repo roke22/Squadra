@@ -145,7 +145,7 @@ function penalty(grid) {
 }
 
 // The code as an SVG, or null if the text doesn't fit (then the key is typed).
-export function qrSvg(text) {
+export function qrSvg(text, label = 'QR') {
   const bytes = [...new TextEncoder().encode(text)]
   const version = BLOCKS.findIndex((b, v) => v && bytes.length + (v < 10 ? 2 : 3) <= b.slice(1).reduce((s, [count, size]) => s + count * size, 0))
   if (version < 1) return null
@@ -154,5 +154,5 @@ export function qrSvg(text) {
   const n = grid.length
   let path = ''
   grid.forEach((row, r) => row.forEach((on, c) => { if (on) path += `M${c + 4} ${r + 4}h1v1h-1z` }))
-  return `<svg class="qr" viewBox="0 0 ${n + 8} ${n + 8}" role="img" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`
+  return `<svg class="qr" viewBox="0 0 ${n + 8} ${n + 8}" role="img" aria-label="${label}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`
 }

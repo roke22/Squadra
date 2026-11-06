@@ -31,6 +31,11 @@ export const state = {
 // its preferences are there from before there were companies.)
 export const companyPref = key => (state.company && state.company !== 'default' ? `${key}:${state.company}` : key)
 
+// Whether this user's role in this company allows that, at least: what they
+// can't do isn't offered. (The server is who decides. See the skill frontend-design.)
+const ROLES = ['observer', 'operator', 'manager', 'owner']
+export const can = needed => ROLES.indexOf(state.role) >= ROLES.indexOf(needed)
+
 export const sessions = new Map()      // name -> session view (from server)
 export const hosts = new Map()         // host id -> host view (machines running squadra-host)
 export const templateListeners = new Set()

@@ -1,6 +1,6 @@
 import { inCompany } from './api.js'
 import { T } from './i18n.js'
-import { sessions, state } from './state.js'
+import { sessions, state, can } from './state.js'
 import { esc } from './format.js'
 import { currentRoute } from './router.js'
 import { alertBox } from './mosaic.js'
@@ -23,16 +23,16 @@ export function openMenu(anchor, name) {
   state.menuEl.className = 'menu'
   const where = terminalOf(name)
   state.menuEl.innerHTML = `
- ${reopenable(s) ? `<button data-act="reopen">${T.reopen}</button>` : ''}
+ ${reopenable(s) && can('operator') ? `<button data-act="reopen">${T.reopen}</button>` : ''}
       <button data-go="#/s/${encodeURIComponent(name)}">${T.openChat}</button>
-      ${where ? `<button data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}">${T.terminal}</button>` : ''}
-      ${s.role === 'coordinator' ? `<button data-go="#/q/${encodeURIComponent(name)}">${T.viewSquad}</button><button data-act="addworker">${esc(T.addWorkerTo(name))}</button>` : ''}
-      ${s.approval_pending ? `<button data-act="approve">${T.approve}</button>` : ''}
-      <button data-act="clear">${T.clearChat}</button>
+      ${where && can('operator') ? `<button data-go="#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}">${T.terminal}</button>` : ''}
+      ${s.role === 'coordinator' ? `<button data-go="#/q/${encodeURIComponent(name)}">${T.viewSquad}</button>${can('operator') ? `<button data-act="addworker">${esc(T.addWorkerTo(name))}</button>` : ''}` : ''}
+      ${s.approval_pending && can('manager') ? `<button data-act="approve">${T.approve}</button>` : ''}
+      ${can('operator') ? `<button data-act="clear">${T.clearChat}</button>
       ${off ? `<button data-act="kick" class="danger">${T.kick}</button>` : ''}
       <button data-act="archive" ${off ? 'disabled' : ''}>${T.archive}</button>
-      <button data-act="delete" class="danger" ${off ? 'disabled' : ''}>${T.deleteSession}</button>
-      ${off ? `<div class="hint">${T.offlineHint}</div>` : ''}`
+      ${can('manager') ? `<button data-act="delete" class="danger" ${off ? 'disabled' : ''}>${T.deleteSession}</button>` : ''}
+      ${off ? `<div class="hint">${T.offlineHint}</div>` : ''}` : ''}`
   document.body.appendChild(state.menuEl)
   const r = anchor.getBoundingClientRect()
   const w = state.menuEl.offsetWidth

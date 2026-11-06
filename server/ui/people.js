@@ -1,19 +1,20 @@
 import { T } from './i18n.js'
-import { state } from './state.js'
+import { state, can } from './state.js'
 import { call, inCompany } from './api.js'
 import { esc } from './format.js'
 import { dialog } from './dialogs.js'
 
 const ROLES = ['observer', 'operator', 'manager', 'owner']
-const atLeast = (role, needed) => ROLES.indexOf(role) >= ROLES.indexOf(needed)
-const roleSelect = (value, attrs = '') => `<select ${attrs}>${ROLES.map(r => `<option value="${r}" ${r === value ? 'selected' : ''}>${esc(T.roles[r])}</option>`).join('')}</select>`
+// Only owners give or take the role of owner.
+const grantable = () => ROLES.filter(r => r !== 'owner' || can('owner'))
+const roleSelect = (value, attrs = '') => `<select ${attrs}>${grantable().map(r => `<option value="${r}" ${r === value ? 'selected' : ''}>${esc(T.roles[r])}</option>`).join('')}</select>`
 const linkBox = l => `<div class="cmdrow"><pre class="cmd">${esc(l.link)}</pre><button class="btn" data-copy>${esc(T.copy)}</button></div><p class="note">${esc(T.linkOnce)}</p>`
 
 // The dashboard's people: who is in this company, and (for an administrator of
 // the server) the companies and users.
 export function openPeople() {
   const admin = state.me?.user.is_platform_admin
-  const manager = atLeast(state.role, 'manager')
+  const manager = can('manager')
   const tabs = [
     ...(manager ? [['members', T.tabMembers]] : []),
     ...(admin ? [['companies', T.tabCompanies], ['users', T.tabUsers]] : []),
@@ -43,9 +44,12 @@ export function openPeople() {
     const turn = ++drawing
     const [list, pending, { join_token }] = await Promise.all([call(inCompany('/api/members')), call(inCompany('/api/invitations')), call(inCompany('/api/join-token'))])
     if (turn !== drawing) return
+    // What can't be changed is only shown: someone else's owner, or the only owner.
+    const owners = list.filter(m => m.role === 'owner').length
+    const fixed = m => m.role === 'owner' && (!can('owner') || owners < 2)
     body.innerHTML = `<table class="people"><tbody>${list.map(m => `<tr><td><b>${esc(m.name)}</b><br><span class="note">${esc(m.email)}${m.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
-        <td>${roleSelect(m.role, `data-role-of="${esc(m.id)}"`)}</td><td><button class="btn danger" data-remove="${esc(m.id)}">${esc(T.remove)}</button></td></tr>`).join('')}</tbody></table>
-      <form data-invite class="row2"><label class="field"><span>${esc(T.email)}</span><input type="text" name="email" required></label>
+        <td>${fixed(m) ? esc(T.roles[m.role]) : roleSelect(m.role, `data-role-of="${esc(m.id)}"`)}</td><td>${fixed(m) ? '' : `<button class="btn danger" data-remove="${esc(m.id)}">${esc(T.remove)}</button>`}</td></tr>`).join('')}</tbody></table>
+      <form data-invite class="people-form"><label class="field"><span>${esc(T.email)}</span><input type="text" name="email" required></label>
         <label class="field"><span>${esc(T.role)}</span>${roleSelect('operator', 'name="role"')}</label>
         <button class="btn primary">${esc(T.invite)}</button></form><div data-link></div>
       ${pending.length ? `<h4>${esc(T.pendingInvites)}</h4><table class="people"><tbody>${pending.map(i => `<tr><td>${esc(i.email)} <span class="note">${esc(T.roles[i.role] ?? i.role)}</span></td><td><button class="btn danger" data-cancel-invite="${esc(i.id)}">${esc(T.cancelInvite)}</button></td></tr>`).join('')}</tbody></table>` : ''}
@@ -76,7 +80,7 @@ export function openPeople() {
     const mine = new Set(state.me.companies.map(c => c.id))
     body.innerHTML = `<table class="people"><tbody>${list.map(c => `<tr><td><b>${esc(c.name)}</b><br><span class="note">${esc(c.id)}${c.status === 'unavailable' ? ` · ${esc(T.unavailable)}` : ''}</span></td>
         <td>${mine.has(c.id) ? `<a class="btn" href="?company=${encodeURIComponent(c.id)}">${esc(T.openCompany)}</a>` : `<button class="btn" data-join="${esc(c.id)}">${esc(T.joinCompany)}</button>`}</td></tr>`).join('')}</tbody></table>
-      <form data-create class="row2"><label class="field"><span>${esc(T.companyName)}</span><input type="text" name="name" required maxlength="80"></label>
+      <form data-create class="people-form"><label class="field"><span>${esc(T.companyName)}</span><input type="text" name="name" required maxlength="80"></label>
         <button class="btn primary">${esc(T.createCompany)}</button></form><div data-link></div>`
     body.querySelector('[data-create]').onsubmit = async e => {
       e.preventDefault()
@@ -96,14 +100,14 @@ export function openPeople() {
     if (turn !== drawing) return
     body.innerHTML = `<table class="people"><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b>${u.is_platform_admin ? ` <span class="note">${esc(T.administrator)}</span>` : ''}<br><span class="note">${esc(u.email)}${u.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td><button class="btn" data-reset="${esc(u.id)}">${esc(T.resetLink)}</button>
-        <button class="btn danger" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button></td></tr>`).join('')}</tbody></table><div data-link></div>`
+        ${u.id === state.me.user.id ? '' : `<button class="btn ${u.disabled ? '' : 'danger'}" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button>`}</td></tr>`).join('')}</tbody></table><div data-link></div>`
   }
 
   function account() {
     drawing++
     const me = state.me.user
     body.innerHTML = `<p><b>${esc(me.name)}</b> · ${esc(me.email)}</p>
-      <form data-password><label class="field"><span>${esc(T.password)}</span><input type="password" name="current" autocomplete="current-password" required></label>
+      <form data-password class="people-stack"><label class="field"><span>${esc(T.currentPassword)}</span><input type="password" name="current" autocomplete="current-password" required></label>
       <label class="field"><span>${esc(T.newPassword)}</span><input type="password" name="password" autocomplete="new-password" minlength="12" required></label>
       <button class="btn primary">${esc(T.setPassword)}</button></form><p class="note" data-done></p>`
     body.querySelector('[data-password]').onsubmit = async e => {

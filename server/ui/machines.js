@@ -1,7 +1,7 @@
 import { inCompany } from './api.js'
 import { $ } from './dom.js'
 import { T, COLLATOR } from './i18n.js'
-import { sessions, hosts, state, hostListeners } from './state.js'
+import { sessions, hosts, state, hostListeners, can } from './state.js'
 import { esc, dur, now, hhmm } from './format.js'
 import { status } from './content.js'
 import { setHtml } from './nav.js'
@@ -55,7 +55,7 @@ function folderChips(h) {
     const home = i.home && f === i.home
     return `<span class="fchip ${home ? 'home' : ''}" title="${esc(home ? T.homeFolder : f)}"><code>${home ? '🏠 ' : ''}${esc(f)}</code>${editable ? `<button type="button" data-hact="rmfolder" data-h="${esc(h.id)}" data-f="${esc(f)}" title="${esc(T.removeFolder(f))}" aria-label="${esc(T.removeFolder(f))}">✕</button>` : ''}</span>`
   }).join(' ')
-  return `${chips || T.noFolders}${editable ? ` <button type="button" class="btn addf" data-hact="addfolder" data-h="${esc(h.id)}">${T.addFolder}</button>` : h.online && i.folders_from_dashboard === false && i.version ? ` <span class="t">(${T.foldersLocal})</span>` : ''}`
+  return `${chips || T.noFolders}${editable && can('manager') ? ` <button type="button" class="btn addf" data-hact="addfolder" data-h="${esc(h.id)}">${T.addFolder}</button>` : h.online && i.folders_from_dashboard === false && i.version ? ` <span class="t">(${T.foldersLocal})</span>` : ''}`
 }
 
 // Connected, disconnected, or enrolled and never connected yet.
@@ -76,15 +76,15 @@ export function renderHosts(only) {
           <span class="dot ${s ? status(s).dot : ''}" title="${esc(s ? status(s).text : '')}"></span><span class="n">${esc(t.name)}</span>${roleTag(t.role)}${personaTag(t.persona)}
           <span class="m" title="${esc(t.folder ?? '')}">${esc(t.folder ?? '')}${t.role === 'worker' && t.coordinator ? ` · ${esc(T.coordinatorOf(t.coordinator))}` : ''}</span>
           <span class="acts">
-            ${h.online ? `<button class="btn" data-go="#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(t.id)}">${T.terminal}</button>` : ''}
+            ${h.online && can('operator') ? `<button class="btn" data-go="#/t/${encodeURIComponent(h.id)}/${encodeURIComponent(t.id)}">${T.terminal}</button>` : ''}
             ${s ? `<button class="btn" data-go="#/s/${encodeURIComponent(t.id)}/chat">${T.chat}</button>` : ''}
-            ${h.online ? `<button class="btn danger" data-hact="kill" data-h="${esc(h.id)}" data-t="${esc(t.id)}">${T.closeSession}</button>` : ''}
+            ${h.online && can('operator') ? `<button class="btn danger" data-hact="kill" data-h="${esc(h.id)}" data-t="${esc(t.id)}">${T.closeSession}</button>` : ''}
           </span></div>`
     }).join('')
     return `<div class="host ${h.online ? '' : 'offline'}">
         <div class="host-head"><span class="dot ${h.online ? 'ok' : ''}"></span><span class="n">${esc(h.name)}</span>
           <span class="m">${hostState(h)}${hostLine(h) ? ` · ${esc(hostLine(h))}` : ''}</span>
-          <span class="acts">${h.online ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : `<button class="btn danger" data-hact="disconnect" data-h="${esc(h.id)}">${T.disconnect}</button>`}<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button></span></div>
+          <span class="acts">${h.online ? (can('operator') ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : '') : (can('manager') ? `<button class="btn danger" data-hact="disconnect" data-h="${esc(h.id)}">${T.disconnect}</button>` : '')}${can('manager') ? `<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button>` : ''}</span></div>
         <div class="host-meta">${i.version && serverVersion && olderThan(i.version, serverVersion) ? `<span class="plugin-missing">${T.hostOld(esc(i.version), esc(serverVersion))}</span>` : ''}${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span class="folders">${T.folders}: ${folderChips(h)}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
         <div class="host-terms">${rows || `<div class="host-empty">${T.noTerminals}</div>`}</div>
       </div>`

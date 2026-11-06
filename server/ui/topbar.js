@@ -1,6 +1,6 @@
 import { $, store } from './dom.js'
 import { T } from './i18n.js'
-import { sessions, state, linksOf, hosts } from './state.js'
+import { sessions, state, linksOf, hosts, can } from './state.js'
 import { esc, kfmt } from './format.js'
 import { sortedSessions, status } from './content.js'
 import { setHtml } from './nav.js'
@@ -44,7 +44,7 @@ export function renderTop() {
     const { squads } = orgSquads()
     setHtml($('topTitle'), `🏢 ${T.org}`)
     $('topSub').textContent = T.orgSub(squads.length, squads.reduce((t, q) => t + 1 + q.workers.length, 0), state.links.length)
-    setHtml($('topRight'), `<span class="seg"><button data-orgzoom="-" aria-label="${esc(T.orgZoomOut)}">−</button><button data-orgzoom="1" title="${esc(T.orgZoomReset)}">${Math.round(orgZoom * 100)}%</button><button data-orgzoom="+" aria-label="${esc(T.orgZoomIn)}">+</button></span><button class="btn" data-orgact="arrange" title="${esc(T.orgArrangeTitle)}">${T.orgArrange}</button><button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button>`)
+    setHtml($('topRight'), `<span class="seg"><button data-orgzoom="-" aria-label="${esc(T.orgZoomOut)}">−</button><button data-orgzoom="1" title="${esc(T.orgZoomReset)}">${Math.round(orgZoom * 100)}%</button><button data-orgzoom="+" aria-label="${esc(T.orgZoomIn)}">+</button></span>${can('manager') ? `<button class="btn" data-orgact="arrange" title="${esc(T.orgArrangeTitle)}">${T.orgArrange}</button>` : ''}${can('operator') ? `<button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button>` : ''}`)
     return
   }
   if (r.view === 'leads') {
@@ -56,7 +56,8 @@ export function renderTop() {
     return
   }
   if (r.view === 'mosaic') {
-    const modeSeg = `<span class="seg" id="modeSeg">${['terms', 'chats'].map(m => `<button data-mode="${m}" class="${m === state.mosaicMode ? 'on' : ''}">${m === 'terms' ? T.modeTerms : T.modeChats}</button>`).join('')}</span>`
+    // (Who has no terminals has nothing to choose.)
+    const modeSeg = !can('operator') ? '' : `<span class="seg" id="modeSeg">${['terms', 'chats'].map(m => `<button data-mode="${m}" class="${m === state.mosaicMode ? 'on' : ''}">${m === 'terms' ? T.modeTerms : T.modeChats}</button>`).join('')}</span>`
     const colsSeg = `${modeSeg}<span>${T.columns}</span><span class="seg" id="colsSeg">${['auto', '2', '3', '4', '5', '6'].map(n => `<button data-c="${n}" class="${n === state.cols ? 'on' : ''}">${n === 'auto' ? T.auto : n}</button>`).join('')}</span>`
     if (r.squad) {
       const c = sessions.get(r.squad)
@@ -64,7 +65,7 @@ export function renderTop() {
       setHtml($('topTitle'), `<span class="dot ${c ? status(c).dot : ''}"></span>👥 ${esc(T.squadOf(r.squad))}`)
       const linked = linksOf(r.squad)
       $('topSub').textContent = [T.squadCount(ws.filter(w => w.online).length, ws.length), linked.length ? T.linkedWith(linked.join(', ')) : ''].filter(Boolean).join(' · ')
-      setHtml($('topRight'), `${colsSeg}<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button><button class="btn" data-links="${esc(r.squad)}" title="${esc(T.linksTitle(r.squad))}">${T.links(linked.length)}</button><button class="btn" data-savetpl="${esc(r.squad)}" title="${esc(T.saveTemplateTitle(r.squad))}">${T.saveTemplate}</button><button class="btn" data-go="#/">${T.backAll}</button>`)
+      setHtml($('topRight'), `${colsSeg}${can('operator') ? `<button class="btn" data-addworker="${esc(r.squad)}" title="${esc(T.addWorkerTo(r.squad))}">${T.addWorker}</button>` : ''}${can('manager') ? `<button class="btn" data-links="${esc(r.squad)}" title="${esc(T.linksTitle(r.squad))}">${T.links(linked.length)}</button><button class="btn" data-savetpl="${esc(r.squad)}" title="${esc(T.saveTemplateTitle(r.squad))}">${T.saveTemplate}</button>` : ''}<button class="btn" data-go="#/">${T.backAll}</button>`)
       return
     }
     setHtml($('topTitle'), T.allSessions)
@@ -74,7 +75,7 @@ export function renderTop() {
     const h = r.host && hosts.get(r.host)
     setHtml($('topTitle'), h ? `<span class="dot ${h.online ? 'ok' : ''}"></span>${esc(h.name)}` : T.allMachines)
     $('topSub').textContent = h ? hostLine(h) : T.machinesSub
-    setHtml($('topRight'), `<button class="btn" data-hact="add">${T.addMachine}</button><button class="btn" data-hact="templates">${T.templates}</button><button class="btn primary" data-hact="new"${h ? ` data-h="${esc(h.id)}"` : ''}>${T.newSession}</button>`)
+    setHtml($('topRight'), `${can('manager') ? `<button class="btn" data-hact="add">${T.addMachine}</button>` : ''}${can('operator') ? `<button class="btn" data-hact="templates">${T.templates}</button><button class="btn primary" data-hact="new"${h ? ` data-h="${esc(h.id)}"` : ''}>${T.newSession}</button>` : ''}`)
   } else if (r.view === 'terminal') {
     const h = hosts.get(r.host)
     const t = h?.info?.terminals?.find(x => x.id === r.term)
@@ -107,15 +108,15 @@ export function renderTop() {
       setHtml($('topRight'), acts.join(''))
       return
     }
-    if (where) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
-    if (reopenable(s)) acts.push(`<button class="btn primary" data-reopen="${esc(r.name)}">${T.reopen}</button>`)
+    if (where && can('operator')) acts.push(`<button class="btn" data-go="#/s/${encodeURIComponent(r.name)}">${T.terminal}</button>`)
+    if (reopenable(s) && can('operator')) acts.push(`<button class="btn primary" data-reopen="${esc(r.name)}">${T.reopen}</button>`)
     if (s) {
-      if (s.approval_pending) acts.push(`<button class="btn primary" data-act="approve" data-s="${esc(s.name)}">${T.approve}</button>`)
-      acts.push(`<button class="btn" data-act="clear" data-s="${esc(s.name)}">${T.clearChat}</button>`)
-      if (!s.online) acts.push(s.archived_at
+      if (s.approval_pending && can('manager')) acts.push(`<button class="btn primary" data-act="approve" data-s="${esc(s.name)}">${T.approve}</button>`)
+      if (can('operator')) acts.push(`<button class="btn" data-act="clear" data-s="${esc(s.name)}">${T.clearChat}</button>`)
+      if (!s.online && can('operator')) acts.push(s.archived_at
         ? `<button class="btn" data-act="unarchive" data-s="${esc(s.name)}">${T.unarchive}</button>`
         : `<button class="btn" data-act="archive" data-s="${esc(s.name)}">${T.archive}</button>`)
-      if (!s.online) acts.push(`<button class="btn danger" data-act="delete" data-s="${esc(s.name)}">${T.delete}</button>`)
+      if (!s.online && can('manager')) acts.push(`<button class="btn danger" data-act="delete" data-s="${esc(s.name)}">${T.delete}</button>`)
     }
     acts.push(`<button class="btn" data-go="${s?.archived_at ? '#/archived' : '#/'}">${s?.archived_at ? T.backArchived : T.backAll}</button>`)
     setHtml($('topRight'), acts.join(''))

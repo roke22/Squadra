@@ -371,3 +371,38 @@ test('limits are per company, can be changed, and bad ones are refused', async (
   assert.equal((await call('admin/createCompany', { name: 'Quota A' }, ADMIN)).error_code, 409)
   assert.equal((await call('admin/createCompany', { name: '<b>' }, ADMIN)).error_code, 400)
 })
+
+test('after a restart every company is back, with its sessions, machines and limits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-companies-restart-'))
+  const port = PORT + 3100
+  const start = async () => {
+    const proc = spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: dir, SQUADRA_SERVER_TOKEN: ADMIN }, stdio: 'ignore' })
+    await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, { what: 'server' })
+    return proc
+  }
+  const stop = proc => new Promise(r => { proc.on('exit', r); proc.kill('SIGTERM') })
+  const on = (path, body, auth = ADMIN) => fetch(`http://127.0.0.1:${port}/${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then(r => r.json())
+
+  let proc = await start()
+  let company, secret, host
+  try {
+    company = ok(await on('admin/createCompany', { name: 'Stays', limits: { max_sessions: 7 } }))
+    secret = ok(await on('register', { name: 'stays' }, company.join_token)).secret
+    const en = ok(await on(`api/c/${company.id}/hosts/enroll`, { name: 'm' }))
+    host = ok(await on('host/enroll', { code: en.code, info: { hostname: 'm' } }))
+    // A code still waiting when the server stops goes on working after it.
+    company.code = ok(await on(`api/c/${company.id}/hosts/enroll`, { name: 'later' })).code
+  } finally { await stop(proc) }
+
+  proc = await start()
+  try {
+    const listed = ok(await on('api/companies')).find(c => c.id === company.id)
+    assert.deepEqual([listed.name, listed.limits], ['Stays', { max_sessions: 7 }])
+    assert.equal(ok(await on('getMe', {}, secret)).id, 'stays')
+    assert.ok(ok(await on('host/ticket', {}, host.secret)).ticket)
+    ok(await on('register', { name: 'again' }, company.join_token))
+    assert.equal(ok(await on('host/enroll', { code: company.code, info: { hostname: 'later' } })).name, 'later')
+    assert.equal(ok(await on(`api/c/${company.id}/hosts`)).length, 2)
+    assert.deepEqual(ok(await on('api/state')).sessions, [])
+  } finally { await stop(proc) }
+})

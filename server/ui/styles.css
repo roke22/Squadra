@@ -419,8 +419,10 @@ code { font-family: var(--mono); font-size: .92em; background: var(--panel-2); p
 
 /* Signing in */
 .login-card .field { margin-bottom: 10px; }
+.login-card .field input { font-family: inherit; }
 .login-card .linkish { width: auto; margin: 0; padding: 0; background: none; color: var(--accent); font-weight: 400; font-size: 13px; }
-.login-card .qr { display: block; width: min(240px, 100%); margin: 0 auto 12px; border-radius: 6px; }
+.login-card .qr { display: block; width: min(200px, 100%); margin: 0 auto 10px; border-radius: 6px; }
+.login-card p.note, .login-card p.secret { margin: 0 0 6px; }
 .login-card .secret code { font-family: var(--mono); font-size: 13px; word-break: break-all; }
 .login-card .codes { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; font-family: var(--mono); font-size: 13px; }
 .login-card .note { font-size: 12px; color: var(--muted); }
@@ -428,12 +430,25 @@ code { font-family: var(--mono); font-size: .92em; background: var(--panel-2); p
 /* Companies and people */
 #companySelect { margin: 4px 10px 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
 #peopleBtn { margin-left: auto; }
-.modal .cmdrow { display: flex; align-items: flex-start; gap: 6px; }
-.modal .cmdrow .cmd { flex: 1; min-width: 0; margin: 0 0 8px; }
-table.people select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
-.people-tabs { margin-bottom: 12px; display: flex; gap: 4px; }
+.modal:has(.people-tabs) { max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
+.modal [data-body] { flex: 1; min-height: 0; overflow-y: auto; }
+.modal:has(.people-tabs) > .actions { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.modal:has(.people-tabs) > .err:empty { display: none; }
+.modal:has(.people-tabs) > .err { margin: 0 0 8px; }
+.people-tabs { margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
 table.people { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-table.people td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: middle; }
+table.people td { padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 table.people td:last-child { text-align: right; white-space: nowrap; }
+table.people td .btn + .btn { margin-left: 4px; }
 table.people .note { font-size: 12px; color: var(--muted); }
-.modal h4 { margin: 14px 0 4px; font-size: 14px; }
+table.people select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+a.btn { display: inline-block; text-decoration: none; }
+.people-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+.people-form .field { flex: 1 1 160px; margin: 0; }
+.people-form .btn { flex: none; padding: 8px 14px; }
+.people-stack .field input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); width: 100%; }
+.modal .cmdrow { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 8px; }
+.modal .cmdrow .cmd { flex: 1; min-width: 0; margin: 0; overflow-x: auto; }
+.modal .cmdrow .btn { flex: none; }
+.modal [data-body] > h4 { margin: 18px 0 4px; font-size: 14px; }
+.modal [data-body] .note { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }

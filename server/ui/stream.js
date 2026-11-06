@@ -135,6 +135,8 @@ export async function connect() {
     try {
       const r = await fetch(inCompany('/api/stream'), { signal: state.streamAbort.signal })
       if (r.status === 401) return showLogin(T.sessionEnded)
+      // No longer in this company: the page loads again, for one they are in.
+      if (r.status === 404) return location.reload()
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`)
       setConn('ok', T.live)
       backoff = 1000

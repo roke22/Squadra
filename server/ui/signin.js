@@ -65,7 +65,7 @@ function codeScreen(recovery = false) {
 async function setupScreen() {
   const { secret, uri } = await call('/auth/totp/setup', {})
   // (Made here: the key goes to no service. The page's only images are its own.)
-  screen(T.setupIntro, `${qrSvg(uri) ?? ''}<p class="note">${esc(T.setupKey)}</p><p class="secret"><code>${esc(secret)}</code></p><p class="note"><a href="${esc(uri)}">${esc(T.setupLink)}</a></p>${input('code', T.code, 'text', 'one-time-code', 'inputmode="numeric" maxlength="6"')}`, T.setupConfirm, async v => {
+  screen(T.setupIntro, `${qrSvg(uri, T.setupQr) ?? ''}<p class="note">${esc(T.setupKey)}</p><p class="secret"><code>${esc(secret)}</code></p><p class="note"><a href="${esc(uri)}">${esc(T.setupLink)}</a></p>${input('code', T.code, 'text', 'one-time-code', 'inputmode="numeric" maxlength="6"')}`, T.setupConfirm, async v => {
     const done = await call('/auth/totp/enable', v)
     screen(T.recoveryShow, `<pre class="codes">${esc(done.recovery_codes.join('\n'))}</pre>`, T.recoverySaved, async () => next(done))
   })
@@ -73,7 +73,7 @@ async function setupScreen() {
 
 async function inviteScreen(token) {
   const info = await call('/auth/invite/info', { token })
-  const where = info.company ? T.inviteTo(esc(info.company), esc(info.role)) : T.inviteServer
+  const where = info.company ? T.inviteTo(esc(info.company), esc(T.roles[info.role] ?? info.role)) : T.inviteServer
   const fields = info.known
     ? input('password', T.password, 'password', 'current-password')
     : input('name', T.yourName, 'text', 'name') + input('password', T.newPassword, 'password', 'new-password', 'minlength="12"')
@@ -114,4 +114,7 @@ export async function begin(onEnter) {
 }
 
 export const signOut = () => call('/auth/logout', {}).catch(() => {})
-export const noCompany = () => { state.me = null; screen(T.noCompany, '', '', null) }
+export const noCompany = () => {
+  state.me = null
+  screen(T.noCompany, '', T.logout, async () => { await signOut(); loginScreen() })
+}

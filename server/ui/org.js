@@ -1,6 +1,6 @@
 import { store, $ } from './dom.js'
 import { T } from './i18n.js'
-import { state, sessions, hosts, linksOf, linkListeners, companyPref } from './state.js'
+import { state, sessions, hosts, linksOf, linkListeners, companyPref, can } from './state.js'
 import { now, esc } from './format.js'
 import { sortedSessions, byPresence, status } from './content.js'
 import { setHtml, soon } from './nav.js'
@@ -136,8 +136,8 @@ function orgCard(q, p) {
       ${m.goal ? `<div class="org-goal">${esc(m.goal)}</div>` : ''}
       ${orgAgent(c, 'coord')}${shown.map(w => orgAgent(w, 'worker')).join('')}
       ${q.workers.length > ORG_FOLD ? `<button class="org-fold" data-orgfold="${esc(c.name)}">${orgOpen.has(c.name) ? T.orgLess : T.orgMore(q.workers.length - shown.length)}</button>` : ''}
-      <div class="org-foot"><button class="btn" data-orgact="addagent" data-name="${esc(c.name)}">${T.orgAddAgent}</button></div>
-      <span class="org-handle" data-orghandle="${esc(c.name)}" title="${esc(T.orgLinkHandle)}"></span></div>`
+      ${can('operator') ? `<div class="org-foot"><button class="btn" data-orgact="addagent" data-name="${esc(c.name)}">${T.orgAddAgent}</button></div>` : ''}
+      ${can('manager') ? `<span class="org-handle" data-orghandle="${esc(c.name)}" title="${esc(T.orgLinkHandle)}"></span>` : ''}</div>`
 }
 
 export function renderOrg() {
@@ -148,7 +148,7 @@ export function renderOrg() {
   const fresh = squads.filter(q => orgPos.get(q.coord.name).auto && !orgSaved.has(q.coord.name))
   if (fresh.length) {
     for (const q of fresh) orgSaved.add(q.coord.name)
-    postJson('/api/org/positions', { positions: fresh.map(q => ({ coordinator: q.coord.name, x: orgPos.get(q.coord.name).x, y: orgPos.get(q.coord.name).y })) }).catch(() => {})
+    if (can('manager')) postJson('/api/org/positions', { positions: fresh.map(q => ({ coordinator: q.coord.name, x: orgPos.get(q.coord.name).x, y: orgPos.get(q.coord.name).y })) }).catch(() => {})
   }
   let w = 0, h = 0
   for (const p of orgPos.values()) { w = Math.max(w, p.x + ORG_W); h = Math.max(h, p.y + p.h) }
@@ -156,7 +156,7 @@ export function renderOrg() {
   const { paths, labels } = orgLinesHtml()
   const extra = [[T.noCoordinator, orphans], [T.standalone, solos]].filter(([, l]) => l.length)
     .map(([label, l]) => `<div class="org-extra"><div class="org-extra-h">${esc(label)}</div>${l.map(s => orgAgent(s, 'loose')).join('')}</div>`).join('')
-  setHtml($('org'), `${squads.length ? '' : `<div class="org-empty"><p>${T.orgEmpty}</p><button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button></div>`}
+  setHtml($('org'), `${squads.length ? '' : `<div class="org-empty"><p>${T.orgEmpty}</p>${can('operator') ? `<button class="btn primary" data-orgact="newsquad">${T.orgNewSquad}</button>` : ''}</div>`}
       <div class="org-wrap" style="width:${Math.round(w * orgZoom)}px;height:${squads.length ? Math.round(h * orgZoom) : 0}px">
         <div class="org-stage" style="width:${w}px;height:${h}px;transform:scale(${orgZoom})">
           <svg class="org-lines" width="${w}" height="${h}">${paths}</svg>
@@ -261,6 +261,7 @@ $('org').addEventListener('pointerdown', e => {
     $('org').querySelector('.org-lines').insertAdjacentHTML('beforeend', '<path class="l tmp" d=""/>')
   } else {
     const card = head.closest('.org-card')
+    if (!can('manager')) return
     orgDrag = { kind: 'card', name: card.dataset.squad, card, px: e.clientX, py: e.clientY, x: parseFloat(card.style.left), y: parseFloat(card.style.top), moved: false }
   }
 })
@@ -376,16 +377,16 @@ function squadMenu(anchor, name) {
   const running = members.filter(n => terminalOf(n))
   const anyOn = members.some(n => sessions.get(n)?.online)
   orgMenuAt(anchor, [
-    { label: T.orgEditSquad, run: () => squadDialog(name) },
-    { label: T.addWorkerTo(name), run: () => addWorkerTo(name) },
-    { label: T.links(linksOf(name).length), run: () => linksDialog(name) },
+    can('manager') ? { label: T.orgEditSquad, run: () => squadDialog(name) } : null,
+    can('operator') ? { label: T.addWorkerTo(name), run: () => addWorkerTo(name) } : null,
+    can('manager') ? { label: T.links(linksOf(name).length), run: () => linksDialog(name) } : null,
     { label: T.viewSquad, run: () => { location.hash = `#/q/${encodeURIComponent(name)}` } },
-    { label: T.saveTemplateTitle(name), run: () => saveTemplateDialog(name) },
-    { label: T.orgCloseSquad, danger: true, disabled: !running.length, run: () => confirmDialog({
+    can('manager') ? { label: T.saveTemplateTitle(name), run: () => saveTemplateDialog(name) } : null,
+    !can('operator') ? null : { label: T.orgCloseSquad, danger: true, disabled: !running.length, run: () => confirmDialog({
       title: T.orgCloseSquadTitle(squadTitle(name)), text: T.orgCloseSquadText(running.map(n => `<b>${esc(n)}</b>`).join(', ')), confirm: T.orgCloseSquad, danger: true,
       run: async () => { for (const n of running) { const w = terminalOf(n); if (w) await postJson('/api/terminals/kill', { host: w.host.id, term: n }) } },
     }) },
-    { label: T.orgDeleteSquad, danger: true, disabled: anyOn || running.length > 0, run: () => confirmDialog({
+    !can('manager') ? null : { label: T.orgDeleteSquad, danger: true, disabled: anyOn || running.length > 0, run: () => confirmDialog({
       title: T.orgDeleteSquadTitle(squadTitle(name)), text: T.orgDeleteSquadText(members.map(n => `<b>${esc(n)}</b>`).join(', ')), confirm: T.orgDeleteSquad, danger: true,
       run: async () => { for (const n of members) if (sessions.has(n)) await post('delete', n) },
     }) },
@@ -398,19 +399,19 @@ function agentMenu(anchor, name) {
   const where = terminalOf(name)
   const role = s.opened_role ?? s.role
   orgMenuAt(anchor, [
-    { label: T.orgDescribe, run: () => describeDialog(name) },
-    s.host_id && (role === 'worker' || role === 'coordinator') ? { label: T.orgReshape, disabled: !hosts.get(s.host_id)?.online, run: () => reshapeDialog(name) } : null,
-    where ? { label: T.terminal, run: () => { location.hash = `#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}` } } : null,
+    can('manager') ? { label: T.orgDescribe, run: () => describeDialog(name) } : null,
+    can('operator') && s.host_id && (role === 'worker' || role === 'coordinator') ? { label: T.orgReshape, disabled: !hosts.get(s.host_id)?.online, run: () => reshapeDialog(name) } : null,
+    where && can('operator') ? { label: T.terminal, run: () => { location.hash = `#/t/${encodeURIComponent(where.host.id)}/${encodeURIComponent(name)}` } } : null,
     { label: T.openChat, run: () => { location.hash = `#/s/${encodeURIComponent(name)}/chat` } },
-    reopenable(s) ? { label: T.reopen, run: () => reopen(name) } : null,
-    where ? { label: T.closeSession, danger: true, run: () => hostAction('kill', where.host.id, name) } : null,
-    { label: T.deleteSession, danger: true, disabled: s.online, run: () => runAction('delete', name) },
+    reopenable(s) && can('operator') ? { label: T.reopen, run: () => reopen(name) } : null,
+    where && can('operator') ? { label: T.closeSession, danger: true, run: () => hostAction('kill', where.host.id, name) } : null,
+    can('manager') ? { label: T.deleteSession, danger: true, disabled: s.online, run: () => runAction('delete', name) } : null,
   ])
 }
 
 function linkMenu(anchor, a, b) {
   const l = state.links.find(x => x.a === a && x.b === b)
-  if (!l) return
+  if (!l || !can('manager')) return
   orgMenuAt(anchor, [
     { label: T.unlink, danger: true, run: () => postJson('/api/links/delete', { a, b }).catch(err => alertBox(err.message)) },
   ], `${esc(squadTitle(a))} ↔ ${esc(squadTitle(b))}<br>${esc(T.orgLinkRecent(recentOf(l)))}`)

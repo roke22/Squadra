@@ -1,6 +1,6 @@
 import { $, store } from './dom.js'
 import { T, COLLATOR } from './i18n.js'
-import { state, sessions, unread } from './state.js'
+import { state, sessions, unread, can } from './state.js'
 import { dur, now, esc } from './format.js'
 import { sortedSessions, squadOpen } from './content.js'
 import { ChatView } from './chat.js'
@@ -73,7 +73,7 @@ export function teamStrip(c) {
   const n = k => ws.filter(x => x.st.k === k).length
   const chips = ws.map(({ w, st }) => `<span class="wchip ${st.k}"><button class="wname" data-go="#/s/${encodeURIComponent(w.name)}"><span class="dot ${st.dot}"></span>${esc(w.name)}</button>${personaTag(w.persona)}<span class="wst">${esc(st.text)}</span>${st.k === 'idle' ? `<button class="give" data-givework="${esc(c.name)}" title="${esc(T.giveWorkTitle(w.name, c.name))}">${T.giveWork}</button>` : ''}</span>`).join('')
   return `<div class="team-sum">${ws.length ? esc(T.teamSummary(ws.length, n('working'), n('idle'), n('waiting'))) : T.noWorkers}</div>
-      <div class="team-list">${chips}<button class="btn addw" data-addworker="${esc(c.name)}" title="${esc(T.addWorkerTo(c.name))}">${T.addWorker}</button></div>`
+      <div class="team-list">${chips}${can('operator') ? `<button class="btn addw" data-addworker="${esc(c.name)}" title="${esc(T.addWorkerTo(c.name))}">${T.addWorker}</button>` : ''}</div>`
 }
 export function refreshLeads() {
   if (currentRoute().view !== 'leads') return

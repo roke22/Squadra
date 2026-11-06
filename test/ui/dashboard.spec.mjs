@@ -125,6 +125,21 @@ test('an invitation: a link of one use brings someone in, with only their role',
   // An observer: no adding machines, and the chat rather than a terminal.
   await expect(guest.locator('#addHostBtn')).toBeHidden()
   await expect(guest.locator('#nav')).toContainText('coord')
+  // What it can't do isn't offered: anywhere it goes, and nothing asks the server for it.
+  await guest.goto(`${server.url}/#/q/coord`)
+  await expect(guest.locator('#colsSeg')).toBeVisible()
+  await expect(guest.locator('[data-addworker], [data-links], [data-savetpl], #modeSeg')).toHaveCount(0)
+  await guest.goto(`${server.url}/#/s/worker1/chat`)
+  await expect(guest.locator('#topRight [data-go]')).toBeVisible()
+  await expect(guest.locator('[data-act]')).toHaveCount(0)
+  await guest.goto(`${server.url}/#/hosts`)
+  await expect(guest.locator('.host').first()).toBeVisible()
+  await expect(guest.locator('[data-hact], [data-hmenu]')).toHaveCount(0)
+  await guest.goto(`${server.url}/#/org`)
+  await expect(guest.locator('.org-card').first()).toBeVisible()
+  await expect(guest.locator('[data-orgact], [data-orghandle]')).toHaveCount(0)
+  await guest.locator('#peopleBtn').click()
+  await expect(guest.locator('[data-tab]')).toHaveText(['My account'])
   await ctx.close()
 })
 
