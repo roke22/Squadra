@@ -1027,3 +1027,24 @@ test('adding a machine: --os-user hands the checked script and the code over in 
     assert.equal(readFileSync(`${bench.log}.code`, 'utf8'), en.code)
   } finally { bench.done() }
 })
+
+test('an address starting with two slashes is not the page: it would take the page\'s redirects to another site', async () => {
+  const raw = target => new Promise((resolve, reject) => {
+    const s = connect(PORT, '127.0.0.1', () => s.write(`GET ${target} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`))
+    let got = ''
+    s.on('data', d => { got += d })
+    s.on('end', () => resolve(got))
+    s.on('error', reject)
+  })
+  for (const target of ['//evil.example/?company=zzz', '///evil.example/', '//', '//evil.example/ui']) {
+    const got = await raw(target)
+    assert.match(got, /^HTTP\/1\.1 404/, target)
+    assert.doesNotMatch(got, /<html/i, target)
+  }
+  // The page where it is.
+  assert.match(await raw('/?company=zzz'), /^HTTP\/1\.1 200/)
+  // No part of the page builds an address from its own path alone.
+  for (const f of readdirSync(join(ROOT, 'server/ui')).filter(n => n.endsWith('.js'))) {
+    assert.doesNotMatch(readFileSync(join(ROOT, 'server/ui', f), 'utf8'), /location\.(href|replace\(|assign\()\s*=?\s*`?\$?\{?location\.pathname/, f)
+  }
+})

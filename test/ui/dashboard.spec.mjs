@@ -97,6 +97,11 @@ test('companies: two show apart, each with its own sessions; the selector change
   await expect(page.locator('#companySelect')).toBeVisible()
   await expect(page.locator('#companySelect')).toHaveValue(other.id)
   await expect(page.locator('#nav')).toContainText('0 of 0')
+  // A company this user isn't in: the page loads again for one they are in, on this site.
+  await page.goto(`${server.url}/?company=zzz`)
+  await expect(page).toHaveURL(new RegExp(`^${server.url}/\\?company=(default|${other.id})`))
+  await page.goto(`${server.url}/?company=${other.id}`)
+  await expect(page.locator('#companySelect')).toHaveValue(other.id)
   await page.locator('#companySelect').selectOption('default')
   await expect(page.locator('#nav')).toContainText('worker1')
   await expect(page).toHaveURL(/company=default/)

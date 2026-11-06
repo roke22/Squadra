@@ -112,7 +112,7 @@ export function openPeople() {
         if (new FormData(e.target).get('confirm') !== here?.name) { d.el.querySelector('.err').textContent = T.deleteCompanyWrong; return }
         try {
           await call(inCompany('/api/company/delete'), Object.fromEntries(new FormData(e.target)))
-          location.href = location.pathname
+          location.href = location.origin + location.pathname
         } catch (err) { fail(err) }
       }
     }
@@ -194,7 +194,7 @@ export function openPeople() {
       if (b.dataset.cancelInvite) { await call(inCompany('/api/invitations/cancel'), { id: b.dataset.cancelInvite }); await members() }
       if (b.dataset.rotate !== undefined) { await call(inCompany('/api/join-token/rotate'), {}); await members() }
       if (b.dataset.join) { await call('/api/companies/join', { company: b.dataset.join }); state.me.companies.push({ id: b.dataset.join, role: 'owner' }); await companies() }
-      if (b.dataset.restore) { await call('/api/companies/restore', { company: b.dataset.restore }); location.href = `${location.pathname}?company=${encodeURIComponent(b.dataset.restore)}` }
+      if (b.dataset.restore) { await call('/api/companies/restore', { company: b.dataset.restore }); location.href = `?company=${encodeURIComponent(b.dataset.restore)}` }
       if (b.dataset.reset) {
         const made = await call('/api/users/reset', { user: b.dataset.reset })
         await users()

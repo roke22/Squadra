@@ -60,7 +60,7 @@ function enter(me) {
       return openPeople()
     }
     store.set('squadraCompany', first.id)
-    location.replace(`${location.pathname}?company=${encodeURIComponent(first.id)}${location.hash}`)
+    location.replace(`?company=${encodeURIComponent(first.id)}${location.hash}`)
     return
   }
   state.me = me
@@ -78,7 +78,7 @@ function enter(me) {
 
 $('companySelect').addEventListener('change', e => {
   store.set('squadraCompany', e.target.value)
-  location.href = `${location.pathname}?company=${encodeURIComponent(e.target.value)}`
+  location.href = `?company=${encodeURIComponent(e.target.value)}`
 })
 
 $('logoutBtn').addEventListener('click', async () => {

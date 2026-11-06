@@ -134,7 +134,11 @@ export function createRoutes(server, companies, accounts) {
     if (!guardRequest(req, res)) return
     try {
       if (pathTooLong(req.url)) throw new ApiError(414, 'URI Too Long')
-      const url = new URL(req.url ?? '/', 'http://localhost')
+      // (Written out, as a relative reference would take //x/ for the host x.)
+      const target = req.url ?? '/'
+      const url = new URL(target.startsWith('/') ? `http://localhost${target}` : target, 'http://localhost')
+      // Never the page: there, its own address would read as another site's.
+      if (url.pathname.startsWith('//')) throw new ApiError(404, 'Not Found')
       const path = trimSlashes(url.pathname) || '/'
 
       if (path === '/health') return sendJson(res, 200, { ok: true, result: 'ok', version: VERSION })
