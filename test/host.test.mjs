@@ -84,6 +84,7 @@ if [ "$1" = "plugin" ]; then
 fi
 echo "ARGS: $*"
 echo "ENV: $SQUADRA_NAME/$SQUADRA_ROLE/$SQUADRA_COORDINATOR/$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+echo "START: $SQUADRA_LAUNCH_START"
 echo "PWD: $(pwd)"
 echo "TMUX=\${TMUX:-none}"
 # FULLSCREEN: switches on what Claude Code's full-screen view does.
@@ -262,7 +263,10 @@ test('opening a session runs the fixed command, and the web terminal sees and ty
   // Only the name in the environment; role and coordinator in launch.json.
   assert.ok(v.text.includes('ENV: w1///600000'), v.text)
   const launch = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'w1', 'launch.json'), 'utf8'))
-  assert.deepEqual(launch, { name: 'w1', role: 'worker', coordinator: 'boss' })
+  // (With the random value only this start is given.)
+  assert.match(launch.start, /^[0-9a-f]{32}$/)
+  assert.ok(v.text.includes(`START: ${launch.start}`), v.text)
+  assert.deepEqual({ ...launch, start: 0 }, { name: 'w1', role: 'worker', coordinator: 'boss', start: 0 })
   assert.ok(v.text.includes(`PWD: ${realpathSync(join(allowed, 'api'))}`), v.text)
   // The session doesn't see the tmux server it runs in (no "tmux send-keys" into others).
   assert.ok(v.text.includes('TMUX=none'), v.text)

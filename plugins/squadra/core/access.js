@@ -117,6 +117,8 @@ export function writeApproved(s) {
 // a project could set).
 // A launch.json is for the start it was written for: older than this, it is
 // ignored (a session that never got to start doesn't leave a standing ticket).
+// And only for the process given its random value: a project's settings can set
+// SQUADRA_NAME to any session's, but can't know what this one's start will be.
 const LAUNCH_MAX_AGE_MS = 15 * 60_000
 export function readLaunch(name) {
   if (!NAME_RE.test(String(name ?? ''))) return null
@@ -125,7 +127,8 @@ export function readLaunch(name) {
     const age = Date.now() - statSync(file).mtimeMs
     if (age > LAUNCH_MAX_AGE_MS || age < -60_000) return null // too old, or dated in the future
     const l = JSON.parse(readFileSync(file, 'utf8'))
-    if (l?.name !== name || (l.role !== 'coordinator' && l.role !== 'worker' && l.role !== 'solo')) return null
+    if (!l?.start || l.start !== process.env.SQUADRA_LAUNCH_START) return null
+    if (l.name !== name || (l.role !== 'coordinator' && l.role !== 'worker' && l.role !== 'solo')) return null
     return {
       role: l.role,
       coordinator: l.role === 'worker' && NAME_RE.test(String(l.coordinator)) ? l.coordinator : null,

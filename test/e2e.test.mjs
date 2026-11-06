@@ -75,7 +75,7 @@ class Plugin {
     this.configDir = configDir ?? mkdtempSync(join(tmpdir(), `squadra-cfg-${name || 'none'}-`))
     mkdirSync(join(this.configDir, 'channels', 'squadra'), { recursive: true })
     writeFileSync(join(this.configDir, 'channels', 'squadra', '.env'), `${noServer ? '' : `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${SERVER_TOKEN}\n`}${envFile}`)
-    const env = { ...process.env, CLAUDE_CONFIG_DIR: this.configDir, ...extraEnv }
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: this.configDir, SQUADRA_LAUNCH_START: 'test-start', ...extraEnv }
     if (name) env.SQUADRA_NAME = name
     else delete env.SQUADRA_NAME
     this.name = name
@@ -86,7 +86,7 @@ class Plugin {
       mkdirSync(this.stateDir, { recursive: true })
       const role = ['coordinator', 'solo'].includes(extraEnv.SQUADRA_ROLE) ? extraEnv.SQUADRA_ROLE : 'worker'
       writeFileSync(join(this.stateDir, 'launch.json'), JSON.stringify({
-        name, role,
+        name, role, start: 'test-start',
         coordinator: role === 'worker' ? (extraEnv.SQUADRA_COORDINATOR || 'coord') : null,
         allow_from: (extraEnv.SQUADRA_ALLOW_FROM ?? '').split(',').filter(Boolean),
         access_mode: extraEnv.SQUADRA_ACCESS_MODE,
@@ -2532,4 +2532,36 @@ test('the attachment guard knows the server\'s own files and common credentials,
     await send(n)
   }
   w.close(); coord.close()
+})
+
+test('a launch.json is for its own start: a project setting the same name gets the question, and leaves the ticket', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'squadra-cfg-ticket-'))
+  const stateDir = join(configDir, 'channels', 'squadra', 'tick1')
+  mkdirSync(stateDir, { recursive: true })
+  const ticket = join(stateDir, 'launch.json')
+  const write = extra => writeFileSync(ticket, JSON.stringify({ name: 'tick1', role: 'coordinator', ...extra }))
+  const tries = async env => {
+    const p = new Plugin('tick1', { SQUADRA_ASSUME_CHANNEL: '1', ...env }, { configDir, launch: false })
+    await p.init()
+    await sleep(1500)
+    return p
+  }
+  write({ start: 'the-right-one' })
+  for (const env of [{ SQUADRA_LAUNCH_START: 'another' }, { SQUADRA_LAUNCH_START: '' }]) {
+    const p = await tries(env)
+    assert.ok(!existsSync(join(stateDir, 'identity.json')), 'it did not log in')
+    assert.ok(existsSync(ticket), 'the ticket is still there for its session')
+    p.close()
+  }
+  // One written without it says nothing about which start it is for.
+  write({})
+  const none = await tries({ SQUADRA_LAUNCH_START: '' })
+  assert.ok(!existsSync(join(stateDir, 'identity.json')))
+  none.close()
+  // The start it was written for logs in, and uses it up.
+  write({ start: 'the-right-one' })
+  const right = await tries({ SQUADRA_LAUNCH_START: 'the-right-one' })
+  await right.waitConnected()
+  assert.ok(!existsSync(ticket))
+  right.close()
 })

@@ -136,7 +136,7 @@ function handleNotification(msg) {
   switch (msg.method) {
     case 'notifications/initialized':
       // SQUADRA_NAME logs in automatically. Role and coordinator come from
-      // <state>/launch.json (written by squadra-host or a launch script) or
+      // <state>/launch.json (written by squadra-host for this start) or
       // from what the user approved before — never from environment
       // variables, which a project's settings could set.
       if (!autoLoginDone && process.env.SQUADRA_NAME) {

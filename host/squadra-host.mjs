@@ -1255,7 +1255,8 @@ async function openTerminalNow(spec) {
   const relay = settings.permission_relay && !s.home && s.role !== 'solo'
   // (The plugin tells the session's squad which persona it follows.)
   const persona = s.personaInfo ? { kind: s.personaInfo.kind, name: s.personaInfo.name, description: s.personaInfo.description } : null
-  writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, ...(relay ? {} : { permission_relay: false }), ...(persona ? { persona } : {}) })
+  s.launchStart = randomBytes(16).toString('hex')
+  writePrivate(dir, 'launch.json', { name: s.name, role: s.role, coordinator: s.coordinator, start: s.launchStart, ...(relay ? {} : { permission_relay: false }), ...(persona ? { persona } : {}) })
   // (Its links, kept while it runs: the dashboard can change them, see "links".)
   if (s.role === 'coordinator') writePrivate(dir, 'links.json', { name: s.name, coordinators: s.links })
   else rmSync(join(dir, 'links.json'), { force: true })
@@ -1269,7 +1270,7 @@ async function openTerminalNow(spec) {
 async function startSession(s, settings, claude, dir) {
   if (s.identity) writePrivate(dir, 'identity.json', { name: s.name, secret: s.identity, server: claudeCode.plugin.serverUrl() })
   const tname = PREFIX + s.name
-  const env = { SQUADRA_NAME: s.name, ...claudeCode.sessionEnv(s) }
+  const env = { SQUADRA_NAME: s.name, SQUADRA_LAUNCH_START: s.launchStart, ...claudeCode.sessionEnv(s) }
   if (!settings.permission_relay || s.home || s.role === 'solo') env.SQUADRA_PERMISSION_RELAY = 'off'
   // Fixed command. Two or more arguments make tmux exec it directly, no shell.
   // "env -u TMUX" hides the tmux server from the session: its tools can't
