@@ -1,11 +1,12 @@
 // Which files a session may send: never the places where credentials live.
 
 import { userInfo, homedir } from 'node:os'
-import { join, isAbsolute, sep, basename } from 'node:path'
+import { join, isAbsolute, sep, basename, dirname } from 'node:path'
 import {
-  realpathSync, lstatSync, statSync, openSync, constants as FS, fstatSync, readSync, closeSync,
+  realpathSync, lstatSync, statSync, openSync, constants as FS, fstatSync, readSync, closeSync, existsSync,
 } from 'node:fs'
 import { claudeConfigDir } from '../paths.js'
+import { maskOutgoing } from '../observe.js'
 import { ROOT_DIR, STATE_BASE, MAX_ATTACHMENT_BYTES } from './settings.js'
 import { S } from './session.js'
 
@@ -35,7 +36,18 @@ const SECRET_NAMES = [
   /\.env$/i, /^\.envrc$/i, /^\.dev\.vars$/i, /\.(p8|ppk|gpg|asc|ovpn|token)$/i, /^token$/i, /kubeconfig/i,
   /^service[-_]?account.*\.json$/i, /^auth\.json$/i, /^\.terraformrc$/i, /^rclone\.conf$/i, /^local\.settings\.json$/i, /^hgrc$/i,
   /^krb5cc/i, /^identity\.json$/i, /^signing-key\.json$/i, /^\.?mcp\.json$/i,
+  // Squadra's own, on a machine that also runs its server, and its databases.
+  /^(server|join)-token$/i, /^server-key$/i, /^(host-key|totp-key)(\.json)?$/i, /\.(db|sqlite3?)(-wal|-shm)?$/i,
+  // Variants of the above, which a list of exact names misses.
+  /^\.env[-_~.]/i, /^env\./i, /\.env\.\w+$/i, /^\.(npmrc|netrc|pgpass|pypirc|git-credentials)[.~]/i,
+  /[_-]key$/i, /_(rsa|dsa|ecdsa|ed25519)(_key)?$/i, /passw(or)?d/i, /^\.dockercfg$/i,
 ]
+// By the folder they are in: their names alone say nothing.
+const SECRET_PAIRS = ['.docker/config.json', '.kube/config', '.aws/config']
+// The start of a file, looked at for what is masked in messages too: enough to
+// catch a key file by any name, without holding up the session on a big file.
+// (A safety net, as the list of names is: neither can be complete.)
+const SCANNED_BYTES = 64 * 1024
 
 // Any path through a .git folder (its config can hold tokens in remote URLs).
 const SECRET_PARTS = [/^\.git$/i]
@@ -90,6 +102,11 @@ function sendablePath(f) {
   if (!inInbox && secretDirs.some(d => inside(fold(real), fold(d)))) throw new Error(`refusing to send a file from a credentials folder: ${f}`)
   if (SECRET_NAMES.some(re => re.test(basename(real)))) throw new Error(`refusing to send what looks like a credentials file: ${f}`)
   if (real.split(sep).some(part => SECRET_PARTS.some(re => re.test(part)))) throw new Error(`refusing to send a file from a .git folder: ${f}`)
+  if (SECRET_PAIRS.includes(real.split(sep).slice(-2).join('/').toLowerCase())) throw new Error(`refusing to send what looks like a credentials file: ${f}`)
+  // A server's data folder, wherever it is: its key says so.
+  for (let d = dirname(real); dirname(d) !== d; d = dirname(d)) {
+    if (existsSync(join(d, 'server-key'))) throw new Error(`refusing to send a file from a Squadra server's data folder: ${f}`)
+  }
   return real
 }
 
@@ -119,6 +136,9 @@ export function openSendable(f) {
       const n = readSync(fd, data, got, st.size - got, got)
       if (n <= 0) break
       got += n
+    }
+    if (maskOutgoing(data.subarray(0, Math.min(got, SCANNED_BYTES)).toString('utf8')).masked) {
+      throw new Error(`refusing to send a file that seems to hold a credential: ${f}. If it doesn't, copy what is needed into the message instead`)
     }
     return { real, data: data.subarray(0, got) }
   } finally {

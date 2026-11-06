@@ -2499,3 +2499,35 @@ test('a plugin does not take its identity to another company of the same server'
   await third.waitConnected()
   third.close()
 })
+
+test('the attachment guard knows the server\'s own files and common credentials, by name, by folder and by content', async () => {
+  const coord = new Plugin('sendc', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator' })
+  await coord.init(); await coord.waitConnected()
+  const w = new Plugin('sendw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'sendc', SQUADRA_ALLOW_FROM: 'sendc' })
+  await w.init(); await w.waitConnected()
+  const dir = join(w.stateDir, 'outbox')
+  mkdirSync(dir, { recursive: true })
+  const send = name => w.tool('reply', { chat_id: 'sendc', text: 'here', files: [join(dir, name)] })
+  for (const n of ['server-token', 'join-token', 'server-key', 'host-key.json', 'totp-key', 'squadra.db', 'control.db-wal', '.env.bak', 'prod.env.local', 'id_rsa.old', 'deploy_key', 'my_password.txt', '.npmrc.bak']) {
+    writeFileSync(join(dir, n), 'harmless text')
+    await assert.rejects(send(n), /refusing to send/, n)
+    rmSync(join(dir, n))
+  }
+  mkdirSync(join(dir, '.docker'))
+  writeFileSync(join(dir, '.docker', 'config.json'), '{}')
+  await assert.rejects(send('.docker/config.json'), /refusing to send/)
+  // By content, whatever it is called.
+  writeFileSync(join(dir, 'notes-with-key.txt'), 'some notes\nAKIAABCDEFGHIJKLMNOP\n')
+  await assert.rejects(send('notes-with-key.txt'), /seems to hold a credential/)
+  // Whatever is in a server's data folder.
+  mkdirSync(join(dir, 'data'))
+  writeFileSync(join(dir, 'data', 'server-key'), 'x')
+  writeFileSync(join(dir, 'data', 'plain.txt'), 'x')
+  await assert.rejects(send('data/plain.txt'), /data folder/)
+  // And what is ordinary goes through as ever.
+  for (const n of ['notes.txt', 'report.md', 'keyboard.js', 'package.json']) {
+    writeFileSync(join(dir, n), 'ordinary text')
+    await send(n)
+  }
+  w.close(); coord.close()
+})
