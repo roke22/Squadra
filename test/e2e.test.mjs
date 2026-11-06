@@ -2669,7 +2669,7 @@ test('signatures: each sender has its own list and floor, and nothing evicted ca
     const old = ${JSON.stringify(join(dir, 'old.json'))}
     writeFileSync(old, JSON.stringify({ floor: now + 86400000, seen: [['a:old1', now - 1000]] }))
     const poisoned = { sigSeenFile: old }
-    out.recovered = signatureReplayed(poisoned, 'b', { nonce: 'fresh', ts: now + 1000 })
+    out.recovered = signatureReplayed(poisoned, 'b', { nonce: 'fresh', ts: Date.now() + 1000 })
     out.oldListKept = signatureReplayed(poisoned, 'a', { nonce: 'old1', ts: now - 1000 })
     process.stdout.write(JSON.stringify(out))`
   const out = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: dir }, cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
