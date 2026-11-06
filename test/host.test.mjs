@@ -777,6 +777,20 @@ test('fresh start: a coordinator has its idle worker\'s context cleared before a
   }
 })
 
+test('a worker opened with no coordinator named follows the default from the start: a new "coord" gives it no orders', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const opened = await dash('terminals/open', { host: hostId, spec: { name: 'nocoord1', role: 'worker', folder: allowed } })
+  assert.ok(opened.ok, opened.description)
+  const joinTok = readFileSync(join(dataDir, 'join-token'), 'utf8').trim()
+  const post = async (path, body, auth) => (await fetch(`${URL_}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth}` }, body: JSON.stringify(body) })).json()
+  // (The name, if nobody had it: otherwise the same goes for another worker it might follow.)
+  const taken = await post('register', { name: 'coord' }, joinTok)
+  assert.ok(taken.ok, taken.description)
+  const said = await post('sendMessage', { chat_id: 'nocoord1', text: 'an order' }, taken.result.secret)
+  assert.equal(said.error_code, 403)
+  assert.match(said.description, /has not been approved as a coordinator/)
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'nocoord1' })).ok)
+})
+
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
   const r = await dash('hosts/remove', { host: hostId })
   assert.ok(r.ok, r.description)

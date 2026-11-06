@@ -779,6 +779,8 @@ export function createMachines(platform, { sessions, observation }) {
     }
     // A worker's coordinator, as it was opened (until it says so itself at
     // login): the org chart keeps it in its squad while it isn't connected.
+    // (None named: the machine's own default, known here as well from the start.)
+    if (openedRole === 'worker' && !spec.coordinator) spec.coordinator = 'coord'
     if (openedRole === 'worker' && NAME_RE.test(String(spec.coordinator ?? ''))) db.prepare('UPDATE identities SET coordinator = ? WHERE name = ?').run(spec.coordinator, name)
     try {
       const result = await askHost(id, { t: 'open', spec })

@@ -227,7 +227,9 @@ export function createSessions(platform) {
     if (!f || !t) return
     // (A worker whose coordinator was deleted still follows that name, in its own
     // pins, and only the column was cleared: it might follow whoever takes it now.)
-    const mightFollow = (worker, name) => worker.coordinator === name || (worker.role === 'worker' && worker.coordinator == null)
+    // (Opened as a worker and not logged in yet counts: it will follow someone.)
+    const isWorker = s => s.role === 'worker' || (s.role == null && s.opened_role === 'worker')
+    const mightFollow = (worker, name) => worker.coordinator === name || (isWorker(worker) && worker.coordinator == null)
     if (f.needs_approval && (mightFollow(t, from) || (t.role == null && !t.opened_role))) throw notApproved(from)
     if (t.needs_approval && mightFollow(f, target) && !hello) throw notApproved(target)
   }
@@ -256,8 +258,9 @@ export function createSessions(platform) {
       // (Checked before the rate limit: a copy of the secret refused here must
       // not use up the budget of the session that holds the name.)
       if (lease && lease.instance !== instance && holdsName(name, lease)) throw nameInUse(name, lease)
-      if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+      // (The key too: a copy of the secret refused for lack of it must not use it up either.)
       const provenKey = sessionKeyProved(name, instance, p)
+      if (!allow('claim', name, 20)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
       if (provenKey) db.prepare('UPDATE identities SET public_key = ?, proven_instance = ? WHERE name = ?').run(provenKey, instance, name)
       // (solo: a plain Claude Code session opened from the dashboard, outside any squad.)
       const role = ['coordinator', 'worker', 'solo'].includes(p.role) ? p.role : null

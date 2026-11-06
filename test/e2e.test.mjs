@@ -2601,6 +2601,28 @@ test('what else in the environment changes whom Node trusts is refused unless th
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('a copy of a keyed session\'s secret can\'t use up its claims while it is away', async () => {
+  const configDir = mkdtempSync(join(tmpdir(), 'squadra-cfg-claims-'))
+  const first = new Plugin('claimk', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'solo' }, { configDir })
+  await first.init()
+  await first.waitConnected()
+  const { secret } = JSON.parse(readFileSync(join(first.stateDir, 'identity.json'), 'utf8'))
+  first.close()
+  await waitFor(() => first.proc.exitCode !== null, { what: 'it stopped' })
+  // Twenty and more attempts without its key, from a copy of the secret.
+  let refused = 0
+  for (let i = 0; i < 25; i++) if (!(await api('claimSession', { instance: `copy-of-it-${String(i).padStart(4, '0')}` }, secret)).ok) refused++
+  assert.ok(refused > 0)
+  // It comes back, with its key.
+  const again = new Plugin('claimk', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'solo' }, { configDir })
+  let said = ''
+  again.proc.stderr.on('data', d => { said += d })
+  await again.init()
+  await waitFor(() => /logged in to/.test(said), { what: 'it logged in', timeout: 15_000 })
+  assert.doesNotMatch(said, /Too Many Requests/)
+  again.close()
+})
+
 test('a CLAUDE_CONFIG_DIR that is set and ignored stops the login: the default folder may be another copy\'s', async () => {
   // (Relative, and one where others can write: this test's own folder stays out of the way.)
   const open = mkdtempSync(join(tmpdir(), 'squadra-cfg-open-'))
