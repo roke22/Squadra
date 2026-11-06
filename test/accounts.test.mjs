@@ -527,6 +527,7 @@ test('the QR code for an authenticator app stays what a decoder read', async () 
   // lengths and versions. A change here needs that check again.)
   const { qrSvg } = await import('../server/ui/qr.js')
   const uri = 'otpauth://totp/Squadra%3Aowner%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Squadra&algorithm=SHA1&digits=6&period=30'
-  assert.equal(createHash('sha256').update(qrSvg(uri)).digest('hex'), '2fe22c8243a4755a3054e87dd9517cd2f06197bf12d91ef969c2d40c4c24e99d')
+  // (The modules themselves, whatever else the image says of itself.)
+  assert.equal(createHash('sha256').update(/ d="([^"]+)"/.exec(qrSvg(uri))[1]).digest('hex'), '3296ecfd6a02d8f1ff238e603e9f4eecbcd8c02d2d24510e14912b4e28946625')
   assert.equal(qrSvg('x'.repeat(2000)), null)
 })
