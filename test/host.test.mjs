@@ -89,7 +89,7 @@ echo "PWD: $(pwd)"
 echo "TMUX=\${TMUX:-none}"
 # FULLSCREEN: switches on what Claude Code's full-screen view does.
 while IFS= read -r line; do
-  if [ "$line" = FULLSCREEN ]; then printf '\\033[?1049h\\033[?1000h\\033[?1002h\\033[?1003h\\033[?1006h\\033[?1hFULL VIEW'; else echo "GOT:$line"; fi
+  if [ "$line" = FULLSCREEN ]; then printf '\\033[?1049h\\033[?1000h\\033[?1002h\\033[?1003h\\033[?1006h\\033[?1hFULL VIEW'; elif [ "$line" = DIALOG ]; then printf ' Do you want to proceed?\\n ❯ 1. Yes\\n   2. No\\n Esc to cancel\\n'; elif [ "$line" = NOECHO ]; then stty -echo; else echo "GOT:$line"; fi
 done
 `)
   chmodSync(fakeClaude, 0o755)
@@ -753,6 +753,22 @@ test('fresh start: a coordinator has its idle worker\'s context cleared before a
   assert.ok(!screen('fw2').includes('GOT:/clear'))
   writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
   for (const name of ['fw1', 'fw2']) assert.ok((await dash('terminals/kill', { host: hostId, term: name })).ok)
+  // What the hooks say isn't all: Enter on a question would answer it, and only
+  // what reached the input is sent.
+  for (const [name, type, why] of [['fw3', 'DIALOG', /waiting for an answer/], ['fw4', 'NOECHO', /didn't reach its input/]]) {
+    assert.ok((await dash('terminals/open', { host: hostId, spec: { name, role: 'worker', coordinator: 'fc', folder: allowed } })).ok)
+    await waitFor(() => screen(name).includes('TMUX='), { what: 'it started' })
+    const W = await session(name, 'worker', 'fc', secretOf(name))
+    await W('observe', { events: [ev('observe_start', { level: 'activity' }), ev('stop')] })
+    execFileSync('tmux', ['-L', SOCKET, 'send-keys', '-t', `=sq-${name}:`, '-l', type])
+    execFileSync('tmux', ['-L', SOCKET, 'send-keys', '-t', `=sq-${name}:`, 'Enter'])
+    await sleep(300)
+    f = (await C('freshStart', { chat_id: name })).result
+    assert.equal(f.reason, 'machine_refused', JSON.stringify(f))
+    assert.match(f.text, why)
+    assert.ok(!screen(name).includes('GOT:/clear'), screen(name))
+    assert.ok((await dash('terminals/kill', { host: hostId, term: name })).ok)
+  }
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {

@@ -1151,12 +1151,21 @@ function sessionCommand(s, claude, dir, env) {
 }
 
 async function clearContext(target) {
+  // What the server knows comes from hooks; the screen says what Enter would do.
+  // On a question from Claude Code it would answer it: a permission prompt's
+  // highlighted option is "Yes".
+  const screen = async () => (await tmux(['capture-pane', '-p', '-J', '-t', target])).stdout.split('\n').filter(l => l.trim()).slice(-20).join('\n')
+  if (ASKING_ON_SCREEN.test(await screen())) throw new Error('it is waiting for an answer on its screen')
   // (Typed, then Enter a moment later: as one burst the menu of commands
   // could still be completing "/clear" when Enter arrives.)
   await tmux(['send-keys', '-t', target, '-l', '/clear'])
   await new Promise(r => setTimeout(r, 300))
+  // (Only if it landed where things are typed.)
+  if (!/(^|\s)\/clear\s*$/m.test(await screen())) throw new Error("what was typed didn't reach its input")
   await tmux(['send-keys', '-t', target, 'Enter'])
 }
+
+const ASKING_ON_SCREEN = /^\s*❯\s*\d+\.\s|Esc to cancel|Enter to confirm/m
 
 const claudeCode = {
   // Where the program is (checked, see claudeBinary), and which version.
