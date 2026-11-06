@@ -117,7 +117,7 @@ export function createCompanies(server) {
       return {
         ...m,
         sessions: m.instances.reduce((n, i) => n + i.sessions, 0),
-        isolation: m.instances.length < 2 ? 'dedicated' : users.size === m.instances.length && !users.has(null) ? 'os-user' : 'same-user',
+        isolation: m.machine.startsWith('h_') ? 'unknown' : m.instances.length < 2 ? 'dedicated' : users.size === m.instances.length && !users.has(null) ? 'os-user' : 'same-user',
       }
     }).sort((a, b) => String(a.hostname).localeCompare(String(b.hostname)))
   }

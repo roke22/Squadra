@@ -207,8 +207,10 @@ export function createMachines(platform, { sessions, observation }) {
       throw new ApiError(403, 'Forbidden: the code is wrong or has expired; generate a new one in the dashboard (Machines → + Add machine)')
     }
     // A copy of squadra-host set up for another company (without what the
-    // dashboard's command says, say) would use another's folder. (Older ones don't say.)
-    if (p.company != null && String(p.company) !== companyId) throw new ApiError(403, 'Forbidden: this code is for another company: run the whole command the dashboard gives')
+    // dashboard's command says, say) would use another's folder.
+    // (Older ones don't say, and only a company's own copy keeps its sessions apart:
+    // the command for one always downloads this server's squadra-host.)
+    if (String(p.company ?? (credentialPrefix ? '' : companyId)) !== companyId) throw new ApiError(403, 'Forbidden: this code is for another company: run the whole command the dashboard gives')
     db.prepare('DELETE FROM host_enrollments WHERE code_hash = ?').run(row.code_hash) // single use
     const id = `h_${randomBytes(8).toString('hex')}`
     const info = ownTerminals(sanitizeHostInfo(p.info), id)

@@ -1359,6 +1359,22 @@ test('one machine, two companies, the same session name: two separate copies of 
     const inside = project('shared-a/sub')
     assert.equal((await inDash(b, 'hosts/folders', { host: hostB.id, action: 'add', path: inside })).ok, false)
     assert.throws(() => host(b, ['folders', 'add', shared]), /belongs to another company/)
+    // Written by hand in its settings too: it isn't opened there.
+    const written = JSON.parse(readFileSync(settingsOf(b), 'utf8'))
+    writeFileSync(settingsOf(b), JSON.stringify({ ...written, folders: [...written.folders, shared] }))
+    const handAdded = await inDash(b, 'terminals/open', { host: hostB.id, spec: { name: 'sneaky', role: 'solo', folder: shared } })
+    assert.equal(handAdded.ok, false)
+    writeFileSync(settingsOf(b), JSON.stringify(written))
+    // Settings of the other that can't be read don't open the way.
+    const elsewhere = project('shared-c')
+    const good = readFileSync(settingsOf(a), 'utf8')
+    writeFileSync(settingsOf(a), '{ broken')
+    assert.throws(() => host(b, ['folders', 'add', elsewhere]), /belongs to another company/)
+    writeFileSync(settingsOf(a), good)
+    // Nor can its home be allowed, with the other's folders in it.
+    if (!shared.startsWith(realpathSync(homedir()))) writeFileSync(settingsOf(a), JSON.stringify({ ...JSON.parse(good), folders: [join(homedir(), 'a-project-of-a')] }))
+    assert.throws(() => host(b, ['--allow-home', 'folders']), /holds a folder of another company/)
+    writeFileSync(settingsOf(a), good)
     const own = project('shared-b')
     assert.ok((await inDash(b, 'hosts/folders', { host: hostB.id, action: 'add', path: own })).ok)
 
@@ -1381,6 +1397,33 @@ test('one machine, two companies, the same session name: two separate copies of 
     // A machine of another server is not taken over by accident.
     const moved = spawnSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${a.id}`, 'enroll', 'http://127.0.0.1:9', 'ABCD-EFGH', '--no-service', '--no-plugin', '--insecure'], { env, encoding: 'utf8', timeout: 20_000 })
     assert.match(moved.stderr, /already belongs to/)
+
+    // A copy without a company holding a company's secret (an older version's
+    // doing) takes no other company: the sessions it lists would cross.
+    const plainDir = join(xdg, 'squadra-host')
+    writeFileSync(join(plainDir, 'credentials.json'), JSON.stringify({ server: URL_, id: 'h_00000000', secret: `sh_${b.id}_nothingofthekind000000000000` }))
+    const crossed = spawnSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', URL_, 'ABCD-EFGH', '--no-service', '--no-plugin'], { env, encoding: 'utf8', timeout: 20_000 })
+    assert.match(crossed.stderr, /belongs to another company/)
+    rmSync(join(plainDir, 'credentials.json'))
+    // Nor does a host that says nothing get a company's code: an older program,
+    // with no copy of its own for it.
+    const code = (await inDash(b, 'hosts/enroll', { name: 'old' })).result.code
+    const old = await (await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code, info: {} }) })).json()
+    assert.equal(old.error_code, 403)
+
+    // Run from inside another company's session, or with another's setting
+    // around, each copy still uses its own.
+    const leaked = { ...env, CLAUDE_CONFIG_DIR: join(xdg, 'squadra-host', 'companies', a.id, 'claude'), SQUADRA_COMPANY: a.id, TMUX: 'a-session' }
+    const ownUnit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${b.id}`, 'service', 'print'], { env: leaked, encoding: 'utf8' })
+    assert.match(ownUnit, new RegExp(`CLAUDE_CONFIG_DIR=${xdg}/squadra-host/companies/${b.id}/claude`))
+    const plainUnit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: leaked, encoding: 'utf8' })
+    assert.doesNotMatch(plainUnit, /companies/)
+
+    // What the launcher runs: --company in front of anything.
+    assert.match(host(a, ['help']), /Usage: squadra-host/)
+    assert.match(host(a, ['--version']), /squadra-host \d/)
+    // Tests leave nothing in the real home.
+    assert.ok(!existsSync(join(homedir(), '.local', 'bin', `squadra-host-${a.id}`)))
 
     // And the service of each is its own.
     const unit = host(a, ['service', 'print'])

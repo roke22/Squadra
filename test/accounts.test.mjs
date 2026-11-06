@@ -373,7 +373,7 @@ test('a terminal ticket says who asked for it, and only reaches that company', a
   const co = ok(await owner.post('api/companies/create', { name: 'Who typed' }))
   ok(await owner.post('api/companies/join', { company: co.id }))
   const en = ok(await owner.post(`api/c/${co.id}/hosts/enroll`, { name: 'm' }))
-  const host = ok(await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code: en.code, info: { hostname: 'm' } }) }).then(r => r.json()))
+  const host = ok(await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code: en.code, company: co.id, info: { hostname: 'm' } }) }).then(r => r.json()))
   const hostTicket = ok(await bearer('host/ticket', host.secret, {})).ticket
   const machine = new WebSocket(`ws://127.0.0.1:${PORT}/host/connect`, ['squadra', `auth.${hostTicket}`])
   await new Promise(res => { machine.onopen = res })
@@ -458,7 +458,7 @@ test('nobody keeps a way back: tickets and invitations made before losing access
   assert.equal((await browser().post('auth/invite/accept', { token: spare, name: 'Spare', password: PASSWORD })).error_code, 404)
   assert.equal((await browser().post('auth/invite/info', { token: spare })).error_code, 404)
   assert.equal(ok(await manager.b.get('api/me')).companies[0].role, 'observer')
-  assert.equal((await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code: unused, info: {} }) }).then(r => r.json())).ok, false, 'the code')
+  assert.equal((await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code: unused, company: co.id, info: {} }) }).then(r => r.json())).ok, false, 'the code')
 
   // Removed, with what it had made while it could: the same.
   ok(await owner.post(`${path}/members/role`, { user: manager.id, role: 'manager' }))

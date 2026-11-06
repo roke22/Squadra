@@ -71,7 +71,7 @@ test('a company has its own folder, and its credentials say whose they are', asy
   assert.ok(existsSync(join(dataDir, 'companies', a.id, 'squadra.db')))
   assert.match(await register(a, 'prefixed'), new RegExp(`^sq_${a.id}_`))
   const en = ok(await act(a, 'hosts/enroll', { name: 'm1' }))
-  const host = ok(await call('host/enroll', { code: en.code, info: { hostname: 'm1' } }))
+  const host = ok(await call('host/enroll', { code: en.code, company: a.id, info: { hostname: 'm1' } }))
   assert.match(host.secret, new RegExp(`^sh_${a.id}_`))
   // What the machine and its plugin check, as they do today.
   assert.match(host.secret, /^sh_[A-Za-z0-9_-]{20,200}$/)
@@ -244,11 +244,11 @@ function socket(path, cred) {
 test('a machine belongs to its company, and a terminal ticket only reaches that company\'s machines', async () => {
   const [a, b] = [await newCompany('Term A'), await newCompany('Term B')]
   const en = ok(await act(a, 'hosts/enroll', { name: 'shared-name' }))
-  const host = ok(await call('host/enroll', { code: en.code, info: { hostname: 'shared-name' } }))
+  const host = ok(await call('host/enroll', { code: en.code, company: a.id, info: { hostname: 'shared-name' } }))
   // A code only in its company, and only once.
   assert.deepEqual((await read(b, 'hosts')), [])
   assert.equal((await read(a, 'hosts')).length, 1)
-  assert.equal((await call('host/enroll', { code: en.code, info: {} })).ok, false)
+  assert.equal((await call('host/enroll', { code: en.code, company: a.id, info: {} })).ok, false)
 
   const ticket = ok(await call('host/ticket', {}, host.secret)).ticket
   const machine = await socket('/host/connect', ticket)
@@ -389,7 +389,7 @@ test('after a restart every company is back, with its sessions, machines and lim
     company = ok(await on('admin/createCompany', { name: 'Stays', limits: { max_sessions: 7 } }))
     secret = ok(await on('register', { name: 'stays' }, company.join_token)).secret
     const en = ok(await on(`api/c/${company.id}/hosts/enroll`, { name: 'm' }))
-    host = ok(await on('host/enroll', { code: en.code, info: { hostname: 'm' } }))
+    host = ok(await on('host/enroll', { code: en.code, company: company.id, info: { hostname: 'm' } }))
     // A code still waiting when the server stops goes on working after it.
     company.code = ok(await on(`api/c/${company.id}/hosts/enroll`, { name: 'later' })).code
   } finally { await stop(proc) }
@@ -401,7 +401,7 @@ test('after a restart every company is back, with its sessions, machines and lim
     assert.equal(ok(await on('getMe', {}, secret)).id, 'stays')
     assert.ok(ok(await on('host/ticket', {}, host.secret)).ticket)
     ok(await on('register', { name: 'again' }, company.join_token))
-    assert.equal(ok(await on('host/enroll', { code: company.code, info: { hostname: 'later' } })).name, 'later')
+    assert.equal(ok(await on('host/enroll', { code: company.code, company: company.id, info: { hostname: 'later' } })).name, 'later')
     assert.equal(ok(await on(`api/c/${company.id}/hosts`)).length, 2)
     assert.deepEqual(ok(await on('api/state')).sessions, [])
   } finally { await stop(proc) }

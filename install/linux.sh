@@ -30,7 +30,7 @@ main() {
       --server-key) ARGS+=("--server-key=${2:-}"); shift 2 ;; # (from windows.bat: no "=" there)
       --company) ARGS+=("--company=${2:-}"); shift 2 ;;
       --os-user) [ $# -ge 2 ] || { echo "--os-user needs a name" >&2; exit 2; }; OS_USER="$2"; shift 2 ;;
-      --os-user=*) OS_USER="${1#--os-user=}"; shift ;;
+      --os-user=*) OS_USER="${1#--os-user=}"; [ -n "$OS_USER" ] || { echo "--os-user needs a name" >&2; exit 2; }; shift ;;
       --allow-root) ROOT_OK=1; shift ;;
       *) ARGS+=("$1"); shift ;;
     esac
@@ -51,7 +51,7 @@ main() {
   # really keeps companies apart on one machine. The rest runs again as that user.
   if [ -n "$OS_USER" ]; then
     case "$OS_USER" in
-      root|*[!a-z0-9_-]*|[!a-z_]*) echo "--os-user: \"$OS_USER\" is not a name for a new user (lowercase letters, digits, - and _)" >&2; exit 2 ;;
+      ""|root|*[!a-z0-9_-]*|[!a-z_]*) echo "--os-user: \"$OS_USER\" is not a name for a new user (lowercase letters, digits, - and _)" >&2; exit 2 ;;
     esac
     [ "$(id -u)" -eq 0 ] || { echo "--os-user needs root: run this with sudo." >&2; exit 1; }
     if ! id "$OS_USER" >/dev/null 2>&1; then
@@ -59,6 +59,10 @@ main() {
       useradd -m -s /bin/bash "$OS_USER"
       # (Many systems leave a new home readable by everyone: that isn't apart.)
       chmod 700 "$(getent passwd "$OS_USER" | cut -d: -f6)"
+    elif [ "$(id -u "$OS_USER")" -lt 1000 ]; then
+      # (A system account: its sessions would have whatever rights it has.)
+      echo "--os-user: $OS_USER is an account of the system, not a person's or a company's: choose another name." >&2
+      exit 2
     fi
     if ! command -v tmux >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then install_pkg tmux curl; fi
     # (So its service keeps running without anyone logged in as it.)

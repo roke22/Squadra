@@ -49,7 +49,8 @@ delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
 
 // The company this copy serves. (None: the server's first company, or a server
 // without companies, with everything where it always was.)
-const COMPANY = process.argv.slice(2).find(a => a.startsWith('--company='))?.slice('--company='.length) ?? process.env.SQUADRA_COMPANY ?? ''
+const UNDER_SESSION = !!process.env.TMUX // (sessions never get the variable below: see tmuxEnv)
+const COMPANY = process.argv.slice(2).find(a => a.startsWith('--company='))?.slice('--company='.length) ?? (UNDER_SESSION ? '' : process.env.SQUADRA_COMPANY) ?? ''
 if (COMPANY && !/^[a-z0-9]{8}$/.test(COMPANY)) {
   process.stderr.write('squadra-host: --company must be the 8 characters the dashboard gives\n')
   process.exit(2)
@@ -57,8 +58,11 @@ if (COMPANY && !/^[a-z0-9]{8}$/.test(COMPANY)) {
 if (COMPANY) process.env.SQUADRA_COMPANY = COMPANY // (for what this program starts again)
 const BASE_DIR = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')
 const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? (COMPANY ? join(BASE_DIR, 'companies', COMPANY) : BASE_DIR)
-// Its own Claude Code: another login, history, skills and plugin settings.
-if (COMPANY && !process.env.CLAUDE_CONFIG_DIR) process.env.CLAUDE_CONFIG_DIR = join(CONFIG_DIR, 'claude')
+// Its own Claude Code: another login, history, skills and plugin settings. Always
+// this one: run from inside another company's session, that session's isn't this
+// copy's. And without a company, not a company's folder, for the same reason.
+if (COMPANY) process.env.CLAUDE_CONFIG_DIR = join(CONFIG_DIR, 'claude')
+else if (process.env.CLAUDE_CONFIG_DIR && resolve(process.env.CLAUDE_CONFIG_DIR).startsWith(join(BASE_DIR, 'companies') + sep)) delete process.env.CLAUDE_CONFIG_DIR
 const CREDENTIALS_FILE = join(CONFIG_DIR, 'credentials.json')
 const HOST_KEY_FILE = join(CONFIG_DIR, 'host-key.json')
 const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json')
@@ -160,13 +164,20 @@ function otherInstances() {
   if (process.env.SQUADRA_HOST_DIR) return []
   const dirs = [BASE_DIR]
   try { for (const d of readdirSync(join(BASE_DIR, 'companies'))) dirs.push(join(BASE_DIR, 'companies', d)) } catch {}
-  return dirs.filter(d => resolve(d) !== resolve(CONFIG_DIR) && existsSync(join(d, 'credentials.json')))
+  return dirs.filter(d => resolve(d) !== resolve(CONFIG_DIR))
 }
+const sharesUser = () => otherInstances().some(d => existsSync(join(d, 'credentials.json')))
 // A folder belongs to one company on a machine: two would share its repository
-// and its .claude/, each without knowing. (The settings of each say which.)
+// and its .claude/, each without knowing. (The settings of each say which, also
+// of a copy that left its server: what it opened may still run. One that can't
+// be read says nothing it can be trusted for, so it counts as saying yes.)
 function folderOfAnotherCompany(real) {
   for (const dir of otherInstances()) {
-    const list = readJson(join(dir, 'settings.json'), null)?.folders
+    let list
+    try { list = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).folders } catch (err) {
+      if (err.code === 'ENOENT') continue
+      return true
+    }
     for (const f of Array.isArray(list) ? list : []) {
       if (typeof f === 'string' && (withinById(real, realOr(f)) || withinById(realOr(f), real))) return true
     }
@@ -536,6 +547,8 @@ function computeTrustedFolders() {
 const tmuxEnv = () => {
   const e = { ...process.env, PATH: trustedPath() }
   delete e.TMUX; delete e.TMUX_PANE
+  // (This program's own note to itself: no business of a session, nor of what it runs.)
+  delete e.SQUADRA_COMPANY
   // (tmux -u already handles UTF-8; a locale is only added when there is none at all, on Linux.)
   if (!e.LC_ALL && !e.LC_CTYPE && !e.LANG && platform() !== 'darwin') e.LC_CTYPE = 'C.UTF-8'
   return e
@@ -1050,11 +1063,11 @@ async function prepareSession(s, settings) {
   const st = await pluginStatus(claude)
   if (st) PLUGIN = st
   if (st && (!st.installed || !st.enabled)) {
-    throw new Error(`the Squadra plugin is ${PLUGIN.installed ? 'disabled' : 'not installed'} in Claude Code on this machine. Run "squadra-host plugin" there, or: ${PLUGIN_COMMANDS}`)
+    throw new Error(`the Squadra plugin is ${PLUGIN.installed ? 'disabled' : 'not installed'} in Claude Code on this machine. Run "${cli()} plugin" there, or: ${PLUGIN_COMMANDS}`)
   }
   // An older plugin can't talk to this server (it doesn't send its session id).
   if (st?.version && olderVersion(st.version, VERSION)) {
-    throw new Error(`the Squadra plugin on this machine is ${plain(st.version)}, older than this squadra-host (${VERSION}): run "squadra-host plugin" there, then open the session again`)
+    throw new Error(`the Squadra plugin on this machine is ${plain(st.version)}, older than this squadra-host (${VERSION}): run "${cli()} plugin" there, then open the session again`)
   }
   // The plugin ignores a CLAUDE_CONFIG_DIR inside the highest folder above the
   // session's folder that doesn't contain the home (a repository could plant
@@ -1538,7 +1551,7 @@ async function hostInfo() {
     machine: machineId(),
     os_user: (() => { try { return userInfo().username } catch { return null } })(),
     // Another company runs here under this same system user: apart for accidents only.
-    shares_user: otherInstances().length > 0,
+    shares_user: sharesUser(),
     platform: platform(),
     arch: arch(),
     node: process.version,
@@ -2032,6 +2045,10 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   // Already another server's: its sessions would go on running here, and appear
   // in the new one. Only by asking for it, and never by accident.
   const enrolled = readJson(CREDENTIALS_FILE, null)
+  // Nor another company's (written by an older version, with no copy of its own):
+  // its sessions would appear in this one. Its secret says whose it is.
+  const heldBy = enrolled?.company ?? /^sh_([a-z0-9]{8})_/.exec(String(enrolled?.secret ?? ''))?.[1] ?? ''
+  if (enrolled?.secret && heldBy !== COMPANY) die(`this copy of squadra-host already belongs to another company: nothing was done. To leave it first: ${cli()} forget`, 2)
   if (enrolled?.server && enrolled.server !== server) die(`this machine already belongs to ${plain(enrolled.server)}: nothing was done. To leave it first: ${cli()} forget`, 2)
   // The dashboard's command says which server this should be: with it, nothing
   // here depends on who answers first.
@@ -2096,7 +2113,8 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   let launcher = null, svc = null
   if (process.env.SQUADRA_HOST_DIR) service = false
   else {
-    try { launcher = installLauncher() } catch (err) { log(`⚠️  could not add the squadra-host command (${err.message})`) }
+    // (Not the tests': they would leave it in the real home.)
+    if (process.env.SQUADRA_HOST_TEST_ALLOW_TMP !== '1') try { launcher = installLauncher() } catch (err) { log(`⚠️  could not add the squadra-host command (${err.message})`) }
     const other = someoneElsesService()
     if (service && other) log(`the service on this machine (${other}) runs another squadra-host: left as it is`)
     else if (service) { try { svc = await installService() } catch (err) { svc = { ok: false, why: err.message } } }
@@ -2332,7 +2350,7 @@ async function service(action) {
   if (action === 'remove') { await removeService(); return log(`service removed: it no longer starts by itself (run it with: ${cli()})`) }
   if (action && action !== 'install') die(`service ${plain(action)}: use "service", "service remove" or "service print"`, 2)
   const r = await installService()
-  if (!r.ok) die(`could not install the service: ${r.why}. Run "squadra-host" in a terminal instead (it must stay open), or set it up by hand from "squadra-host service print".`)
+  if (!r.ok) die(`could not install the service: ${r.why}. Run "${cli()}" in a terminal instead (it must stay open), or set it up by hand from "${cli()} service print".`)
   log(`running in the background as ${r.how}`)
 }
 
@@ -2439,11 +2457,11 @@ async function update({ allowUnsigned = false, allowDowngrade = false } = {}) {
     if (res.ok) signature = (await res.text()).slice(0, 1024).trim()
   } catch {}
   const unsigned = unsignedReason(body, signature)
-  if (unsigned && !allowUnsigned) die(`not installing what ${creds.server} sent: ${unsigned}. Nothing was changed. If you built or trust this server's copy yourself, run: squadra-host update --allow-unsigned`)
+  if (unsigned && !allowUnsigned) die(`not installing what ${creds.server} sent: ${unsigned}. Nothing was changed. If you built or trust this server's copy yourself, run: ${cli()} update --allow-unsigned`)
   if (unsigned) log(`⚠️  installing an unsigned squadra-host because you asked to: ${unsigned}`)
   const v = body.length < 4 * 1024 * 1024 ? /^const VERSION = '([0-9][0-9A-Za-z.-]{0,30})'$/m.exec(body.toString('utf8'))?.[1] : null
   if (!v) die('the server did not send squadra-host: nothing was changed')
-  if (olderVersion(v, VERSION) && !allowDowngrade) die(`the server has squadra-host ${plain(v)}, older than this one (${VERSION}): nothing was changed. If you did mean to go back, run: squadra-host update --allow-downgrade`)
+  if (olderVersion(v, VERSION) && !allowDowngrade) die(`the server has squadra-host ${plain(v)}, older than this one (${VERSION}): nothing was changed. If you did mean to go back, run: ${cli()} update --allow-downgrade`)
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
   // (.mjs: what is checked is read as what it will run as.)
   const tmp = `${INSTALLED_SCRIPT}.${process.pid}.tmp.mjs`
@@ -2459,14 +2477,14 @@ async function update({ allowUnsigned = false, allowDowngrade = false } = {}) {
   log(v === VERSION ? `squadra-host ${v} is the server's version` : `squadra-host updated: ${VERSION} → ${plain(v)}`)
   // (The new copy does the rest: its plugin version, its service file.)
   const failed = []
-  const again = args => { try { execFileSync(process.execPath, [INSTALLED_SCRIPT, ...args], { stdio: 'inherit', timeout: 600_000 }) } catch { failed.push(args[0]) } }
+  const again = args => { try { execFileSync(process.execPath, [INSTALLED_SCRIPT, ...(COMPANY ? [`--company=${COMPANY}`] : []), ...args], { stdio: 'inherit', timeout: 600_000 }) } catch { failed.push(args[0]) } }
   again(['plugin'])
   const other = someoneElsesService()
   if (other) log(`the service on this machine (${other}) runs another squadra-host: left as it is`)
   else if (existsSync(serviceFile().path)) again(['service'])
   else if (runningInstance()) log('restart squadra-host to use the new version')
   try { installLauncher() } catch {}
-  if (failed.length) die(`the update is installed, but this step failed: ${failed.join(', ')}. Run "squadra-host ${failed[0]}" to try again${existsSync(backup) ? `; the previous program is in ${backup}` : ''}`)
+  if (failed.length) die(`the update is installed, but this step failed: ${failed.join(', ')}. Run "${cli()} ${failed[0]}" to try again${existsSync(backup) ? `; the previous program is in ${backup}` : ''}`)
 }
 
 // settings.json written by an older version: what were only its defaults
@@ -2487,6 +2505,7 @@ function migrateSettings() {
 // --allow-home / --no-allow-home: the home folder itself as a place for
 // sessions (kept in settings.json, so the service keeps it too).
 function setAllowHome(on) {
+  if (on && folderOfAnotherCompany(realOr(HOME))) throw new Error('your home folder holds a folder of another company on this machine: it can\'t be allowed here')
   const s = rawSettings()
   s.allow_home = on
   s.folders = s.folders.filter(f => !isHome(realOr(f)))
@@ -2498,7 +2517,7 @@ function setAllowHome(on) {
 
 async function main() {
   if (platform() === 'win32') die('squadra-host does not run on native Windows (it needs tmux). Run it inside WSL, for example Ubuntu, together with Claude Code: see "Windows (WSL)" in docs/reference.md.')
-  const argv = process.argv.slice(2)
+  const argv = process.argv.slice(2).filter(a => !a.startsWith('--company='))
   if (['-h', '--help', 'help'].includes(argv[0])) return process.stdout.write(USAGE)
   if (['-v', '--version', 'version'].includes(argv[0])) return process.stdout.write(`squadra-host ${VERSION}\n`)
   migrateSettings()
@@ -2507,7 +2526,7 @@ async function main() {
   const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade']
   const serverKeyArg = argv.find(a => a.startsWith('--server-key='))?.slice('--server-key='.length)
   if (serverKeyArg !== undefined && !/^[0-9a-f]{64}$/.test(serverKeyArg)) die('--server-key must be the 64 hex characters the dashboard gives', 2)
-  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=') && !f.startsWith('--company=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
+  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
   if (flags.has('--allow-home') && flags.has('--no-allow-home')) die('--allow-home or --no-allow-home, not both', 2)
   if (flags.has('--allow-home') || flags.has('--no-allow-home')) {
     try { setAllowHome(flags.has('--allow-home')) } catch (err) { die(err.message, 2) }
@@ -2543,7 +2562,7 @@ async function main() {
     if (other && UNDER_SERVICE) {
       log(`another squadra-host is running here (pid ${other}): waiting for it to end`)
       while (runningInstance()) await new Promise(r => setTimeout(r, 10_000))
-    } else if (other) die(`squadra-host is already running here for this company (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`, 2)
+    } else if (other) die(`squadra-host is already running here for this company (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: ${cli()} service remove`, 2)
     await claimInstance()
   }
   ensureClaudeHome()
