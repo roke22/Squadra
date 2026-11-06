@@ -218,11 +218,18 @@ export function createSessions(platform) {
   const approvalRow = name => db.prepare('SELECT needs_approval, role, coordinator, opened_role FROM identities WHERE name = ?').get(name)
   const notApproved = name => new ApiError(403, `Forbidden: "${name}" has not been approved as a coordinator yet: the user must approve it in the dashboard (open that session: Approve as coordinator)`, { parameters: { reason: 'approval_pending' } })
   function checkApproval(from, target, hello) {
-    if (target.startsWith('#')) return
+    if (target.startsWith('#')) {
+      // A group is a message to each member: the same rule, member by member.
+      for (const { name } of db.prepare('SELECT name FROM group_members WHERE group_id = ? AND name != ?').all(target, from)) checkApproval(from, name, false)
+      return
+    }
     const f = approvalRow(from), t = approvalRow(target)
     if (!f || !t) return
-    if (f.needs_approval && (t.coordinator === from || (t.role == null && !t.opened_role))) throw notApproved(from)
-    if (t.needs_approval && f.coordinator === target && !hello) throw notApproved(target)
+    // (A worker whose coordinator was deleted still follows that name, in its own
+    // pins, and only the column was cleared: it might follow whoever takes it now.)
+    const mightFollow = (worker, name) => worker.coordinator === name || (worker.role === 'worker' && worker.coordinator == null)
+    if (f.needs_approval && (mightFollow(t, from) || (t.role == null && !t.opened_role))) throw notApproved(from)
+    if (t.needs_approval && mightFollow(f, target) && !hello) throw notApproved(target)
   }
   function approveSession(name) {
     if (!identityExists(name)) throw bad('session not found')

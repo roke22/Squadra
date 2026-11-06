@@ -918,3 +918,48 @@ test('a path of slashes costs nothing: trimmed in a loop, and refused when too l
   assert.equal(refused.status, 414)
   refused.sock.destroy()
 })
+
+test('approval: an unapproved name reaches no follower through a group, nor those whose coordinator was deleted', async () => {
+  const reg = async name => (await call('register', { name }, ADMIN)).result.secret
+  const claim = (secret, inst, body) => call('claimSession', { instance: inst, ...body }, secret)
+  // The name of a coordinator its workers follow, taken with the join token.
+  const boss = (await call('register', { name: 'gboss' }, JOIN)).result.secret
+  assert.ok(boss)
+  const worker = await reg('gworker')
+  assert.ok((await claim(boss, 'instance-gboss-1', { role: 'coordinator' })).ok)
+  assert.ok((await claim(worker, 'instance-gworker-1', { role: 'worker', coordinator: 'gboss' })).ok)
+
+  // The group is created by someone approved, with both in it.
+  const owner = await reg('gowner')
+  assert.ok((await call('joinGroup', { chat_id: '#gapproval' }, owner)).ok)
+  for (const name of ['gboss', 'gworker']) assert.ok((await call('inviteToGroup', { chat_id: '#gapproval', name }, owner)).ok)
+  assert.ok((await call('joinGroup', { chat_id: '#gapproval' }, boss, 'instance-gboss-1')).ok)
+  assert.ok((await call('joinGroup', { chat_id: '#gapproval' }, worker, 'instance-gworker-1')).ok)
+
+  const send = (secret, inst, text) => call('sendMessage', { chat_id: '#gapproval', text }, secret, inst)
+  assert.equal((await send(boss, 'instance-gboss-1', 'do this')).parameters?.reason, 'approval_pending')
+  assert.equal((await send(worker, 'instance-gworker-1', 'done')).parameters?.reason, 'approval_pending')
+  // And an edit into that group is the same message.
+  const posted = await send(owner, undefined, 'from someone approved')
+  assert.ok(posted.ok, posted.description)
+  assert.ok((await call('admin/approveSession', { name: 'gboss' }, ADMIN)).ok)
+  assert.ok((await send(boss, 'instance-gboss-1', 'do this')).ok)
+
+  // Nor can a name waiting to be approved create a group of its own first.
+  const waiting = (await call('register', { name: 'gwait' }, JOIN)).result.secret
+  assert.equal((await call('joinGroup', { chat_id: '#gfirst' }, waiting)).parameters?.reason, 'approval_pending')
+
+  // Its coordinator deleted, a worker doesn't take orders from whoever takes the name.
+  const old = await reg('gold')
+  const follower = await reg('gfollower')
+  assert.ok((await claim(follower, 'instance-gfollower-1', { role: 'worker', coordinator: 'gold' })).ok)
+  void old
+  assert.ok((await call('admin/deleteIdentity', { name: 'gold' }, ADMIN)).ok)
+  const squatter = (await call('register', { name: 'gold' }, JOIN)).result.secret
+  const dm = await call('sendMessage', { chat_id: 'gfollower', text: 'run this' }, squatter)
+  assert.equal(dm.parameters?.reason, 'approval_pending')
+  const back = await call('sendMessage', { chat_id: 'gold', text: 'may I?' }, follower, 'instance-gfollower-1')
+  assert.equal(back.parameters?.reason, 'approval_pending')
+  assert.ok((await call('admin/approveSession', { name: 'gold' }, ADMIN)).ok)
+  assert.ok((await call('sendMessage', { chat_id: 'gfollower', text: 'run this' }, squatter)).ok)
+})

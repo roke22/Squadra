@@ -101,8 +101,11 @@ export function createMessaging(platform, { sessions }) {
     if (!ident) return false
     const since = Math.max(identityCreatedAt(name), ident.created_at)
     const wrote = (a, b) => db.prepare('SELECT 1 FROM messages WHERE from_name = ? AND target = ? AND system = 0 AND auto = 0 AND created_at >= ? LIMIT 1').get(a, b, since)
-    return !!((wrote(name, id) && wrote(id, name)) || linked(name, id) ||
-      db.prepare('SELECT 1 FROM group_members a JOIN group_members b ON a.group_id = b.group_id WHERE a.name = ? AND b.name = ? LIMIT 1').get(name, id))
+    if ((wrote(name, id) && wrote(id, name)) || linked(name, id)) return true
+    // (A shared group isn't a relation while the approval rule keeps these two apart.)
+    if (!db.prepare('SELECT 1 FROM group_members a JOIN group_members b ON a.group_id = b.group_id WHERE a.name = ? AND b.name = ? LIMIT 1').get(name, id)) return false
+    try { checkApproval(name, id, false); checkApproval(id, name, false) } catch { return false }
+    return true
   }
   function closeGroup(id) {
     if (!GROUP_RE.test(String(id))) return // only groups have a history to delete
@@ -324,6 +327,9 @@ export function createMessaging(platform, { sessions }) {
       if (db.prepare('SELECT COUNT(*) AS n FROM group_members WHERE name = ?').get(name).n >= 50) throw new ApiError(403, 'Forbidden: a session can be in at most 50 groups')
       let created = false
       if (!group) {
+        // (Whoever creates a name owns it: not one still waiting to be approved.
+        // It can still take part in the groups of others.)
+        if (db.prepare('SELECT needs_approval FROM identities WHERE name = ?').get(name)?.needs_approval) throw new ApiError(403, `Forbidden: "${name}" can't create a group until it is approved in the dashboard`, { parameters: { reason: 'approval_pending' } })
         // At most 50 groups owned per session.
         if (db.prepare('SELECT COUNT(*) AS n FROM groups WHERE owner = ?').get(name).n >= 50) throw new ApiError(403, 'Forbidden: a session can own at most 50 groups')
         db.prepare('INSERT INTO groups (id, created_at, owner) VALUES (?, ?, ?)').run(id, now(), name)
