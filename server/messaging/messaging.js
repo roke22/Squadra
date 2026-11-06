@@ -7,7 +7,7 @@ import {
 
 export function createMessaging(platform, { sessions }) {
   const {
-    db, signAsServer, broadcast, inTx, bus, dataDir, allow, rateLimit, spendStorage, readLimit, groupLimit, quota,
+    db, signAsServer, broadcast, inTx, bus, dataDir, allow, rateLimit, spendStorage, ensureRoom, readLimit, groupLimit, quota,
     companyId, credentialPrefix, log,
   } = platform
   const {
@@ -17,6 +17,7 @@ export function createMessaging(platform, { sessions }) {
 
   const MAX_TEXT = 32_000                    // per message, chars
   const MAX_FILE_BYTES = 50 * 1024 * 1024    // 50 MB
+  const STORED_TEXT_MB_PER_HOUR = 100        // per session, as it lands on disk (quota stored_text_mb_hour)
   const UPLOAD_BUDGET_BYTES = 500 * 1024 * 1024 // per identity per hour
   const MAX_FILES_GB = Number(process.env.SQUADRA_MAX_FILES_GB ?? 10) // attachments kept, in all
   const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // an invitation to a group nobody used
@@ -152,6 +153,13 @@ export function createMessaging(platform, { sessions }) {
     if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{1,1024}$/.test(v)) throw bad('invalid squadra_sig')
     return v
   }
+  // What a text costs the disk: its bytes (a character can take four), in the
+  // message and again in each recipient's queue. The budget in characters
+  // doesn't see either.
+  function spendStored(from, text, recipients) {
+    spendStorage('stored-text', from, Buffer.byteLength(text ?? '', 'utf8') * (1 + recipients.length), quota('stored_text_mb_hour', STORED_TEXT_MB_PER_HOUR) * 1024 ** 2)
+  }
+
   function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = false, auto = false, fyi = false, report = null, sig = null, hello = false }) {
     if (text != null && typeof text !== 'string') throw bad('text must be a string')
     // (Far too long is refused before the cleaning, which costs the whole text.)
@@ -197,6 +205,7 @@ export function createMessaging(platform, { sessions }) {
       throw new ApiError(403, `Forbidden: "${o.name}" is a worker and is not connected right now; the message was not sent`,
         { parameters: { reason: 'recipient_offline', name: o.name, last_seen_at: o.last_seen_at } })
     }
+    if (!system) { ensureRoom(); spendStored(from, text, recipients) }
     const info = db.prepare('INSERT INTO messages (from_name, target, text, reply_to, file_id, file_kind, created_at, system, auto, fyi, report, sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(from, target, text ?? null, reply, fileId ?? null, fileKind ?? null, now(), system ? 1 : 0, auto ? 1 : 0, fyi ? 1 : 0, report, sig)
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid)
@@ -250,12 +259,15 @@ export function createMessaging(platform, { sessions }) {
       // Still allowed to write there (a group you left is closed to you).
       resolveTarget(row.target, name)
       checkApproval(name, row.target, false)
+      ensureRoom()
+      const recipients = recipientsOf(row.target, name)
+      spendStored(name, p.text, recipients)
       db.prepare('UPDATE messages SET text = ?, edited_at = ?, sig = ? WHERE id = ?').run(p.text, now(), sigParam(p.squadra_sig), id)
       const edited = db.prepare('SELECT * FROM messages WHERE id = ?').get(id)
       const msg = messageObj(edited)
       // Only to whoever can see the original, and not queued for workers that
       // are offline (like a new message).
-      for (const r of recipientsOf(row.target, name)) {
+      for (const r of recipients) {
         if (!canSeeMessage(r, edited)) continue
         if (!isOnline(r) && roleOf(r) === 'worker') continue
         pushUpdate(r, { edited_message: msg }, name)
@@ -422,6 +434,7 @@ export function createMessaging(platform, { sessions }) {
   async function upload(name, kind, query, req, stillValid = () => {}) {
     rateLimit(name)
     const target = resolveTarget(query.get('chat_id'), name)
+    ensureRoom()
     spendStorage('text', name, String(query.get('caption') ?? '').length) // a caption is message text
     const fileName = (query.get('filename') ?? 'file').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'file'
     // Disk budget: at most 500 MB of uploads per identity per hour, counting

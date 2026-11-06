@@ -15,7 +15,7 @@ const COMPANY_NAME = /^[\p{L}\p{N} ._&-]{1,80}$/u
 const CREDENTIAL_COMPANY = /^s[qjh]_([a-z0-9]{8})_/
 
 // What a company may keep, when it isn't what the server starts with.
-const QUOTAS = ['max_sessions', 'max_messages', 'max_events', 'max_updates', 'max_files_gb', 'retention_days', 'event_hours']
+const QUOTAS = ['max_sessions', 'max_messages', 'max_events', 'max_updates', 'max_files_gb', 'max_db_mb', 'stored_text_mb_hour', 'retention_days', 'event_hours']
 const RETENTION = ['retention_days', 'event_hours']
 
 // How long a company waits after being deleted, in case it was a mistake.

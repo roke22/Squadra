@@ -17,7 +17,8 @@ export * from './roles.js'
 
 import { openCompanyCredentials } from './credentials.js'
 import { openDatabase } from './database.js'
-import { createLimits } from './limits.js'
+import { createLimits, whyNoRoom } from './limits.js'
+import { ApiError } from './errors.js'
 import { createStream } from './stream.js'
 
 export const FIRST_COMPANY = 'default'
@@ -35,12 +36,23 @@ export function createPlatform(server, { id, dir, quotas, routeEnrollment }) {
   const stopTimers = () => { for (const t of timers) clearInterval(t); timers.clear() }
   // The first company's credentials have no prefix, as they always were.
   const credentialPrefix = id === FIRST_COMPANY ? '' : `${id}_`
+  // (The credentials first: they make the company's folder.)
+  const credentials = openCompanyCredentials(dir, server, { id, credentialPrefix })
+  const opened = openDatabase(dir)
+  // Looked at every few seconds, not on every write.
+  let roomUntil = 0, noRoom = null
+  function ensureRoom() {
+    const t = Date.now()
+    if (t >= roomUntil) { noRoom = whyNoRoom(opened.db, dir, quotas.max_db_mb); roomUntil = t + 5000 }
+    if (noRoom) throw new ApiError(507, `Insufficient Storage: ${noRoom}`)
+  }
   return {
     ...server, companyId: id, dataDir: dir, credentialPrefix, routeEnrollment, every, stopTimers,
     quota: (what, otherwise) => quotas[what] ?? otherwise,
-    setQuotas: limits => { quotas = limits },
+    setQuotas: limits => { quotas = limits; roomUntil = 0 },
+    ensureRoom,
     log: text => process.stderr.write(`squadra-server: ${credentialPrefix && `[${id}] `}${text}\n`),
-    ...openCompanyCredentials(dir, server, { id, credentialPrefix }), ...openDatabase(dir), ...createStream(every),
+    ...credentials, ...opened, ...createStream(every),
     ...createLimits(), bus: new EventEmitter(),
   }
 }

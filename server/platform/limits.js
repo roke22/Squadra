@@ -1,9 +1,28 @@
+import { statfsSync } from 'node:fs'
 import { now } from './basics.js'
 import { ApiError } from './errors.js'
 
 // Storage limits, so no session (or set of sessions) can fill the disk:
 const STORED_BYTES_PER_HOUR = 30 * 1024 * 1024 // per identity: observation events, and message text, each
 const RATE_LIMIT_PER_MIN = 120             // messages per sender per minute
+
+// What is kept free: past either, what sessions add is refused, while deleting
+// and signing in go on working, so there is a way out of it.
+const DATABASE_MB = 20 * 1024              // per company (quota max_db_mb)
+const MIN_FREE_MB = 500                    // on the volume (SQUADRA_MIN_FREE_MB; 0 turns it off)
+
+// Why a company can't take more right now, or null. By the pages in use, not
+// the file's size: what was deleted leaves room in a file that doesn't shrink.
+export function whyNoRoom(db, dir, maxDbMb = DATABASE_MB) {
+  const pragma = what => Object.values(db.prepare(`PRAGMA ${what}`).get())[0]
+  if ((pragma('page_count') - pragma('freelist_count')) * pragma('page_size') > maxDbMb * 1024 ** 2) return 'this company has reached the most it can keep'
+  const minFree = Number(process.env.SQUADRA_MIN_FREE_MB ?? MIN_FREE_MB)
+  // (A disk that can't say how much it has isn't refused for that.)
+  let free = Infinity
+  try { const fs = statfsSync(dir); free = fs.bavail * fs.bsize } catch {}
+  if (free < minFree * 1024 ** 2) return 'the server is running out of disk'
+  return null
+}
 
 // IPv6 clients are counted per /64 (one machine usually has a whole /64).
 export function ipKey(ip) {

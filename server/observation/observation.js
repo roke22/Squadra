@@ -1,7 +1,7 @@
 import { cutText, cleanText, now, ApiError, bad } from '../platform/index.js'
 
 export function createObservation(platform) {
-  const { db, inTx, bus, broadcast, spendStorage, quota } = platform
+  const { db, inTx, bus, broadcast, spendStorage, ensureRoom, quota } = platform
   const eventKeptMs = () => quota('event_hours', Number(process.env.OBSERVE_TTL_HOURS ?? 24)) * 60 * 60 * 1000
 
   const MAX_EVENTS = Number(process.env.SQUADRA_MAX_EVENTS ?? 1_000_000)       // observation events kept, in all
@@ -135,6 +135,7 @@ export function createObservation(platform) {
   function observe(name, p) {
     const events = Array.isArray(p.events) ? p.events : null
     if (!events || events.length > 200) throw bad('events must be an array of at most 200 items')
+    ensureRoom()
     observeBudget(name, events.length)
     const insert = db.prepare('INSERT INTO events (session, ts, kind, data) VALUES (?, ?, ?, ?)')
     // The whole batch is checked first, then stored at once: all of it or none

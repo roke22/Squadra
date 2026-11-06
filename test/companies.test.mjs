@@ -231,6 +231,83 @@ test('budgets are per company: one using up its own leaves the same name elsewhe
   void by
 })
 
+test('text is charged as it lands on disk: bytes, and once per recipient', async () => {
+  const a = ok(await call('admin/createCompany', { name: 'Bytes', limits: { stored_text_mb_hour: 1 } }, ADMIN))
+  const [x, y, z] = [await register(a, 'x'), await register(a, 'y'), await register(a, 'z')]
+  // Three bytes a character: 96 KB each, and 288 KB with the copies of the other two.
+  const text = '語'.repeat(32_000)
+  ok(await call('joinGroup', { chat_id: '#all' }, x))
+  for (const [name, s] of [['y', y], ['z', z]]) {
+    ok(await call('inviteToGroup', { chat_id: '#all', name }, x))
+    ok(await call('joinGroup', { chat_id: '#all' }, s))
+  }
+  for (let i = 0; i < 3; i++) ok(await call('sendMessage', { chat_id: '#all', text }, x))
+  const fourth = await call('sendMessage', { chat_id: '#all', text }, x)
+  assert.equal(fourth.error_code, 429)
+  assert.match(fourth.description, /stored-text/)
+  // Someone else's budget is another.
+  ok(await call('sendMessage', { chat_id: '#all', text: 'short' }, y))
+  // The same text in ASCII costs a third.
+  const b = ok(await call('admin/createCompany', { name: 'Ascii', limits: { stored_text_mb_hour: 1 } }, ADMIN))
+  const [bx, by] = [await register(b, 'x'), await register(b, 'y')]
+  void by
+  for (let i = 0; i < 5; i++) ok(await call('sendMessage', { chat_id: 'y', text: 'n'.repeat(32_000) }, bx))
+})
+
+test('a company at its database limit takes nothing more from its sessions, and can still free room', async () => {
+  const a = await newCompany('Full')
+  const [x, y] = [await register(a, 'x'), await register(a, 'y')]
+  ok(await call('sendMessage', { chat_id: 'y', text: 'before' }, x))
+  const file = join(dataDir, 'companies', a.id, 'squadra.db')
+  const direct = new DatabaseSync(file)
+  direct.prepare('INSERT INTO events (session, ts, kind, data) VALUES (?, ?, ?, ?)').run('filler', Date.now(), 'status', 'x'.repeat(3 * 1024 * 1024))
+  direct.close()
+  ok(await call('admin/setCompanyLimits', { company: a.id, limits: { max_db_mb: 1 } }, ADMIN))
+  assert.equal((await call('sendMessage', { chat_id: 'y', text: 'after' }, x)).error_code, 507)
+  assert.equal((await call('observe', { events: [{ kind: 'status', status: 'x' }] }, x)).error_code, 507)
+  const up = await fetch(`${URL_}/sendDocument?chat_id=y&filename=note.txt`, { method: 'POST', headers: { Authorization: `Bearer ${x}`, 'Content-Type': 'application/octet-stream' }, body: 'hello' })
+  assert.equal(up.status, 507)
+  // Another company doesn't notice.
+  const b = await newCompany('Not full')
+  const [bx, by] = [await register(b, 'x'), await register(b, 'y')]
+  void by
+  ok(await call('sendMessage', { chat_id: 'y', text: 'fine' }, bx))
+  // Reading and deleting go on working.
+  ok(await get('getMe', x))
+  ok(await act(a, 'delete', { session: 'y' }))
+  // And what was deleted makes room, though the file doesn't shrink.
+  const again = new DatabaseSync(file)
+  again.prepare("DELETE FROM events WHERE session = 'filler'").run()
+  again.close()
+  await sleep(5100)
+  const z = await register(a, 'z')
+  void z
+  ok(await call('sendMessage', { chat_id: 'z', text: 'room again' }, x))
+})
+
+test('on a disk about to fill up, sessions can add nothing, and can still be deleted', async () => {
+  const port = PORT + 1
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-companies-disk-'))
+  const low = spawn(process.execPath, [join(ROOT, 'server/server.js')], {
+    env: { ...process.env, PORT: String(port), DATA_DIR: dir, SQUADRA_SERVER_TOKEN: ADMIN, SQUADRA_MIN_FREE_MB: '999999999999' },
+    stdio: 'ignore',
+  })
+  const on = (path, body, auth = ADMIN) => fetch(`http://127.0.0.1:${port}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth}` }, body: JSON.stringify(body) }).then(r => r.json())
+  try {
+    await waitFor(() => fetch(`http://127.0.0.1:${port}/health`).then(r => r.ok, () => false), { what: 'the server' })
+    const x = ok(await on('register', { name: 'x' })).secret
+    const y = ok(await on('register', { name: 'y' })).secret
+    void y
+    assert.equal((await on('sendMessage', { chat_id: 'y', text: 'no' }, x)).error_code, 507)
+    assert.equal((await on('observe', { events: [{ kind: 'status', status: 'x' }] }, x)).error_code, 507)
+    ok(await on('api/delete', { session: 'y' }))
+  } finally {
+    low.kill()
+    await new Promise(r => low.once('exit', r))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // A machine's end of the terminal link, and a dashboard's.
 function socket(path, cred) {
   return new Promise((resolve, reject) => {
