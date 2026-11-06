@@ -2565,3 +2565,37 @@ test('a launch.json is for its own start: a project setting the same name gets t
   assert.ok(!existsSync(ticket))
   right.close()
 })
+
+test('what else in the environment changes whom Node trusts is refused unless this machine\'s .env names it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-cfg-trust-'))
+  const script = `
+    import { transportProblem } from ${JSON.stringify(join(ROOT, 'plugins/squadra/core/settings.js'))}
+    const url = 'https://squadra.example.com'
+    const cases = JSON.parse(process.argv[1])
+    process.stdout.write(JSON.stringify(cases.map(([file, env, u]) => transportProblem(u ?? url, file, env))))`
+  const check = cases => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(cases)], { env: { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: dir }, cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
+  const refused = [
+    [{}, { NODE_OPTIONS: '--use-openssl-ca' }],
+    [{}, { NODE_OPTIONS: '--require=/tmp/x.cjs' }],
+    [{}, { NODE_OPTIONS: '--max-old-space-size=4096 --use-system-ca' }],
+    [{}, { NODE_OPTIONS: '--use-env-proxy' }],
+    [{ SQUADRA_NODE_OPTIONS: '--other' }, { NODE_OPTIONS: '--use-openssl-ca' }],
+    [{}, { NODE_USE_ENV_PROXY: '1' }],
+    [{}, { NODE_USE_SYSTEM_CA: '1' }],
+    [{ SQUADRA_ALLOW_NODE_USE_ENV_PROXY: '1' }, { NODE_USE_SYSTEM_CA: '1' }],
+  ]
+  for (const [i, why] of check(refused).entries()) assert.notEqual(why, '', JSON.stringify(refused[i]))
+  const fine = [
+    [{}, {}],
+    [{}, { NODE_OPTIONS: '--max-old-space-size=4096 --no-warnings' }],
+    [{ SQUADRA_NODE_OPTIONS: '--use-openssl-ca' }, { NODE_OPTIONS: '--use-openssl-ca' }],
+    [{ SQUADRA_ALLOW_NODE_USE_ENV_PROXY: '1' }, { NODE_USE_ENV_PROXY: '1' }],
+    [{}, { NODE_USE_ENV_PROXY: '0' }],
+    // Without any of those, these say nothing to Node (nix and conda set the first by themselves).
+    [{}, { SSL_CERT_FILE: '/x/ca.pem', HTTPS_PROXY: 'http://proxy:1' }],
+    // To this very machine there is nothing to reach through them.
+    [{}, { NODE_OPTIONS: '--use-openssl-ca' }, 'http://127.0.0.1:1'],
+  ]
+  assert.deepEqual(check(fine), fine.map(() => ''))
+  rmSync(dir, { recursive: true, force: true })
+})

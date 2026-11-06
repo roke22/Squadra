@@ -96,6 +96,12 @@ export const SERVER_TOKEN = process.env.SQUADRA_SERVER_TOKEN ?? ''
 // The environment can't turn off the certificate check either: a project's
 // settings must not be able to hand the secret to whoever answers.
 delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+// What else Node takes from the environment to decide whom it trusts. Options
+// that only tune the program are fine; anything else in NODE_OPTIONS can change
+// the certificates, the proxy, or run code. (That code could also hide itself:
+// this catches what can be seen, see docs/reference.md.)
+const PLAIN_NODE_OPTION = /^--(max-old-space-size|max-semi-space-size|max-http-header-size|stack-size|no-warnings|no-deprecation|trace-warnings|trace-deprecation|enable-source-maps)(=[\w.-]*)?$/
+const NODE_TRUST_SWITCHES = ['NODE_USE_ENV_PROXY', 'NODE_USE_SYSTEM_CA']
 export function transportProblem(url = SERVER_URL, file = FILE_ENV, env = process.env) {
   let u
   try { u = new URL(url) } catch { return `invalid server URL "${url}"` }
@@ -108,6 +114,17 @@ export function transportProblem(url = SERVER_URL, file = FILE_ENV, env = proces
   // CA is fine if this machine's .env names the same file.)
   if (u.protocol === 'https:' && env.NODE_EXTRA_CA_CERTS && file.SQUADRA_EXTRA_CA !== env.NODE_EXTRA_CA_CERTS) {
     return `NODE_EXTRA_CA_CERTS (${env.NODE_EXTRA_CA_CERTS}) would be trusted for this server's certificate. If it is yours, add SQUADRA_EXTRA_CA=${env.NODE_EXTRA_CA_CERTS} to ${ROOT_ENV_FILE}; otherwise remove it from the environment`
+  }
+  if (!loopback) {
+    const options = (env.NODE_OPTIONS ?? '').trim()
+    if (options && file.SQUADRA_NODE_OPTIONS !== env.NODE_OPTIONS && !options.split(/\s+/).every(o => PLAIN_NODE_OPTION.test(o))) {
+      return `NODE_OPTIONS (${options}) could change which server is trusted, or run code in this session. If it is yours, add SQUADRA_NODE_OPTIONS=${env.NODE_OPTIONS} to ${ROOT_ENV_FILE}`
+    }
+    for (const name of NODE_TRUST_SWITCHES) {
+      if (env[name] && env[name] !== '0' && file[`SQUADRA_ALLOW_${name}`] !== '1') {
+        return `${name} would change how this server's certificate or address is reached. If it is yours, add SQUADRA_ALLOW_${name}=1 to ${ROOT_ENV_FILE}`
+      }
+    }
   }
   return ''
 }
