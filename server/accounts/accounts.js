@@ -122,9 +122,11 @@ export function createAccounts(server, { control, companyName, dropClients }) {
   }
 
   function me(user, session) {
-    const companies = membershipsOf(user.id).map(m => ({ id: m.company_id, name: companyName(m.company_id), role: m.role })).filter(c => c.name)
+    const stage = stageOf(user, session)
+    // (Which companies, only once the sign-in is finished.)
+    const companies = stage === 'ok' ? membershipsOf(user.id).map(m => ({ id: m.company_id, name: companyName(m.company_id), role: m.role })).filter(c => c.name) : []
     return {
-      stage: stageOf(user, session),
+      stage,
       user: { id: user.id, email: user.email, name: user.name, is_platform_admin: !!user.is_platform_admin, totp_enabled: !!user.totp_enabled_at },
       companies,
     }
@@ -163,6 +165,19 @@ export function createAccounts(server, { control, companyName, dropClients }) {
     return codes
   }
 
+  // Wrong passwords: 10 every 15 minutes per address and account, and a high cap
+  // per account. Only the wrong ones count, and per address: someone else's
+  // failures don't lock anyone out, unless they come from very many addresses.
+  const PASSWORD_WINDOW = 15 * 60_000
+  const passwordKey = (req, email) => `${ipKey(clientIp(req))}\0${email}`
+  function checkPasswordBudget(req, email) {
+    if (countedServerWide('wrong-password', passwordKey(req, email), PASSWORD_WINDOW) >= 10 || countedServerWide('wrong-password-all', email, PASSWORD_WINDOW) >= 200) throw tooMany()
+  }
+  function passwordFailed(req, email) {
+    allowServerWide('wrong-password', passwordKey(req, email), 1000, PASSWORD_WINDOW)
+    allowServerWide('wrong-password-all', email, 1000, PASSWORD_WINDOW)
+  }
+
   async function newUser({ email, name, password, isAdmin = false }) {
     checkNewPassword(password)
     const id = `u_${randomBytes(9).toString('base64url')}`
@@ -172,10 +187,18 @@ export function createAccounts(server, { control, companyName, dropClients }) {
     return userById(id)
   }
 
+  // Joining never lowers anyone: an invitation for less is no way to demote
+  // someone, least of all an owner. (Changing a role is members/role.)
   function addMember(user, company, role, by) {
+    const current = roleIn(user, company)
+    if (current && atLeast(current, role)) return current
     q(`INSERT INTO memberships (user_id, company_id, role, created_by, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(user_id, company_id) DO UPDATE SET role = excluded.role`).run(user.id, company, role, by ?? null, now())
+    return role
   }
+
+  // Pending invitations to this company for someone whose place in it was just decided.
+  const dropInvitationsFor = (company, email) => q("DELETE FROM invitations WHERE kind = 'invite' AND company_id = ? AND email = ? AND used_at IS NULL").run(company, email)
 
   // A link of one use, to copy by hand: there is no mail in this server.
   function newLink(req, kind, fields, ttl, by) {
@@ -189,6 +212,18 @@ export function createAccounts(server, { control, companyName, dropClients }) {
     const row = q('SELECT * FROM invitations WHERE token_hash = ? AND kind = ?').get(sha256(String(token ?? '')), kind)
     if (!row || row.used_at || row.expires_at < now()) throw new ApiError(404, 'Not Found: this link is wrong, was used already, or has expired')
     return row
+  }
+
+  // A link says what whoever made it could give then. It is good while they
+  // still can: someone who lost that doesn't leave a way back behind them.
+  function inviterStillCan(row) {
+    if (!row.created_by) return true // (the server token)
+    const by = userById(row.created_by)
+    if (!by || by.disabled_at) return false
+    if (by.is_platform_admin) return true
+    if (row.kind !== 'invite' || !row.company_id || row.is_platform_admin) return false
+    const role = roleIn(by, row.company_id)
+    return !!role && canGrant(role, row.role)
   }
 
   // /auth/* and /bootstrap. Anyone can call them, so each has its limit, and the
@@ -217,11 +252,14 @@ export function createAccounts(server, { control, companyName, dropClients }) {
 
     if (path === '/auth/login') {
       const email = cleanEmail(params.email)
-      if (!allowServerWide('login-ip', ipKey(clientIp(req)), 30) || !allowServerWide('login-email', email, 10, 15 * 60_000)) throw tooMany()
+      if (!allowServerWide('login-ip', ipKey(clientIp(req)), 30)) throw tooMany()
+      checkPasswordBudget(req, email)
       const user = userByEmail(email)
       const good = await passwordMatches(String(params.password ?? '').slice(0, 200), user?.password_hash ?? NOBODY)
       if (!user || !good || user.disabled_at) {
-        audit(user, 'login-failed', email, req)
+        passwordFailed(req, email)
+        // (Only for an account: what is typed for no account is written nowhere.)
+        if (user) audit(user, 'login-failed', email, req)
         throw new ApiError(401, 'Unauthorized: wrong email or password')
       }
       const s = startSession(req, res, user, false)
@@ -231,16 +269,23 @@ export function createAccounts(server, { control, companyName, dropClients }) {
 
     if (path === '/auth/invite/info') {
       const row = linkFor('invite', params.token)
+      if (!inviterStillCan(row)) throw new ApiError(404, 'Not Found: this link is wrong, was used already, or has expired')
       return answer({ email: row.email, company: row.company_id ? companyName(row.company_id) : null, role: row.role, known: !!userByEmail(row.email) })
     }
 
     if (path === '/auth/invite/accept') {
       if (!allowServerWide('accept', ipKey(clientIp(req)), 30)) throw tooMany()
       const row = linkFor('invite', params.token)
+      if (!inviterStillCan(row)) throw new ApiError(404, 'Not Found: this link is wrong, was used already, or has expired')
       let user = userByEmail(row.email)
       if (user) {
         // Someone who has an account already: joining another company needs its password.
-        if (user.disabled_at || !await passwordMatches(String(params.password ?? '').slice(0, 200), user.password_hash)) throw new ApiError(401, 'Unauthorized: wrong password')
+        checkPasswordBudget(req, user.email)
+        if (user.disabled_at || !await passwordMatches(String(params.password ?? '').slice(0, 200), user.password_hash)) {
+          passwordFailed(req, user.email)
+          audit(user, 'invite-password-failed', row.company_id ?? 'platform', req)
+          throw new ApiError(401, 'Unauthorized: wrong password')
+        }
         if (row.is_platform_admin) q('UPDATE users SET is_platform_admin = 1 WHERE id = ?').run(user.id)
       } else {
         const name = cleanName(params.name)
@@ -261,7 +306,7 @@ export function createAccounts(server, { control, companyName, dropClients }) {
       if (!allowServerWide('accept', ipKey(clientIp(req)), 30)) throw tooMany()
       const row = linkFor('reset', params.token)
       const user = userByEmail(row.email)
-      if (!user) throw new ApiError(404, 'Not Found: this link is wrong, was used already, or has expired')
+      if (!user || !inviterStillCan(row)) throw new ApiError(404, 'Not Found: this link is wrong, was used already, or has expired')
       checkNewPassword(params.password)
       const hash = await hashPassword(params.password)
       if (!q('UPDATE invitations SET used_at = ? WHERE token_hash = ? AND used_at IS NULL').run(now(), row.token_hash).changes) throw new ApiError(404, 'Not Found: this link was used already')
@@ -374,6 +419,8 @@ export function createAccounts(server, { control, companyName, dropClients }) {
         if (!canGrant(actorRole, params.role) || !canGrant(actorRole, current)) throw new ApiError(403, 'Forbidden: you can\'t change that role')
         if (current === 'owner' && params.role !== 'owner' && ownersOf(company.id) <= 1) throw new ApiError(409, 'Conflict: a company needs an owner')
         q('UPDATE memberships SET role = ? WHERE user_id = ? AND company_id = ?').run(params.role, target.id, company.id)
+        dropInvitationsFor(company.id, target.email)
+        if (atLeast(current, 'manager') && !atLeast(params.role, 'manager')) company.machines.cancelEnrollments()
         company.dropClients(a => a?.id === target.id)
         audit(actor, 'member-role', company.id, req, `${target.email}: ${current} to ${params.role}`)
         return { id: target.id, role: params.role }
@@ -388,9 +435,30 @@ export function createAccounts(server, { control, companyName, dropClients }) {
         if (!canGrant(actorRole, current)) throw new ApiError(403, 'Forbidden: you can\'t remove that person')
         if (current === 'owner' && ownersOf(company.id) <= 1) throw new ApiError(409, 'Conflict: a company needs an owner')
         q('DELETE FROM memberships WHERE user_id = ? AND company_id = ?').run(target.id, company.id)
+        dropInvitationsFor(company.id, target.email)
+        // Who could manage the company may have kept its join token, or a code.
+        const couldManage = atLeast(current, 'manager')
+        if (couldManage) company.machines.cancelEnrollments()
         company.dropClients(a => a?.id === target.id)
         audit(actor, 'member-removed', company.id, req, target.email)
-        return { id: target.id, removed: true }
+        return { id: target.id, removed: true, rotate_join_token: couldManage }
+      },
+    },
+    invitations: {
+      role: 'manager', method: 'GET',
+      run: ({ company }) => q("SELECT token_hash, email, role, created_by, expires_at FROM invitations WHERE kind = 'invite' AND company_id = ? AND used_at IS NULL AND expires_at > ? ORDER BY expires_at").all(company.id, now())
+        // (The id is a hash of a hash: it can cancel, but it can't be used as the link.)
+        .map(r => ({ id: sha256(r.token_hash), email: r.email, role: r.role, expires_at: r.expires_at })),
+    },
+    'invitations/cancel': {
+      role: 'manager', method: 'POST',
+      run({ company, actor, actorRole, params, req }) {
+        const row = q("SELECT token_hash, email, role FROM invitations WHERE kind = 'invite' AND company_id = ? AND used_at IS NULL").all(company.id).find(r => sha256(r.token_hash) === String(params.id ?? ''))
+        if (!row) throw bad('no such invitation')
+        if (!canGrant(actorRole, row.role)) throw new ApiError(403, 'Forbidden: you can\'t cancel that one')
+        q('DELETE FROM invitations WHERE token_hash = ?').run(row.token_hash)
+        audit(actor, 'invitation-cancelled', company.id, req, row.email)
+        return { cancelled: true }
       },
     },
     'join-token': { role: 'manager', method: 'GET', run: ({ company }) => ({ join_token: company.platform.joinToken().token }) },
@@ -439,9 +507,9 @@ export function createAccounts(server, { control, companyName, dropClients }) {
         if (!companyName(company)) throw bad('no such company')
         if (actor.token) throw bad('the server token has no account: invite someone instead')
         checkRole(params.role ?? 'owner')
-        addMember(actor, company, params.role ?? 'owner', actor.id)
-        audit(actor, 'admin-joined-company', company, req, params.role ?? 'owner')
-        return { company, role: params.role ?? 'owner' }
+        const role = addMember(actor, company, params.role ?? 'owner', actor.id)
+        audit(actor, 'admin-joined-company', company, req, role)
+        return { company, role }
       },
     },
   }
@@ -473,6 +541,7 @@ export function createAccounts(server, { control, companyName, dropClients }) {
     for (const s of q('SELECT token_hash FROM login_sessions WHERE expires_at < ? OR last_seen_at < ?').all(t, t - IDLE_MS)) endSession(s.token_hash)
     q('DELETE FROM invitations WHERE expires_at < ?').run(t - 30 * 24 * 3600_000)
     q('DELETE FROM platform_audit WHERE at < ?').run(t - 365 * 24 * 3600_000)
+    q('DELETE FROM platform_audit WHERE id <= (SELECT id FROM platform_audit ORDER BY id DESC LIMIT 1 OFFSET 200000)').run()
   }
   setInterval(guarded(sweep), 60_000).unref()
 

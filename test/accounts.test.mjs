@@ -119,13 +119,13 @@ test('the first owner comes from the server token; after that the token no longe
   assert.equal(me.user.email, 'owner@example.com')
   assert.equal(me.user.is_platform_admin, true)
   assert.equal(me.stage, 'totp_setup')
-  assert.deepEqual(me.companies.map(c => [c.id, c.role]), [['default', 'owner']])
   assert.equal(ok(await browser().get('auth/status')).needs_owner, false)
 
   // Password alone reaches nothing, until codes are set up.
   assert.equal((await owner.get('api/c/default/state')).error_code, 401)
   ownerCodes = await setUpCodes(owner)
   ok(await owner.get('api/c/default/state'))
+  assert.deepEqual(ok(await owner.get('api/me')).companies.map(c => [c.id, c.role]), [['default', 'owner']])
   assert.equal(ownerCodes.recovery.length, 10)
 
   // The token: no dashboard, no terminals; /admin stays, and no second owner.
@@ -277,7 +277,7 @@ test('losing access closes what is open, at once', async () => {
   await closes('stream, role changed', s.ended)
   await closes('terminal, role changed', w.ended)
 
-  // Taken out of the company: and no way back with what it had.
+  // Taken out of the company.
   ;[s, w] = [await stream(), await socket()]
   ok(await owner.post(`${path}/members/remove`, { user: op.id }))
   await closes('stream, removed', s.ended)
@@ -411,9 +411,13 @@ test('signing in is limited per address and per email, also for an email nobody 
   let refused = 0
   for (let i = 0; i < 32; i++) if ((await one.post('auth/login', { email: `nobody${i}@example.com`, password: 'wrong password' })).error_code === 429) refused++
   assert.equal(refused, 2)
+  // Wrong passwords for one account, from one address.
+  const guesser = browser()
   let forEmail = 0
-  for (let i = 0; i < 11; i++) if ((await browser().post('auth/login', { email: 'target@example.com', password: 'wrong password' })).error_code === 429) forEmail++
+  for (let i = 0; i < 11; i++) if ((await guesser.post('auth/login', { email: 'owner@example.com', password: 'wrong password' })).error_code === 429) forEmail++
   assert.equal(forEmail, 1)
+  // That doesn't lock out its owner, who is elsewhere.
+  assert.equal(ok(await browser().post('auth/login', { email: 'owner@example.com', password: PASSWORD })).stage, 'totp')
 })
 
 test('the server token stays on /api only if the server was started to keep it', async () => {
@@ -428,4 +432,91 @@ test('the server token stays on /api only if the server was started to keep it',
     ok(made)
     ok(await fetch(`${at}/api/state`, { headers: { Authorization: `Bearer ${ADMIN}` } }).then(r => r.json()))
   } finally { proc.kill('SIGTERM') }
+})
+
+test('nobody keeps a way back: tickets and invitations made before losing access are worth nothing', async () => {
+  const co = ok(await owner.post('api/companies/create', { name: 'No way back' }))
+  const path = `api/c/${co.id}`
+  ok(await owner.post('api/companies/join', { company: co.id }))
+  const manager = await member(owner, path, 'leaver@example.com', 'manager')
+  const socketOpens = ticket => new Promise(res => {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/api/terminal`, ['squadra', `auth.${ticket}`])
+    ws.onopen = () => { ws.close(); res(true) }
+    ws.onerror = () => res(false)
+  })
+
+  // Links to itself and to a spare address, and a ticket, before being demoted.
+  const invite = async (email, role) => ok(await manager.b.post(`${path}/members/invite`, { email, role })).link.split('/#/invite/')[1]
+  const own = await invite('leaver@example.com', 'manager')
+  const spare = await invite('spare@example.com', 'manager')
+  const ticket = ok(await manager.b.post(`${path}/terminal/ticket`)).ticket
+  const unused = ok(await manager.b.post(`${path}/hosts/enroll`, { name: 'later' })).code
+  ok(await owner.post(`${path}/members/role`, { user: manager.id, role: 'observer' }))
+  assert.equal(await socketOpens(ticket), false, 'the ticket')
+  assert.equal((await browser().post('auth/invite/accept', { token: own, password: PASSWORD })).error_code, 404)
+  assert.equal((await browser().post('auth/invite/accept', { token: spare, name: 'Spare', password: PASSWORD })).error_code, 404)
+  assert.equal((await browser().post('auth/invite/info', { token: spare })).error_code, 404)
+  assert.equal(ok(await manager.b.get('api/me')).companies[0].role, 'observer')
+  assert.equal((await fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code: unused, info: {} }) }).then(r => r.json())).ok, false, 'the code')
+
+  // Removed, with what it had made while it could: the same.
+  ok(await owner.post(`${path}/members/role`, { user: manager.id, role: 'manager' }))
+  const later = await invite('spare@example.com', 'operator')
+  const removed = ok(await owner.post(`${path}/members/remove`, { user: manager.id }))
+  assert.equal(removed.rotate_join_token, true)
+  assert.equal((await browser().post('auth/invite/accept', { token: later, name: 'Spare', password: PASSWORD })).error_code, 404)
+
+  // A logout takes a ticket as well.
+  const b = browser()
+  ok(await b.post('auth/login', { email: 'owner@example.com', password: PASSWORD }))
+  ok(await b.post('auth/totp', { recovery: ownerCodes.recovery[1] }))
+  const last = ok(await b.post(`${path}/terminal/ticket`)).ticket
+  ok(await b.post('auth/logout'))
+  assert.equal(await socketOpens(last), false, 'the ticket after logging out')
+})
+
+test('an invitation never lowers anyone: not the last owner, not anybody', async () => {
+  const co = ok(await owner.post('api/companies/create', { name: 'Keep the owner' }))
+  const path = `api/c/${co.id}`
+  ok(await owner.post('api/companies/join', { company: co.id }))
+  const manager = await member(owner, path, 'schemer@example.com', 'manager')
+  const token = ok(await manager.b.post(`${path}/members/invite`, { email: 'owner@example.com', role: 'observer' })).link.split('/#/invite/')[1]
+  const b = browser()
+  ok(await b.post('auth/invite/accept', { token, password: PASSWORD }))
+  assert.equal((await owner.get(`${path}/members`)).result.find(m => m.id === ownerId).role, 'owner')
+  // And joining again with less doesn't either.
+  assert.equal(ok(await owner.post('api/companies/join', { company: co.id, role: 'observer' })).role, 'owner')
+})
+
+test('invitations can be seen and cancelled; the list holds nothing that works as the link', async () => {
+  const { link } = ok(await owner.post('api/c/default/members/invite', { email: 'cancelled@example.com', role: 'observer' }))
+  const token = link.split('/#/invite/')[1]
+  const list = ok(await owner.get('api/c/default/invitations'))
+  const entry = list.find(i => i.email === 'cancelled@example.com')
+  assert.ok(entry)
+  assert.ok(!JSON.stringify(list).includes(token))
+  assert.equal((await browser().post('auth/invite/info', { token: entry.id })).error_code, 404)
+  ok(await owner.post('api/c/default/invitations/cancel', { id: entry.id }))
+  assert.equal((await browser().post('auth/invite/info', { token })).error_code, 404)
+})
+
+test('a sign-in not finished says nothing of the companies; a wrong password on an invitation has the same limit', async () => {
+  const b = browser()
+  const me = ok(await b.post('auth/login', { email: 'owner@example.com', password: PASSWORD }))
+  assert.equal(me.stage, 'totp')
+  assert.deepEqual(me.companies, [])
+  assert.deepEqual(ok(await b.get('api/me')).companies, [])
+
+  const token = ok(await owner.post('api/c/default/members/invite', { email: 'owner@example.com', role: 'observer' })).link.split('/#/invite/')[1]
+  const guesser = browser()
+  let refused = 0
+  for (let i = 0; i < 12; i++) if ((await guesser.post('auth/invite/accept', { token, password: 'not the password' })).error_code === 429) refused++
+  assert.equal(refused, 2)
+})
+
+test('what is done with the server token on /admin is written down', async () => {
+  ok(await bearer('admin/listIdentities', ADMIN, {}))
+  const db = new DatabaseSync(join(dataDir, 'control.db'), { readOnly: true })
+  assert.ok(db.prepare("SELECT 1 FROM platform_audit WHERE action = 'admin-listIdentities' AND user_id = 'server-token'").get())
+  db.close()
 })

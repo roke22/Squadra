@@ -27,19 +27,28 @@ export function openPeople() {
   const fail = err => { d.el.querySelector('.err').textContent = err.status === 429 ? T.tooManyTries : err.message.replace(/^(Unauthorized|Bad Request|Not Found|Conflict|Forbidden): /, '') }
   const ok = () => { d.el.querySelector('.err').textContent = '' }
 
+  // Only what was asked for last is drawn, and a tab already open isn't drawn
+  // again: what is being typed in it stays.
+  let current = null
+  let drawing = 0
   async function show(tab) {
+    if (tab === current) return
+    current = tab
     ok()
     for (const b of d.el.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab)
     try { await ({ members, companies, users, account })[tab]() } catch (err) { fail(err) }
   }
 
   async function members() {
-    const [list, { join_token }] = await Promise.all([call(inCompany('/api/members')), call(inCompany('/api/join-token'))])
+    const turn = ++drawing
+    const [list, pending, { join_token }] = await Promise.all([call(inCompany('/api/members')), call(inCompany('/api/invitations')), call(inCompany('/api/join-token'))])
+    if (turn !== drawing) return
     body.innerHTML = `<table class="people"><tbody>${list.map(m => `<tr><td><b>${esc(m.name)}</b><br><span class="note">${esc(m.email)}${m.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td>${roleSelect(m.role, `data-role-of="${esc(m.id)}"`)}</td><td><button class="btn danger" data-remove="${esc(m.id)}">${esc(T.remove)}</button></td></tr>`).join('')}</tbody></table>
       <form data-invite class="row2"><label class="field"><span>${esc(T.email)}</span><input type="text" name="email" required></label>
         <label class="field"><span>${esc(T.role)}</span>${roleSelect('operator', 'name="role"')}</label>
         <button class="btn primary">${esc(T.invite)}</button></form><div data-link></div>
+      ${pending.length ? `<h4>${esc(T.pendingInvites)}</h4><table class="people"><tbody>${pending.map(i => `<tr><td>${esc(i.email)} <span class="note">${esc(T.roles[i.role] ?? i.role)}</span></td><td><button class="btn danger" data-cancel-invite="${esc(i.id)}">${esc(T.cancelInvite)}</button></td></tr>`).join('')}</tbody></table>` : ''}
       <h4>${esc(T.joinToken)}</h4><p class="note">${esc(T.joinTokenHint)}</p>
       <div class="cmdrow"><pre class="cmd">${esc(join_token)}</pre><button class="btn" data-copy>${esc(T.copy)}</button></div>
       <button class="btn danger" data-rotate>${esc(T.rotate)}</button>`
@@ -48,6 +57,7 @@ export function openPeople() {
       ok()
       try {
         const r = await call(inCompany('/api/members/invite'), Object.fromEntries(new FormData(e.target)))
+        await members()
         body.querySelector('[data-link]').innerHTML = linkBox(r)
       } catch (err) { fail(err) }
     }
@@ -60,7 +70,9 @@ export function openPeople() {
   }
 
   async function companies() {
+    const turn = ++drawing
     const list = await call('/api/companies')
+    if (turn !== drawing) return
     const mine = new Set(state.me.companies.map(c => c.id))
     body.innerHTML = `<table class="people"><tbody>${list.map(c => `<tr><td><b>${esc(c.name)}</b><br><span class="note">${esc(c.id)}${c.status === 'unavailable' ? ` · ${esc(T.unavailable)}` : ''}</span></td>
         <td>${mine.has(c.id) ? `<a class="btn" href="?company=${encodeURIComponent(c.id)}">${esc(T.openCompany)}</a>` : `<button class="btn" data-join="${esc(c.id)}">${esc(T.joinCompany)}</button>`}</td></tr>`).join('')}</tbody></table>
@@ -79,13 +91,16 @@ export function openPeople() {
   }
 
   async function users() {
+    const turn = ++drawing
     const list = await call('/api/users')
+    if (turn !== drawing) return
     body.innerHTML = `<table class="people"><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b>${u.is_platform_admin ? ` <span class="note">${esc(T.administrator)}</span>` : ''}<br><span class="note">${esc(u.email)}${u.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td><button class="btn" data-reset="${esc(u.id)}">${esc(T.resetLink)}</button>
         <button class="btn danger" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button></td></tr>`).join('')}</tbody></table><div data-link></div>`
   }
 
   function account() {
+    drawing++
     const me = state.me.user
     body.innerHTML = `<p><b>${esc(me.name)}</b> · ${esc(me.email)}</p>
       <form data-password><label class="field"><span>${esc(T.password)}</span><input type="password" name="current" autocomplete="current-password" required></label>
@@ -108,7 +123,12 @@ export function openPeople() {
     ok()
     try {
       if (b.dataset.copy !== undefined) await navigator.clipboard?.writeText(b.previousElementSibling.textContent)
-      if (b.dataset.remove) { await call(inCompany('/api/members/remove'), { user: b.dataset.remove }); await members() }
+      if (b.dataset.remove) {
+        const r = await call(inCompany('/api/members/remove'), { user: b.dataset.remove })
+        await members()
+        if (r.rotate_join_token) d.el.querySelector('.err').textContent = T.rotateAdvice
+      }
+      if (b.dataset.cancelInvite) { await call(inCompany('/api/invitations/cancel'), { id: b.dataset.cancelInvite }); await members() }
       if (b.dataset.rotate !== undefined) { await call(inCompany('/api/join-token/rotate'), {}); await members() }
       if (b.dataset.join) { await call('/api/companies/join', { company: b.dataset.join }); state.me.companies.push({ id: b.dataset.join, role: 'owner' }); await companies() }
       if (b.dataset.reset) body.querySelector('[data-link]').innerHTML = linkBox(await call('/api/users/reset', { user: b.dataset.reset }))

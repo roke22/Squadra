@@ -49,6 +49,7 @@ export function createCompany(server, options) {
 
   // Someone lost access: what they have open closes now, not at their next request.
   function dropClients(match) {
+    machines.dropTickets(match)
     for (const res of [...platform.sseClients]) if (res.actor && match(res.actor)) { platform.sseClients.delete(res); try { res.end() } catch {} }
     for (const ws of [...machines.wsClients]) if (ws.actor && match(ws.actor)) ws.close(4403, 'access changed')
   }

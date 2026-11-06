@@ -194,6 +194,9 @@ export function createMachines(platform, { sessions, observation }) {
     }
   }
 
+  // Whoever could make codes lost access: those not used yet stop working.
+  const cancelEnrollments = () => db.prepare('DELETE FROM host_enrollments').run()
+
   function enrollHost(p, req) {
     const ip = clientIp(req)
     const t = now()
@@ -637,6 +640,10 @@ export function createMachines(platform, { sessions, observation }) {
     terminalTickets.delete(ticket)
     return v.expires >= Date.now() ? v : null
   }
+  // Someone lost access: a ticket they asked for and haven't used goes too.
+  function dropTickets(match) {
+    for (const [t, v] of terminalTickets) if (v.actor && match(v.actor)) terminalTickets.delete(t)
+  }
   // (Tickets say nothing of whose they are: each company knows its own.)
   const hasTicket = ticket => hostTickets.has(ticket) || terminalTickets.has(ticket)
   const wsClients = new Set()
@@ -777,6 +784,6 @@ export function createMachines(platform, { sessions, observation }) {
   return {
     machineMethods, onUpgrade, wsClients, sanitizeHostInfo, ownTerminals, PERSONA_ID_RE, listHosts,
     createEnrollment, renameHost, removeHost, changeHostFolders, hostPersonas, openTerminalOn,
-    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer, hasTicket,
+    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer, hasTicket, dropTickets, cancelEnrollments,
   }
 }

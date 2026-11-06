@@ -2423,3 +2423,37 @@ test('observation: a hook socket client cannot fill the memory', async () => {
   await waitFor(() => prompts.includes('still here'), { what: 'the next hook' })
   await o.stop()
 })
+
+test('a real plugin in a company: its join token, its names, and notices signed for it', async () => {
+  const company = (await api('admin/createCompany', { name: 'Plugin company' }, SERVER_TOKEN)).result
+  const env = { SQUADRA_ASSUME_CHANNEL: '1' }
+  const options = { noServer: true, envFile: `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${company.join_token}\n` }
+  // (Names other tests use on the first company, too.)
+  const boss = new Plugin(null, env, options)
+  const wk = new Plugin(null, env, options)
+  await boss.init()
+  await wk.init()
+  assert.match(await boss.tool('login', { role: 'coordinator', name: 'jefe' }), /"jefe", role COORDINATOR/)
+  assert.ok((await api('admin/approveSession', { name: 'jefe', company: company.id }, SERVER_TOKEN)).ok)
+  assert.match(await wk.tool('login', { role: 'worker', name: 'worker9', coordinator: 'jefe' }), /"worker9", role WORKER/)
+  const state = JSON.parse(readFileSync(join(boss.configDir, 'channels', 'squadra', 'jefe', 'identity.json'), 'utf8'))
+  assert.match(state.secret ?? state.token, new RegExp(`^sq_${company.id}_`))
+
+  const req = await boss.waitChannel(p => p.meta.kind === 'pairing_request' && p.meta.user === 'worker9', 'pairing request')
+  const stateB = join(boss.configDir, 'channels', 'squadra', 'jefe')
+  const access = JSON.parse(readFileSync(join(stateB, 'access.json'), 'utf8'))
+  access.allowFrom.push('worker9')
+  delete access.pending[req.meta.code]
+  writeFileSync(join(stateB, 'access.json'), JSON.stringify(access, null, 2))
+  mkdirSync(join(stateB, 'approved'), { recursive: true })
+  writeFileSync(join(stateB, 'approved', 'worker9'), 'worker9')
+  await wk.waitChannel(p => p.content.includes('Paired with "jefe"'), 'paired')
+
+  await boss.tool('reply', { chat_id: 'worker9', text: 'a task in this company' })
+  await wk.waitChannel(p => p.content.includes('a task in this company'), 'the task')
+
+  // The plugin only takes a notice signed for its own company.
+  await wk.tool('logout', {})
+  await boss.waitChannel(p => p.meta.kind === 'squadra_notice' && p.content.includes('worker9 left Squadra (logout)'), 'logout notice')
+  boss.close(); wk.close()
+})

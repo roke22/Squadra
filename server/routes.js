@@ -38,21 +38,34 @@ export function createRoutes(server, companies, accounts) {
     if (!role) throw new ApiError(404, 'Not Found: no such company')
     req.actor = actor.token ? null : actor
     const allow = needed => { if (!atLeast(role, needed)) throw new ApiError(403, `Forbidden: this needs the role ${needed} in this company`) }
+    // Checked again once the body has arrived: a request that started before
+    // someone lost access doesn't act after it.
+    const bodyOf = async needed => {
+      const params = await readParams(req, url)
+      if (!actor.token) {
+        accounts.actorOf(req)
+        if (!atLeast(accounts.roleIn(actor, company.id), needed)) throw new ApiError(403, `Forbidden: this needs the role ${needed} in this company`)
+      }
+      return params
+    }
 
     const people = own(accounts.companyMethods, what)
     if (people) {
       if (req.method !== people.method) throw new ApiError(405, 'Method Not Allowed')
       allow(people.role)
-      const params = req.method === 'POST' ? await readParams(req, url) : {}
-      return sendJson(res, 200, { ok: true, result: people.run({ company, actor, actorRole: role, params, req }) })
+      const params = req.method === 'POST' ? await bodyOf(people.role) : {}
+      // (The role as it is now, for what it may give.)
+      const actorRole = actor.token ? 'owner' : accounts.roleIn(actor, company.id)
+      return sendJson(res, 200, { ok: true, result: people.run({ company, actor, actorRole, params, req }) })
     }
 
     const { dashboardActions, dashboardRoles, openStream, dashboardReads } = company.dashboard
     if (req.method === 'POST') {
       const act = own(dashboardActions, what)
       if (!act) throw new ApiError(404, 'Not Found')
-      allow(own(dashboardRoles.actions, what))
-      return sendJson(res, 200, { ok: true, result: await act(await readParams(req, url), req) })
+      const needed = own(dashboardRoles.actions, what)
+      allow(needed)
+      return sendJson(res, 200, { ok: true, result: await act(await bodyOf(needed), req) })
     }
     if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
     if (what === 'stream') { allow(dashboardRoles.reads.stream); return openStream(req, res) }
@@ -73,7 +86,9 @@ export function createRoutes(server, companies, accounts) {
     if (!actor.token && !actor.is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
     if (what === 'companies/create') {
       if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
-      const made = companies.adminMethods.createCompany(await readParams(req, url))
+      const params = await readParams(req, url)
+      if (!actor.token && !accounts.actorOf(req).is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
+      const made = companies.adminMethods.createCompany(params)
       accounts.audit(actor, 'company-created', made.id, req, made.name)
       return sendJson(res, 200, { ok: true, result: made })
     }
@@ -81,6 +96,7 @@ export function createRoutes(server, companies, accounts) {
     if (!method) throw new ApiError(404, 'Not Found')
     if (req.method !== method.method) throw new ApiError(405, 'Method Not Allowed')
     const params = req.method === 'POST' ? await readParams(req, url) : {}
+    if (!actor.token && !accounts.actorOf(req).is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
     return sendJson(res, 200, { ok: true, result: method.run({ actor, params, req }) })
   }
 
@@ -220,6 +236,8 @@ export function createRoutes(server, companies, accounts) {
         if (!isServerToken(token)) throw new ApiError(401, 'Unauthorized')
         const method = path.slice('/admin/'.length)
         const params = await readParams(req, url)
+        // (Once there are people, what is done with the token is written down.)
+        if (accounts.hasUsers()) accounts.audit({ token: true }, `admin-${method}`.slice(0, 60), params.company == null ? null : String(params.company).slice(0, 64), req)
         if (method === 'recoverAccess') return sendJson(res, 200, { ok: true, result: accounts.recoverAccess(params, req) })
         const overall = own(companies.adminMethods, method)
         if (overall) return sendJson(res, 200, { ok: true, result: overall(params) })
