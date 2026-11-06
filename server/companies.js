@@ -63,6 +63,10 @@ export function createCompanies(server) {
   setInterval(guarded(cleanup), 3600_000).unref()
   cleanup()
 
+  const nameOf = id => row(id)?.name ?? null
+  // Across every company: someone lost a session, or all their access.
+  const dropClients = match => { for (const c of open.values()) c.dropClients(match) }
+
   const first = () => open.get(FIRST_COMPANY)
   const get = id => open.get(id) ?? null
 
@@ -147,7 +151,7 @@ export function createCompanies(server) {
   }
 
   return {
-    first, get, of, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
+    control, first, get, of, nameOf, dropClients, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
   }
 }
 

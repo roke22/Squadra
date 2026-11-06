@@ -3,7 +3,7 @@
 #
 #   cd deploy/demo
 #   docker-compose up -d              # or: docker compose up -d
-#   cat squadra/data/server-token     # the sign-in token (also in: docker-compose logs)
+#   cat squadra/data/server-token     # the token that creates the first owner (also in: docker-compose logs)
 #
 # Then open http://localhost:7787. Only this computer can reach it.
 services:

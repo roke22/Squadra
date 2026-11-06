@@ -30,7 +30,7 @@
   <form class="login-card" id="loginForm">
     <div class="brand"><svg class="logo" aria-hidden="true"><use href="#squadra-logo"/></svg>Squadra</div>
     <p id="loginIntro"></p>
-    <input id="tokenInput" type="password" autocomplete="off" required>
+    <div id="loginFields"></div>
     <button type="submit" id="loginBtn"></button>
     <div class="login-err" id="loginErr"></div>
     <div class="foot"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
@@ -42,8 +42,9 @@
     <div class="brand"><svg class="logo" aria-hidden="true"><use href="#squadra-logo"/></svg>Squadra
       <button class="add-host" id="addHostBtn" type="button"><svg viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2" width="16" height="11.5" rx="1.8"/><path d="M6.5 18h6M9.5 13.5V18"/><circle cx="18.5" cy="15.5" r="5" fill="var(--panel)"/><path d="M18.5 13v5M16 15.5h5"/></svg></button>
     </div>
+    <select id="companySelect" hidden></select>
     <nav class="nav" id="nav"></nav>
-    <div class="side-foot"><span class="dot" id="connDot"></span><span id="connText"></span><button id="logoutBtn"></button></div>
+    <div class="side-foot"><span class="dot" id="connDot"></span><span id="connText"></span><button id="peopleBtn"></button><button id="logoutBtn"></button></div>
     <div class="side-ver"><span class="ver"></span><span class="prefs"><button type="button" class="theme-btn" data-theme-toggle></button><span class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="es">ES</button></span></span></div>
   </aside>
   <div id="main">

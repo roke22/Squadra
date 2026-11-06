@@ -150,4 +150,4 @@ export function route() {
 }
 
 // (Only while signed in: a link opened on the login page doesn't load views, or ask the server with no token.)
-window.addEventListener('hashchange', () => { if (state.token && !$('app').hidden) route() })
+window.addEventListener('hashchange', () => { if (state.me && !$('app').hidden) route() })

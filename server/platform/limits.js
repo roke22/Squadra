@@ -39,6 +39,12 @@ export function createLimits() {
     return true
   }
 
+  // What has been counted, without counting this: for what only failures use up.
+  function counted(bucket, key, windowMs = 60_000) {
+    const t = now()
+    return (windows.get(bucket)?.get(key) ?? []).filter(x => t - x < windowMs).length
+  }
+
   // Reads (getMe, getChat, getFile, chat actions, polls that don't wait): a
   // generous budget, so one session can't keep the server busy with them.
   function readLimit(name, bucket = 'read') {
@@ -87,10 +93,11 @@ export function createLimits() {
     for (const [k, v] of sendLog) if (!v.some(x => t - x < 60_000)) sendLog.delete(k)
   }
 
-  return { allow, readLimit, groupLimit, rateLimit, spendStorage, cleanupLimits }
+  return { allow, counted, readLimit, groupLimit, rateLimit, spendStorage, cleanupLimits }
 }
 
 // What belongs to no company: addresses, and this process's log.
 const serverLimits = createLimits()
 export const allowServerWide = serverLimits.allow
+export const countedServerWide = serverLimits.counted
 export const cleanupServerLimits = serverLimits.cleanupLimits

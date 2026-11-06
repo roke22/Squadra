@@ -1,6 +1,6 @@
 import { store, $ } from './dom.js'
 import { T } from './i18n.js'
-import { state, sessions, hosts, linksOf, linkListeners } from './state.js'
+import { state, sessions, hosts, linksOf, linkListeners, companyPref } from './state.js'
 import { now, esc } from './format.js'
 import { sortedSessions, byPresence, status } from './content.js'
 import { setHtml, soon } from './nav.js'
@@ -22,7 +22,7 @@ const ORG_W = 280, ORG_GAP_X = 90, ORG_GAP_Y = 40, ORG_PAD = 32, ORG_FOLD = 6
 
 // (Fixed heights, as in the CSS: cards are laid out and linked without measuring them.)
 const ORG_H = { head: 44, goal: 36, row: 32, fold: 28, foot: 42 }
-export let orgZoom = (() => { const z = Number(store.get('squadraOrgZoom')); return z >= 0.4 && z <= 1.6 ? z : 1 })()
+export let orgZoom = (() => { const z = Number(store.get(companyPref('squadraOrgZoom'))); return z >= 0.4 && z <= 1.6 ? z : 1 })()
 let orgDrag = null                       // a card or a new link being dragged
 let orgPos = new Map()                   // coordinator -> {x, y, h}, as drawn
 const orgOpen = new Set()                // squads showing all their workers
@@ -333,7 +333,7 @@ document.addEventListener('click', e => {
   if (z) {
     const v = z.dataset.orgzoom
     orgZoom = v === '1' ? 1 : Math.min(1.6, Math.max(0.4, Math.round((orgZoom + (v === '+' ? 0.1 : -0.1)) * 10) / 10))
-    store.set('squadraOrgZoom', String(orgZoom))
+    store.set(companyPref('squadraOrgZoom'), String(orgZoom))
     renderOrg()
     renderTop()
   }

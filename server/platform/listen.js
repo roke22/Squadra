@@ -27,8 +27,8 @@ export async function startListening(server, { nowServing, joinToken, handle, on
       // (The tokens themselves only the time they are made, not at every start:
       // logs are kept, and read, by more than whoever holds these.)
       ...(isNewToken(TOKEN_SOURCE)
-        ? [`  Server token — admin: signs in to the dashboard. Keep it in the browser only (${TOKEN_SOURCE}). It is only shown this once:`, `    ${SERVER_TOKEN}`]
-        : [`  Server token — admin: signs in to the dashboard. Keep it in the browser only. It is in ${TOKEN_SOURCE}.`]),
+        ? [`  Server token — creates the first owner of the dashboard, and recovers access (${TOKEN_SOURCE}). It is only shown this once:`, `    ${SERVER_TOKEN}`]
+        : [`  Server token — creates the first owner of the dashboard, and recovers access. It is in ${TOKEN_SOURCE}.`]),
       '',
       `  Join token — for machines: registers new sessions, nothing else (${joinToken().source}).`,
       '  Configure each machine from Claude Code with:',

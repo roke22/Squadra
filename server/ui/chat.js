@@ -174,7 +174,7 @@ export class ChatView {
       if (first) this.toBottom()
       else this.scrollEl.scrollTop = this.scrollEl.scrollHeight - fromBottom // keep the reader in place
     } catch (e) {
-      if (e.status === 401) return showLogin(T.tokenInvalid)
+      if (e.status === 401) return showLogin(T.sessionEnded)
       // The server refused the request: don't ask again on every scroll.
       if (e.status >= 400 && e.status < 500) { this.hasMore = false; this.loading = false; this.render() }
     } finally {

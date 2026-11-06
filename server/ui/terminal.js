@@ -28,14 +28,14 @@ export const termLink = {
     if (this.views.size) { clearTimeout(this.timer); this.timer = setTimeout(() => this.ensure(), this.backoff); this.backoff = Math.min(this.backoff * 2, 15000) }
   },
   ensure() {
-    if (this.ws || this.connecting || !state.token) return
-    // A one-time ticket (the token itself never goes in the socket request):
+    if (this.ws || this.connecting || !state.me || state.role === 'observer') return
+    // A one-time ticket, in this user's name:
     // the server only accepts the socket with it.
     this.connecting = true
     postJson('/api/terminal/ticket', {}).then(({ ticket }) => {
       this.connecting = false
       if (!this.ws && this.views.size) this.open(ticket)
-    }, () => { this.connecting = false; if (state.token) this.retry() })
+    }, () => { this.connecting = false; if (state.me) this.retry() })
   },
   open(ticket) {
     const ws = this.ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/terminal`, ['squadra', `auth.${ticket}`])

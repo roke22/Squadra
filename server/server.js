@@ -23,11 +23,13 @@
 
 import { cleanupServerLimits, guarded, logError, openServerCredentials, startListening } from './platform/index.js'
 import { createCompanies } from './companies.js'
+import { createAccounts } from './accounts/index.js'
 import { createRoutes } from './routes.js'
 
 const credentials = openServerCredentials()
 const companies = createCompanies(credentials)
-const { handle, onUpgrade } = createRoutes(credentials, companies)
+const accounts = createAccounts(credentials, { control: companies.control, companyName: companies.nameOf, dropClients: companies.dropClients })
+const { handle, onUpgrade } = createRoutes(credentials, companies, accounts)
 
 setInterval(guarded(cleanupServerLimits), 60 * 1000).unref()
 

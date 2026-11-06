@@ -7,6 +7,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { totpCode, totpStep } from '../../server/accounts/totp.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -19,13 +20,16 @@ const freePort = () => new Promise((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)) })
 })
 
-export async function startServer() {
+export const OWNER = { email: 'owner@example.com', name: 'The Owner', password: 'a long enough password' }
+
+export async function startServer({ tokenApi = true } = {}) {
   const port = await freePort()
   const url = `http://127.0.0.1:${port}`
   const dataDir = mkdtempSync(join(tmpdir(), 'squadra-ui-'))
   let log = ''
   const proc = spawn(process.execPath, [join(ROOT, 'server/server.js')], {
-    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, SQUADRA_SERVER_TOKEN: SERVER_TOKEN },
+    // (The token keeps working on /api: what these tests set up isn't the page.)
+    env: { ...process.env, PORT: String(port), DATA_DIR: dataDir, SQUADRA_SERVER_TOKEN: SERVER_TOKEN, SQUADRA_ALLOW_TOKEN_API: tokenApi ? '1' : '' },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   proc.stderr.on('data', d => { log += d })
@@ -35,6 +39,7 @@ export async function startServer() {
     await sleep(50)
   }
   const closers = []
+  let cookie = ''
   return {
     url,
     async call(path, params = {}, { auth = SERVER_TOKEN, instance } = {}) {
@@ -48,6 +53,23 @@ export async function startServer() {
       return body.result
     },
     onClose(fn) { closers.push(fn) },
+    // The first owner, signed in once, and the cookie that says so: a code
+    // counts only once, so the tests share this sign-in.
+    async ownerCookie() {
+      if (cookie) return cookie
+      const post = async (path, body, headers = {}) => {
+        const res = await fetch(`${url}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: url, ...(cookie ? { Cookie: cookie } : {}), ...headers }, body: JSON.stringify(body) })
+        const set = res.headers.get('set-cookie')
+        if (set) cookie = set.split(';')[0]
+        const j = await res.json()
+        if (!j.ok) throw new Error(`${path}: ${j.description}`)
+        return j.result
+      }
+      await post('bootstrap', OWNER, { Authorization: `Bearer ${SERVER_TOKEN}` })
+      const { secret } = await post('auth/totp/setup', {})
+      await post('auth/totp/enable', { code: totpCode(secret, totpStep()) })
+      return cookie
+    },
     async stop() {
       for (const fn of closers) await fn()
       proc.kill('SIGTERM')

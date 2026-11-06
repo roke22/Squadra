@@ -1,7 +1,9 @@
 import { $, store } from './dom.js'
 import { T, LANG } from './i18n.js'
 import { state, sessions, hosts } from './state.js'
-import { api } from './api.js'
+import { esc } from './format.js'
+import { begin, loginScreen, noCompany, signOut } from './signin.js'
+import { openPeople } from './people.js'
 import { clearMosaic } from './router.js'
 import { closeMenu } from './dialogs.js'
 import { termLink } from './terminal.js'
@@ -23,11 +25,11 @@ export let serverVersion = null // (from /health and the stream)
 const darkQuery = window.matchMedia?.('(prefers-color-scheme: dark)') ?? { matches: false, addEventListener() {} }
 const themeNow = () => document.documentElement.dataset.theme || (darkQuery.matches ? 'dark' : 'light')
 
-// login: the dashboard is only built after the server accepts the token
+// The dashboard is only built after the server says the sign-in is finished.
 function show(id) { for (const x of ['splash', 'login', 'app']) $(x).hidden = x !== id }
 
-// keep: the server couldn't be reached (not a wrong token): the saved token stays.
-export function showLogin(err = '', { keep = false } = {}) {
+// Out of the dashboard, with nothing of it left on the page. (err: why, on the sign-in page.)
+export function showLogin(err = '') {
   state.streamGen++
   state.streamAbort?.abort()
   // (Open dialogs go too: an enrollment command isn't left over the login page.)
@@ -39,48 +41,57 @@ export function showLogin(err = '', { keep = false } = {}) {
   sessions.clear()
   hosts.clear()
   closeMenu()
-  // (Not a token another tab has just signed in with.)
-  if (!keep) { if ((store.get('squadraToken') ?? state.token) === state.token) store.del('squadraToken'); store.del('swarmToken') }
-  state.token = null
+  state.me = null
   show('login')
-  $('loginErr').textContent = err
-  $('tokenInput').value = ''
-  $('tokenInput').focus()
+  loginScreen(err)
 }
 
-async function enter(candidate) {
-  state.token = candidate
-  await api('/api/state') // throws if the token is wrong
-  store.set('squadraToken', state.token)
-  $('tokenInput').value = ''
+// A finished sign-in: into the company in the address, or the last one here, if
+// this user is in it. Otherwise the page loads again for one they are in.
+function enter(me) {
+  const here = me.companies.find(c => c.id === state.company)
+  if (!here) {
+    const first = me.companies[0]
+    if (!first) {
+      if (!me.user.is_platform_admin) { show('login'); return noCompany() }
+      state.me = me
+      show('app')
+      return openPeople()
+    }
+    store.set('squadraCompany', first.id)
+    location.replace(`${location.pathname}?company=${encodeURIComponent(first.id)}${location.hash}`)
+    return
+  }
+  state.me = me
+  state.role = here.role
+  store.set('squadraCompany', here.id)
+  document.body.dataset.role = here.role
+  const select = $('companySelect')
+  select.hidden = me.companies.length < 2
+  select.innerHTML = me.companies.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
+  select.value = here.id
+  $('addHostBtn').hidden = !['manager', 'owner'].includes(here.role)
   show('app')
   connect()
 }
 
-$('loginForm').addEventListener('submit', async e => {
-  e.preventDefault()
-  $('loginBtn').disabled = true
-  $('loginErr').textContent = ''
-  try {
-    await enter($('tokenInput').value.trim())
-  } catch (err) {
-    state.token = null
-    $('loginErr').textContent = err.status === 401 ? T.tokenWrong : T.cannotConnect(err.message)
-  } finally {
-    $('loginBtn').disabled = false
-  }
+$('companySelect').addEventListener('change', e => {
+  store.set('squadraCompany', e.target.value)
+  location.href = `${location.pathname}?company=${encodeURIComponent(e.target.value)}`
 })
 
-$('logoutBtn').addEventListener('click', () => showLogin())
+$('logoutBtn').addEventListener('click', async () => {
+  await signOut()
+  store.set('squadraSignedOut', String(Date.now()))
+  showLogin()
+})
+$('peopleBtn').addEventListener('click', () => openPeople())
 
 // static texts, version footer and language switch
 $('splash').textContent = T.connecting
-$('loginIntro').innerHTML = T.loginIntro
-$('tokenInput').placeholder = T.tokenPlaceholder
-$('loginBtn').textContent = T.enter
 $('connText').textContent = T.connecting
 $('logoutBtn').textContent = T.logout
-$('logoutBtn').title = T.logoutTitle
+$('peopleBtn').textContent = T.people
 $('menuBtn').setAttribute('aria-label', T.sessionsMenu)
 $('addHostBtn').title = T.addTitle
 $('addHostBtn').setAttribute('aria-label', T.addTitle)
@@ -123,13 +134,9 @@ export function setVersion(v) {
 fetch('/health').then(r => r.json()).then(j => { if (j.version) setVersion(j.version) }).catch(() => {})
 
 // Logged out in another tab of this browser: this one too.
-window.addEventListener('storage', e => { if (e.key === 'squadraToken' && !e.newValue && state.token) showLogin() })
+window.addEventListener('storage', e => { if (e.key === 'squadraSignedOut' && state.me) showLogin() })
 
-// boot
-if (state.token) {
-  show('splash')
-  enter(state.token).catch(err => err.status === 401 ? showLogin(T.storedTokenInvalid) : showLogin(T.cannotConnect(err.message), { keep: true }))
-} else {
-  show('login')
-  $('tokenInput').focus()
-}
+// boot (what older versions kept in this browser goes: it was the server token)
+store.del('squadraToken'); store.del('swarmToken')
+show('splash')
+begin(enter).then(() => { if (!state.me && $('app').hidden) show('login') }, err => { show('login'); loginScreen(T.cannotConnect(err.message)) })

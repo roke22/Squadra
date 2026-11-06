@@ -1,6 +1,6 @@
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { unix, now, guarded, bad, ApiError, VERSION } from '../platform/index.js'
+import { unix, now, guarded, bad, ApiError, VERSION, ROLES } from '../platform/index.js'
 
 export function createDashboard(platform, { sessions, observation, machines, messaging, organization }) {
   const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir, log } = platform
@@ -287,7 +287,24 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     'org/describe': p => describeSession(p),
     'terminals/open': p => openTerminalOn(p),
     'terminals/kill': p => killTerminalOn(p),
-    'terminal/ticket': () => newTerminalTicket(),
+    'terminal/ticket': (p, req) => newTerminalTicket(req.actor ?? null),
+  }
+
+  // Who may do each thing, at least. Whatever isn't here nobody may do, and the
+  // server refuses to start (see the end): every new action says who it is for.
+  const dashboardRoles = {
+    reads: { timeline: 'observer', state: 'observer', events: 'observer', hosts: 'observer', messages: 'observer', stream: 'observer' },
+    actions: {
+      kick: 'operator', clear: 'operator', archive: 'operator', unarchive: 'operator',
+      'terminals/open': 'operator', 'terminals/kill': 'operator', 'terminal/ticket': 'operator', 'hosts/personas': 'operator',
+      approve: 'manager', delete: 'manager',
+      'hosts/enroll': 'manager', 'hosts/rename': 'manager', 'hosts/remove': 'manager', 'hosts/folders': 'manager',
+      'templates/save': 'manager', 'templates/delete': 'manager', 'links/add': 'manager', 'links/delete': 'manager',
+      'org/squad': 'manager', 'org/positions': 'manager', 'org/describe': 'manager',
+    },
+  }
+  for (const [table, roles] of [[dashboardActions, dashboardRoles.actions], [{ ...dashboardReads, stream: true }, dashboardRoles.reads]]) {
+    for (const what of Object.keys(table)) if (!ROLES.includes(roles[what])) throw new Error(`"${what}" doesn't say who may do it`)
   }
 
   function openStream(req, res) {
@@ -298,9 +315,10 @@ export function createDashboard(platform, { sessions, observation, machines, mes
       'X-Accel-Buffering': 'no', // don't let nginx/caddy buffer it
     })
     res.write(`event: hello\ndata: ${JSON.stringify(dashboardReads.state())}\n\n`)
+    res.actor = req.actor ?? null
     sseClients.add(res)
     req.on('close', () => sseClients.delete(res))
   }
 
-  return { dashboardReads, dashboardActions, adminMethods, openStream }
+  return { dashboardReads, dashboardActions, dashboardRoles, adminMethods, openStream }
 }

@@ -1,6 +1,6 @@
 import { $, store } from './dom.js'
 import { T, COLLATOR } from './i18n.js'
-import { hosts, state, unread } from './state.js'
+import { hosts, state, unread, companyPref } from './state.js'
 import { esc } from './format.js'
 import { sortedSessions, status, squadsOf, squadOpen } from './content.js'
 import { currentRoute } from './router.js'
@@ -136,7 +136,7 @@ $('nav').addEventListener('click', e => {
   if (t) {
     const name = t.dataset.squad
     squadOpen[name] = !t.closest('.squad').classList.contains('open')
-    store.set('squadraSquads', JSON.stringify(squadOpen))
+    store.set(companyPref('squadraSquads'), JSON.stringify(squadOpen))
     return renderNav()
   }
   const b = e.target.closest('[data-go]')

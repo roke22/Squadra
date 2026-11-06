@@ -12,7 +12,8 @@ import { reopenable, reopen, addWorkerTo, saveTemplateDialog } from './squads.js
 import { orgSquads, orgZoom, linksDialog } from './org.js'
 
 // The terminal a session view shows (null: its chat).
-export const sessionTerm = r => (r.view === 'session' && !r.chat ? terminalOf(r.name) : null)
+// (An observer has no terminals: its chat instead.)
+export const sessionTerm = r => (r.view === 'session' && !r.chat && state.role !== 'observer' ? terminalOf(r.name) : null)
 
 // The Squadra session behind a machine's terminal: only one that machine
 // opened (a machine could list any name; it can't make it its own).

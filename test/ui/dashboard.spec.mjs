@@ -3,7 +3,8 @@
 // around must not change these tests.
 
 import { test as base, expect } from '@playwright/test'
-import { SERVER_TOKEN, startMachine, startServer, startSession } from './harness.mjs'
+import { OWNER, SERVER_TOKEN, startMachine, startServer, startSession } from './harness.mjs'
+import { totpCode, totpStep } from '../../server/accounts/totp.js'
 
 // Any error in the page fails the test, a script the Content-Security-Policy
 // blocked included. (A wrong token is answered with a 401, which the browser
@@ -31,30 +32,99 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await server?.stop() })
 
 async function signIn(page, hash = '') {
-  await page.goto(`${server.url}/${hash}`)
-  await page.locator('#tokenInput').fill(SERVER_TOKEN)
-  await page.locator('#loginBtn').click()
+  const [name, value] = (await server.ownerCookie()).split('=')
+  await page.context().addCookies([{ name, value, url: server.url }])
+  await page.goto(`${server.url}/?company=default${hash}`)
   await expect(page.locator('#app')).toBeVisible()
 }
 
-test('signing in: a wrong token is refused, the right one stays until signing out', async ({ page }) => {
-  await page.goto(server.url)
-  await page.locator('#tokenInput').fill('not-the-token')
-  await page.locator('#loginBtn').click()
-  await expect(page.locator('#loginErr')).toHaveText('Wrong token.')
-  await expect(page.locator('#app')).toBeHidden()
+test('the first owner: made with the token, with codes, and it stays until signing out', async ({ page }) => {
+  const own = await startServer({ tokenApi: false })
+  try {
+    await page.goto(own.url)
+    const form = page.locator('#loginForm')
+    await form.locator('[name=token]').fill('not-the-token')
+    await form.locator('[name=name]').fill(OWNER.name)
+    await form.locator('[name=email]').fill(OWNER.email)
+    await form.locator('[name=password]').fill(OWNER.password)
+    await page.locator('#loginBtn').click()
+    await expect(page.locator('#loginErr')).not.toBeEmpty()
+    await expect(page.locator('#app')).toBeHidden()
 
-  await page.locator('#tokenInput').fill(SERVER_TOKEN)
-  await page.locator('#loginBtn').click()
-  await expect(page.locator('#app')).toBeVisible()
+    await form.locator('[name=token]').fill(SERVER_TOKEN)
+    await page.locator('#loginBtn').click()
+    const secret = await page.locator('.secret code').textContent()
+    await form.locator('[name=code]').fill(totpCode(secret, totpStep()))
+    await page.locator('#loginBtn').click()
+    await expect(page.locator('.codes')).toContainText(/[0-9a-f]{20}/)
+    await page.locator('#loginBtn').click()
+    await expect(page.locator('#app')).toBeVisible()
+    expect(await page.evaluate(() => JSON.stringify({ ...localStorage }))).not.toContain(SERVER_TOKEN)
 
-  await page.reload()
-  await expect(page.locator('#app')).toBeVisible()
+    await page.reload()
+    await expect(page.locator('#app')).toBeVisible()
+    expect(await page.evaluate(() => document.cookie)).toBe('') // (not for the page to read)
 
-  await page.locator('#logoutBtn').click()
-  await expect(page.locator('#login')).toBeVisible()
-  await page.reload()
-  await expect(page.locator('#login')).toBeVisible()
+    await page.locator('#logoutBtn').click()
+    await expect(page.locator('#login')).toBeVisible()
+    await page.reload()
+    await expect(page.locator('#loginForm [name=email]')).toBeVisible()
+
+    // Signing in again: password, then the next code.
+    await form.locator('[name=email]').fill(OWNER.email)
+    await form.locator('[name=password]').fill('the wrong password')
+    await page.locator('#loginBtn').click()
+    await expect(page.locator('#loginErr')).toHaveText('wrong email or password')
+    await form.locator('[name=password]').fill(OWNER.password)
+    await page.locator('#loginBtn').click()
+    await form.locator('[name=code]').fill(totpCode(secret, totpStep() + 1))
+    await page.locator('#loginBtn').click()
+    await expect(page.locator('#app')).toBeVisible()
+  } finally { await own.stop() }
+})
+
+test('companies: two show apart, each with its own sessions; the selector changes between them', async ({ page }) => {
+  await signIn(page)
+  await expect(page.locator('#companySelect')).toBeHidden()
+  const other = await server.call('admin/createCompany', { name: 'Otra Compañía' })
+  await page.locator('#peopleBtn').click()
+  await page.locator('[data-tab=companies]').click()
+  await expect(page.locator('.modal')).toContainText('Otra Compañía')
+  await page.locator(`[data-join="${other.id}"]`).click()
+  await expect(page.locator(`.modal a[href="?company=${other.id}"]`)).toBeVisible()
+  await page.goto(`${server.url}/?company=${other.id}`)
+  await expect(page.locator('#companySelect')).toBeVisible()
+  await expect(page.locator('#companySelect')).toHaveValue(other.id)
+  await expect(page.locator('#nav')).toContainText('0 of 0')
+  await page.locator('#companySelect').selectOption('default')
+  await expect(page.locator('#nav')).toContainText('worker1')
+  await expect(page).toHaveURL(/company=default/)
+})
+
+test('an invitation: a link of one use brings someone in, with only their role', async ({ page, browser }) => {
+  await signIn(page)
+  await page.locator('#peopleBtn').click()
+  await page.locator('[data-tab=members]').click()
+  const invite = page.locator('[data-invite]')
+  await invite.locator('[name=email]').fill('ana@example.com')
+  await invite.locator('[name=role]').selectOption('observer')
+  await invite.locator('button').click()
+  const link = await page.locator('[data-link] .cmd').textContent()
+  expect(link).toContain('/#/invite/')
+
+  const ctx = await browser.newContext()
+  const guest = await ctx.newPage()
+  await guest.goto(link)
+  await expect(guest.locator('#loginIntro')).toContainText('ana@example.com')
+  await guest.locator('[name=name]').fill('Ana')
+  await guest.locator('[name=password]').fill('another long password')
+  await guest.locator('#loginBtn').click()
+  await expect(guest.locator('#app')).toBeVisible()
+  await expect(guest).not.toHaveURL(/invite/)
+  // An observer: no adding machines, and the chat rather than a terminal.
+  await expect(guest.locator('#addHostBtn')).toBeHidden()
+  await expect(guest.locator('#nav')).toContainText('coord')
+  await ctx.close()
 })
 
 test('the sessions: they are listed with their squad', async ({ page }) => {

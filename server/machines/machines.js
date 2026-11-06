@@ -4,7 +4,7 @@ import {
 } from 'node:crypto'
 import {
   bad, ApiError, allowServerWide, ipKey, cachedFile, now, sha256, serverBaseUrl, clientIp, refuseSocket, logError,
-  VERSION, PUBLIC_URL, cleanText, cutText, acceptWebSocket,
+  VERSION, cleanText, cutText, acceptWebSocket, sameOrigin,
 } from '../platform/index.js'
 
 const HOST_SCRIPT = [new URL('../../host/squadra-host.mjs', import.meta.url), new URL('../squadra-host.mjs', import.meta.url)]
@@ -401,9 +401,12 @@ export function createMachines(platform, { sessions, observation }) {
 
   // Dashboard web terminal: one WebSocket per browser tab, authenticated with
   // the server token in its first message, multiplexing every terminal it shows.
-  function openViewerLink(ws, req) {
-    // (Authenticated when the socket was accepted, with a one-time ticket.)
+  function openViewerLink(ws, req, actor) {
+    // (Authenticated when the socket was accepted, with a one-time ticket,
+    // which says who asked for it: what is done here is theirs.)
     const viewer = { ws, attached: new Set(), typed: new Set() }
+    ws.actor = actor
+    const who = actor?.email ?? `dashboard (${req.socket.remoteAddress})`
     ws.maxMessage = 1024 * 1024 // (an image pasted into a terminal; text is at most 64 KB)
     const detachAll = () => {
       for (const key of viewer.attached) {
@@ -442,7 +445,7 @@ export function createMachines(platform, { sessions, observation }) {
         if (!link.viewers.has(term)) link.viewers.set(term, new Set())
         link.viewers.get(term).add(viewer)
         viewer.attached.add(key)
-        log(`dashboard (${req.socket.remoteAddress}) is viewing "${term}" on host ${host}`)
+        log(`${who} is viewing "${term}" on host ${host}`)
         return link.ws.send(JSON.stringify({ t: 'attach', term, ...size(m.cols, m.rows) }))
       }
       if (!viewer.attached.has(key) || !link) return
@@ -452,7 +455,7 @@ export function createMachines(platform, { sessions, observation }) {
       if (m.t === 'in' && typeof m.data === 'string' && m.data.length <= 64 * 1024) {
         if (!viewer.typed.has(key)) {
           viewer.typed.add(key)
-          log(`dashboard (${req.socket.remoteAddress}) is typing in "${term}" on host ${host}`)
+          log(`${who} is typing in "${term}" on host ${host}`)
         }
         return link.ws.send(JSON.stringify({ t: 'in', term, data: m.data }))
       }
@@ -489,14 +492,7 @@ export function createMachines(platform, { sessions, observation }) {
     }
     // The dashboard's terminal socket only from the dashboard's own page (a
     // browser always sends Origin; squadra-host sends none).
-    if (path === '/api/terminal' && req.headers.origin) {
-      let ok = false
-      try {
-        const origin = new URL(req.headers.origin).host
-        ok = origin === req.headers.host || (!!PUBLIC_URL && origin === new URL(PUBLIC_URL).host)
-      } catch {}
-      if (!ok) { refuseSocket(socket, '403 Forbidden'); return }
-    }
+    if (path === '/api/terminal' && req.headers.origin && !sameOrigin(req)) { refuseSocket(socket, '403 Forbidden'); return }
     // Authenticated before the socket is accepted, so nobody without a
     // credential holds a connection open: the credential comes as a
     // subprotocol ("squadra", "auth.<credential>"). The dashboard's is a
@@ -521,6 +517,7 @@ export function createMachines(platform, { sessions, observation }) {
     let host = null
     let ticketed = false
     let linkKeys = null
+    let viewerTicket = null
     if (path === '/host/connect') {
       ticketed = cred.startsWith(HOST_TICKET_PREFIX)
       if (ticketed) {
@@ -531,7 +528,10 @@ export function createMachines(platform, { sessions, observation }) {
       // A machine reconnecting nonstop would write to the database and update
       // every dashboard each time: at most 30 connections a minute.
       if (host && !allow('hosthello', host.id, 30)) return refuse(429, 'Too Many Requests')
-    } else if (!takeTerminalTicket(cred)) return refuse(401, 'Unauthorized')
+    } else {
+      viewerTicket = takeTerminalTicket(cred)
+      if (!viewerTicket) return refuse(401, 'Unauthorized')
+    }
     const ws = acceptWebSocket(req, socket, head, { log: logError, maxMessage: 16 * 1024, protocol: 'squadra' })
     if (!ws) return
     // A machine that was disconnected is told so (and stops), at once.
@@ -545,7 +545,7 @@ export function createMachines(platform, { sessions, observation }) {
     if (linkKeys) encryptSocket(ws, linkKeys)
     wsClients.add(ws)
     if (path === '/host/connect') openHostLink(ws, req, host)
-    else openViewerLink(ws, req)
+    else openViewerLink(ws, req, viewerTicket.actor)
     const handler = ws.onclose
     ws.onclose = () => { wsClients.delete(ws); handler() }
   }
@@ -623,19 +623,19 @@ export function createMachines(platform, { sessions, observation }) {
 
   // One-time tickets for the dashboard's terminal socket (a browser can't send
   // an Authorization header on a WebSocket): 30 seconds, used once.
-  const terminalTickets = new Map() // ticket -> expires (ms)
-  function newTerminalTicket() {
-    for (const [t, exp] of terminalTickets) if (exp < Date.now()) terminalTickets.delete(t)
+  const terminalTickets = new Map() // ticket -> { expires (ms), actor }
+  function newTerminalTicket(actor) {
+    for (const [t, v] of terminalTickets) if (v.expires < Date.now()) terminalTickets.delete(t)
     if (terminalTickets.size >= 100) terminalTickets.delete(terminalTickets.keys().next().value)
     const ticket = randomBytes(24).toString('base64url')
-    terminalTickets.set(ticket, Date.now() + 30_000)
+    terminalTickets.set(ticket, { expires: Date.now() + 30_000, actor })
     return { ticket }
   }
   function takeTerminalTicket(ticket) {
-    const exp = ticket ? terminalTickets.get(ticket) : undefined
-    if (exp === undefined) return false
+    const v = ticket ? terminalTickets.get(ticket) : undefined
+    if (v === undefined) return null
     terminalTickets.delete(ticket)
-    return exp >= Date.now()
+    return v.expires >= Date.now() ? v : null
   }
   // (Tickets say nothing of whose they are: each company knows its own.)
   const hasTicket = ticket => hostTickets.has(ticket) || terminalTickets.has(ticket)

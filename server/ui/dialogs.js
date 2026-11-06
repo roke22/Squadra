@@ -1,3 +1,4 @@
+import { inCompany } from './api.js'
 import { T } from './i18n.js'
 import { sessions, state } from './state.js'
 import { esc } from './format.js'
@@ -68,12 +69,12 @@ export function confirmDialog({ title, text, confirm, danger = false, run }) {
 }
 
 export async function post(action, session) {
-  const r = await fetch(`/api/${action}`, {
+  const r = await fetch(inCompany(`/api/${action}`), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session }),
   })
-  if (r.status === 401) { showLogin(T.tokenInvalid); throw new Error(T.unauthorized) }
+  if (r.status === 401) { showLogin(T.sessionEnded); throw new Error(T.unauthorized) }
   const j = await r.json()
   if (!j.ok) throw new Error(j.parameters?.reason === 'session_online' ? T.sessionOnline : j.description)
   return j.result

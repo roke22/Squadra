@@ -1,3 +1,4 @@
+import { inCompany } from './api.js'
 import { $ } from './dom.js'
 import { T } from './i18n.js'
 import {
@@ -132,8 +133,8 @@ export async function connect() {
     if (gen !== state.streamGen) return
     state.streamAbort = new AbortController()
     try {
-      const r = await fetch('/api/stream', { headers: { Authorization: `Bearer ${state.token}` }, signal: state.streamAbort.signal })
-      if (r.status === 401) return showLogin(T.tokenInvalid)
+      const r = await fetch(inCompany('/api/stream'), { signal: state.streamAbort.signal })
+      if (r.status === 401) return showLogin(T.sessionEnded)
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`)
       setConn('ok', T.live)
       backoff = 1000

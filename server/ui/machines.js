@@ -1,3 +1,4 @@
+import { inCompany } from './api.js'
 import { $ } from './dom.js'
 import { T, COLLATOR } from './i18n.js'
 import { sessions, hosts, state, hostListeners } from './state.js'
@@ -24,12 +25,12 @@ export function terminalOf(name) {
 }
 
 export async function postJson(path, body) {
-  const r = await fetch(path, {
+  const r = await fetch(inCompany(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (r.status === 401) { showLogin(T.tokenInvalid); throw new Error(T.unauthorized) }
+  if (r.status === 401) { showLogin(T.sessionEnded); throw new Error(T.unauthorized) }
   const j = await r.json()
   if (!j.ok) {
     const why = j.description.replace(/^(Bad Request|Conflict|Forbidden): /, '')

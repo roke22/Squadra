@@ -8,12 +8,12 @@ From this folder (`deploy/demo`):
 
 ```bash
 docker-compose up -d               # or: docker compose up -d
-cat squadra/data/server-token      # the sign-in token (once it has started, some 20 s)
+cat squadra/data/server-token      # the token that creates the first owner (once it has started, some 20 s)
 ```
 
 The token is also in the logs, in the *Squadra demo* box (`docker-compose logs`).
 
-1. Open **http://localhost:7787** and sign in with that token.
+1. Open **http://localhost:7787** and create the first owner with that token. You will need an authenticator app for the codes.
 2. **+ New session**: folder `/squadra/projects/demo`, role *Coordinator*, persona `project-lead`.
 3. The first time, Claude Code asks in the session's terminal for its theme, your Claude login (`/login`: open the link, paste the code back) and whether you trust the folder. The login is kept for every later session.
 4. From the squad (👥), **+ Worker**: one with the persona `developer`, another with `designer`. Then ask the coordinator for something small.

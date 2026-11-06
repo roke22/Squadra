@@ -1,6 +1,6 @@
 import { store } from './dom.js'
 import { T, COLLATOR } from './i18n.js'
-import { sessions } from './state.js'
+import { sessions, companyPref } from './state.js'
 import { esc, dur, now } from './format.js'
 
 export const MAX_VIEW_ITEMS = 600   // per chat view
@@ -139,4 +139,4 @@ export function sortedSessions({ archived = false } = {}) {
 }
 
 // Which squads are unfolded in the sidebar (remembered per browser).
-export const squadOpen = (() => { try { return JSON.parse(store.get('squadraSquads') || '{}') } catch { return {} } })()
+export const squadOpen = (() => { try { return JSON.parse(store.get(companyPref('squadraSquads')) || '{}') } catch { return {} } })()

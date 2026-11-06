@@ -3,6 +3,7 @@ import { statSync, createReadStream } from 'node:fs'
 import {
   guardRequest, sendJson, clientIp, readParams, bearer, own, sendError, VERSION, UI_FILE, VENDOR_FILES,
   MAX_JSON_BODY, cachedFile, pageHeaders, ApiError, allowServerWide, ipKey, sha256, refuseSocket, logError,
+  ALLOW_TOKEN_API, atLeast,
 } from './platform/index.js'
 import {
   INSTALLERS, installer, hostScript, hostSignature, checkEnrollRate, enrollmentKey, offeredCredential,
@@ -10,8 +11,18 @@ import {
 
 const MAX_IDENTITIES = Number(process.env.SQUADRA_MAX_SESSIONS ?? 500)
 
-export function createRoutes(server, companies) {
+export function createRoutes(server, companies, accounts) {
   const { isServerToken, serverIdentity } = server
+
+  // Who calls /api: the server token, only until there are users (or if this
+  // server was started to keep it); otherwise a finished sign-in.
+  function actorOf(req, token) {
+    if (token) {
+      if (isServerToken(token) && (ALLOW_TOKEN_API || !accounts.hasUsers())) return { token: true }
+      throw new ApiError(401, 'Unauthorized')
+    }
+    return accounts.actorOf(req)
+  }
 
   // The company a dashboard or an admin call is for, by the id it names.
   function named(id) {
@@ -20,18 +31,57 @@ export function createRoutes(server, companies) {
     return company
   }
 
-  function dashboardCall(company, what, req, res, url) {
-    const { dashboardActions, openStream, dashboardReads } = company.dashboard
+  // A call about one company, by someone who is in it. For anyone else it doesn't
+  // exist. A role too low is told so, and what no table mentions nobody may do.
+  async function companyCall(company, what, req, res, url, actor) {
+    const role = actor.token ? 'owner' : accounts.roleIn(actor, company.id)
+    if (!role) throw new ApiError(404, 'Not Found: no such company')
+    req.actor = actor.token ? null : actor
+    const allow = needed => { if (!atLeast(role, needed)) throw new ApiError(403, `Forbidden: this needs the role ${needed} in this company`) }
+
+    const people = own(accounts.companyMethods, what)
+    if (people) {
+      if (req.method !== people.method) throw new ApiError(405, 'Method Not Allowed')
+      allow(people.role)
+      const params = req.method === 'POST' ? await readParams(req, url) : {}
+      return sendJson(res, 200, { ok: true, result: people.run({ company, actor, actorRole: role, params, req }) })
+    }
+
+    const { dashboardActions, dashboardRoles, openStream, dashboardReads } = company.dashboard
     if (req.method === 'POST') {
       const act = own(dashboardActions, what)
       if (!act) throw new ApiError(404, 'Not Found')
-      return readParams(req, url).then(async params => sendJson(res, 200, { ok: true, result: await act(params, req) }))
+      allow(own(dashboardRoles.actions, what))
+      return sendJson(res, 200, { ok: true, result: await act(await readParams(req, url), req) })
     }
     if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
-    if (what === 'stream') return openStream(req, res)
+    if (what === 'stream') { allow(dashboardRoles.reads.stream); return openStream(req, res) }
     const fn = own(dashboardReads, what)
     if (!fn) throw new ApiError(404, 'Not Found')
+    allow(own(dashboardRoles.reads, what))
     return sendJson(res, 200, { ok: true, result: fn(url.searchParams) })
+  }
+
+  // /api about the server itself: companies and users.
+  async function platformCall(what, req, res, url, actor) {
+    if (what === 'companies') {
+      if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
+      if (actor.token || actor.is_platform_admin) return sendJson(res, 200, { ok: true, result: companies.list() })
+      const mine = companies.list().filter(c => accounts.roleIn(actor, c.id))
+      return sendJson(res, 200, { ok: true, result: mine.map(c => ({ id: c.id, name: c.name, status: c.status })) })
+    }
+    if (!actor.token && !actor.is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
+    if (what === 'companies/create') {
+      if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
+      const made = companies.adminMethods.createCompany(await readParams(req, url))
+      accounts.audit(actor, 'company-created', made.id, req, made.name)
+      return sendJson(res, 200, { ok: true, result: made })
+    }
+    const method = own(accounts.adminMethods, what)
+    if (!method) throw new ApiError(404, 'Not Found')
+    if (req.method !== method.method) throw new ApiError(405, 'Method Not Allowed')
+    const params = req.method === 'POST' ? await readParams(req, url) : {}
+    return sendJson(res, 200, { ok: true, result: method.run({ actor, params, req }) })
   }
 
   async function handle(req, res) {
@@ -119,20 +169,23 @@ export function createRoutes(server, companies) {
         return sendJson(res, 200, { ok: true, result: company.machines.hostTicketAnswer(host, await readParams(req, url, 4096, { pool: 'public' })) })
       }
 
+      if (path === '/bootstrap' || path.startsWith('/auth/')) return await accounts.handle(path, req, res, url)
+
       if (path.startsWith('/api/')) {
-        if (!token || !isServerToken(token)) throw new ApiError(401, 'Unauthorized')
+        // (Before a sign-in is finished too: the page needs to know what to ask for.)
+        if (path === '/api/me' && !token) return sendJson(res, 200, { ok: true, result: accounts.meAnswer(req) })
+        const actor = actorOf(req, token)
         const what = path.slice('/api/'.length)
-        if (what === 'companies') {
-          if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
-          return sendJson(res, 200, { ok: true, result: companies.list() })
-        }
-        // /api/c/<company>/<what>; without a company, the first one.
+        // /api/c/<company>/<what>.
         if (what.startsWith('c/')) {
           const m = /^c\/([^/]+)\/(.+)$/.exec(what)
           if (!m) throw new ApiError(404, 'Not Found')
-          return await dashboardCall(named(m[1]), m[2], req, res, url)
+          return await companyCall(named(m[1]), m[2], req, res, url, actor)
         }
-        return await dashboardCall(companies.first(), what, req, res, url)
+        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/')) return await platformCall(what, req, res, url, actor)
+        // Without a company: scripts with the server token, on the first one.
+        if (!actor.token) throw new ApiError(404, 'Not Found')
+        return await companyCall(companies.first(), what, req, res, url, actor)
       }
 
       // Registration: the join token registers new names; the server token can
@@ -167,6 +220,7 @@ export function createRoutes(server, companies) {
         if (!isServerToken(token)) throw new ApiError(401, 'Unauthorized')
         const method = path.slice('/admin/'.length)
         const params = await readParams(req, url)
+        if (method === 'recoverAccess') return sendJson(res, 200, { ok: true, result: accounts.recoverAccess(params, req) })
         const overall = own(companies.adminMethods, method)
         if (overall) return sendJson(res, 200, { ok: true, result: overall(params) })
         const company = params.company != null ? named(params.company) : companies.first()

@@ -14,6 +14,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 // so a new module has to say where it fits.
 const SERVER_MODULES = {
   platform: [],
+  accounts: ['platform'],
   sessions: ['platform'],
   messaging: ['platform', 'sessions'],
   observation: ['platform'],

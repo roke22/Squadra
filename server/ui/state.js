@@ -2,7 +2,11 @@ import { store } from './dom.js'
 
 // What several parts of the dashboard change. (The rest of what it knows lives with the part that uses it.)
 export const state = {
-  token: store.get('squadraToken') ?? store.get('swarmToken'),
+  me: null, // who signed in, once it is finished (see /api/me)
+  // The company shown: from the address, or the last one in this browser. Changing
+  // it loads the page again, so nothing of another stays in memory.
+  company: new URLSearchParams(location.search).get('company') ?? store.get('squadraCompany'),
+  role: null, // what this user is in it
   // 'auto' (fit the screen) or a fixed number of columns
   cols: store.get('squadraCols') || store.get('swarmCols') || 'auto',
   // The mosaic shows each session's live terminal (when it has one) or its chat.
@@ -19,9 +23,13 @@ export const state = {
   squadMeta: new Map(), // coordinator -> {title, goal, x, y}
   termView: null,
   // Each sign-in has its own stream loop: an older one (waiting to reconnect
-  // when the admin logged out) stops instead of opening a second stream.
+  // when the user logged out) stops instead of opening a second stream.
   streamGen: 0,
 }
+
+// What is remembered per company has it in its name. (Not the first company:
+// its preferences are there from before there were companies.)
+export const companyPref = key => (state.company && state.company !== 'default' ? `${key}:${state.company}` : key)
 
 export const sessions = new Map()      // name -> session view (from server)
 export const hosts = new Map()         // host id -> host view (machines running squadra-host)

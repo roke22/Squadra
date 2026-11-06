@@ -38,6 +38,7 @@ const { values: ARGS } = (() => {
         'tls-key': { type: 'string' },
         'http-port': { type: 'string' },
         'trust-proxy': { type: 'boolean' },
+        'allow-token-api': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -69,6 +70,10 @@ HTTPS, built in (no reverse proxy needed):
   --trust-proxy        Behind a reverse proxy: take the client address from X-Forwarded-For
                        (for rate limits). Only with a proxy that sets it. Env: TRUST_PROXY=1
 
+Accounts:
+  --allow-token-api    Keep the server token working on /api once there are users, for your
+                       own scripts. It acts on any company. Env: SQUADRA_ALLOW_TOKEN_API=1
+
 With HTTPS the server listens on all interfaces and port 443 by default.
 
 Examples:
@@ -90,6 +95,7 @@ export const ACME_DIRECTORY = ARGS['acme-directory'] ?? process.env.ACME_DIRECTO
 export const ACME_EMAIL = ARGS['acme-email'] ?? process.env.ACME_EMAIL ?? ''
 export const HTTP_PORT = Number(ARGS['http-port'] ?? process.env.HTTP_PORT ?? 80)
 export const TRUST_PROXY = ARGS['trust-proxy'] === true || process.env.TRUST_PROXY === '1'
+export const ALLOW_TOKEN_API = ARGS['allow-token-api'] === true || process.env.SQUADRA_ALLOW_TOKEN_API === '1'
 
 export const PORT = Number(ARGS.port ?? process.env.PORT ?? (TLS ? 443 : 7787))
 export const HOST = ARGS['all-interfaces'] ? '0.0.0.0' : (ARGS.host ?? process.env.HOST ?? (TLS ? '0.0.0.0' : '127.0.0.1'))

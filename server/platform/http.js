@@ -14,6 +14,14 @@ export function serverBaseUrl(req) {
   return `${proto}://${host}`
 }
 
+// A request made from this dashboard's own page (a browser always says where from).
+export function sameOrigin(req) {
+  try {
+    const origin = new URL(req.headers.origin).host
+    return origin === req.headers.host || (!!PUBLIC_URL && origin === new URL(PUBLIC_URL).host)
+  } catch { return false }
+}
+
 // Host side: trade the code for a permanent secret. Public, rate-limited.
 // The client's address. Behind a reverse proxy every request comes from the
 // proxy, so with --trust-proxy the last X-Forwarded-For entry (the one the

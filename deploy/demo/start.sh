@@ -57,7 +57,8 @@ token=$(cat "$DATA_DIR/server-token" 2>/dev/null || echo "(the one in SQUADRA_SE
 cat <<EOF
 
   ┌─ Squadra demo ───────────────────────────────────────────────
-  │ Open http://localhost:7787 and sign in with this token:
+  │ Open http://localhost:7787 and, the first time, create the owner
+  │ with this token (then you sign in with your email and password):
   │   $token
   │ Then: + New session, folder $D/projects/demo,
   │ and log in to Claude in its terminal the first time (/login).
