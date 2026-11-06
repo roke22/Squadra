@@ -178,6 +178,17 @@ test('the machines: a connected one is listed with its terminal', async ({ page 
   await expect(hosts.locator('.term-row')).toContainText('worker1')
 })
 
+test('disconnecting a machine: it offers to end the sessions opened there, ticked', async ({ page }) => {
+  await signIn(page, '#/hosts')
+  await page.locator('#hosts .host-head [data-hmenu]').first().click()
+  await page.locator('.menu [data-a=disconnect]').click()
+  const option = page.locator('.modal [data-option]')
+  await expect(option).toBeChecked()
+  await expect(page.locator('.modal .check')).toContainText('sessions')
+  await page.locator('.modal [data-cancel]').click()
+  await expect(page.locator('.modal')).toHaveCount(0)
+})
+
 test('adding a machine: the dialog gives a command to run', async ({ page }) => {
   await signIn(page, '#/hosts')
   await page.locator('#addHostBtn').click()

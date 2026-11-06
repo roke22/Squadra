@@ -2,7 +2,8 @@ import { T, LOCALE } from './i18n.js'
 import { state, can } from './state.js'
 import { call, inCompany } from './api.js'
 import { esc } from './format.js'
-import { dialog, alertBox } from './dialogs.js'
+import { dialog } from './dialogs.js'
+import { alertBox } from './mosaic.js'
 
 const ROLES = ['observer', 'operator', 'manager', 'owner']
 // Only owners give or take the role of owner.
