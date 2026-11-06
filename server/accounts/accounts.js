@@ -505,12 +505,12 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       },
     },
     // Links not used yet, of any kind, across the server, and cancelling one.
-    'links': {
+    'pending-links': {
       method: 'GET',
       run: () => q('SELECT token_hash, kind, email, company_id, role, is_platform_admin, expires_at FROM invitations WHERE used_at IS NULL AND expires_at > ? ORDER BY expires_at').all(now())
         .map(r => ({ id: sha256(r.token_hash), kind: r.kind, email: r.email, company: r.company_id, role: r.role === 'clear-totp' ? null : r.role, clears_codes: r.role === 'clear-totp', is_platform_admin: !!r.is_platform_admin, expires_at: r.expires_at })),
     },
-    'links/cancel': {
+    'pending-links/cancel': {
       method: 'POST',
       run({ actor, params, req }) {
         const row = q('SELECT token_hash, kind, email FROM invitations WHERE used_at IS NULL').all().find(r => sha256(r.token_hash) === String(params.id ?? ''))

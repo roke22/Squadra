@@ -556,16 +556,16 @@ test('only the last password link works, and an administrator can see and cancel
   const second = (await owner.post('api/users/reset', { user: me.user.id })).result.link.split('/#/reset/')[1]
   assert.equal((await browser().post('auth/reset', { token: first, password: 'a password that fails' })).error_code, 404)
   // Listed, without anything that works as the link; and cancelled.
-  const listed = ok(await owner.get('api/links')).find(l => l.email === 'links@example.com')
+  const listed = ok(await owner.get('api/pending-links')).find(l => l.email === 'links@example.com')
   assert.equal(listed.kind, 'reset')
   assert.ok(!JSON.stringify(listed).includes(second))
-  ok(await owner.post('api/links/cancel', { id: listed.id }))
+  ok(await owner.post('api/pending-links/cancel', { id: listed.id }))
   assert.equal((await browser().post('auth/reset', { token: second, password: 'a password that fails' })).error_code, 404)
   // A password changed from inside, or by a link, ends the links around.
   const third = (await owner.post('api/users/reset', { user: me.user.id })).result.link.split('/#/reset/')[1]
   ok(await b.post('auth/password', { current: PASSWORD, password: 'changed from inside now' }))
   assert.equal((await browser().post('auth/reset', { token: third, password: 'a password that fails' })).error_code, 404)
-  assert.equal((await b.get('api/links')).error_code, 403)
+  assert.equal((await b.get('api/pending-links')).error_code, 403)
 })
 
 test('nobody can lock an account: wrong passwords from many addresses leave the right one working', async () => {

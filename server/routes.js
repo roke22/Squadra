@@ -229,7 +229,7 @@ export function createRoutes(server, companies, accounts) {
           if (!m) throw new ApiError(404, 'Not Found')
           return await companyCall(named(m[1]), m[2], req, res, url, actor)
         }
-        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/') || what === 'machines' || what === 'links' || what.startsWith('links/')) return await platformCall(what, req, res, url, actor)
+        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/') || what === 'machines' || what === 'pending-links' || what === 'pending-links/cancel') return await platformCall(what, req, res, url, actor)
         // Without a company: scripts with the server token, on the first one.
         if (!actor.token) throw new ApiError(404, 'Not Found')
         return await companyCall(companies.first(), what, req, res, url, actor)

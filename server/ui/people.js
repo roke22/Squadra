@@ -141,7 +141,7 @@ export function openPeople() {
 
   async function users() {
     const turn = ++drawing
-    const [list, links] = await Promise.all([call('/api/users'), call('/api/links')])
+    const [list, links] = await Promise.all([call('/api/users'), call('/api/pending-links')])
     if (turn !== drawing) return
     body.innerHTML = `<table class="people"><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b>${u.is_platform_admin ? ` <span class="note">${esc(T.administrator)}</span>` : ''}<br><span class="note">${esc(u.email)}${u.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td><button class="btn" data-reset="${esc(u.id)}">${esc(T.resetLink)}</button>
@@ -190,7 +190,7 @@ export function openPeople() {
         await members()
         if (r.rotate_join_token) d.el.querySelector('.err').textContent = T.rotateAdvice
       }
-      if (b.dataset.cancelLink) { await call('/api/links/cancel', { id: b.dataset.cancelLink }); await users() }
+      if (b.dataset.cancelLink) { await call('/api/pending-links/cancel', { id: b.dataset.cancelLink }); await users() }
       if (b.dataset.cancelInvite) { await call(inCompany('/api/invitations/cancel'), { id: b.dataset.cancelInvite }); await members() }
       if (b.dataset.rotate !== undefined) { await call(inCompany('/api/join-token/rotate'), {}); await members() }
       if (b.dataset.join) { await call('/api/companies/join', { company: b.dataset.join }); state.me.companies.push({ id: b.dataset.join, role: 'owner' }); await companies() }
