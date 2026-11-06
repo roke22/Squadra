@@ -1545,3 +1545,37 @@ test('one machine, two companies, the same session name: two separate copies of 
     rmSync(xdg, { recursive: true, force: true })
   }
 })
+
+// For now it only says what it finds, in the log: see "MAC-CASE".
+test('a case-sensitive volume on a Mac: which folders count as allowed', { skip: process.platform !== 'darwin' }, t => {
+  const volume = `sqcase${process.pid}`
+  const image = join(work, `${volume}.dmg`)
+  const mount = `/Volumes/${volume}`
+  const dir = join(work, 'mac-case-host')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const script = `
+    import { validateSpec } from ${JSON.stringify(join(ROOT, 'host/squadra-host.mjs'))}
+    import { mkdirSync, realpathSync, statSync } from 'node:fs'
+    const mount = ${JSON.stringify(mount)}
+    for (const d of ['Proj', 'PROJ', 'Other']) mkdirSync(mount + '/' + d)
+    const settings = { folders: [mount + '/Proj'], coordinators: [], max_sessions: 5, allow_resume: false, allow_home: false }
+    const opens = d => { try { return 'accepted ' + validateSpec({ name: 'x', role: 'solo', folder: mount + '/' + d }, settings, []).folder } catch (err) { return 'refused' } }
+    process.stdout.write(JSON.stringify({
+      distinct: statSync(mount + '/Proj').ino !== statSync(mount + '/PROJ').ino,
+      realPROJ: realpathSync.native(mount + '/PROJ'),
+      Proj: opens('Proj'), PROJ: opens('PROJ'), Other: opens('Other'),
+    }))`
+  let attached = false
+  try {
+    execFileSync('hdiutil', ['create', '-size', '30m', '-fs', 'Case-sensitive APFS', '-volname', volume, image], { stdio: 'pipe' })
+    execFileSync('hdiutil', ['attach', '-nobrowse', image], { stdio: 'pipe' })
+    attached = true
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    t.diagnostic(`MAC-CASE ${out}`)
+  } catch (err) {
+    t.diagnostic(`MAC-CASE could not check: ${String(err.stderr ?? err.message).slice(0, 400)}`)
+  } finally {
+    if (attached) { try { execFileSync('hdiutil', ['detach', mount, '-force'], { stdio: 'pipe' }) } catch {} }
+    rmSync(image, { force: true })
+  }
+})
