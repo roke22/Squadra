@@ -85,7 +85,7 @@ export function renderHosts(only) {
         <div class="host-head"><span class="dot ${h.online ? 'ok' : ''}"></span><span class="n">${esc(h.name)}</span>
           <span class="m">${hostState(h)}${hostLine(h) ? ` · ${esc(hostLine(h))}` : ''}</span>
           <span class="acts">${h.online ? (can('operator') ? `<button class="btn" data-hact="new" data-h="${esc(h.id)}">${T.newSession}</button>` : '') : (can('manager') ? `<button class="btn danger" data-hact="disconnect" data-h="${esc(h.id)}">${T.disconnect}</button>` : '')}${can('manager') ? `<button class="more" data-hmenu="${esc(h.id)}" aria-label="${esc(T.actions(h.name))}">⋯</button>` : ''}</span></div>
-        <div class="host-meta">${i.version && serverVersion && olderThan(i.version, serverVersion) ? `<span class="plugin-missing">${T.hostOld(esc(i.version), esc(serverVersion))}</span>` : ''}${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span class="folders">${T.folders}: ${folderChips(h)}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
+        ${i.shares_user ? `<div class="host-warn">⚠️ ${esc(T.sharedUserWarn)}</div>` : ''}<div class="host-meta">${i.version && serverVersion && olderThan(i.version, serverVersion) ? `<span class="plugin-missing">${T.hostOld(esc(i.version), esc(serverVersion))}</span>` : ''}${i.plugin ? (i.plugin.installed && i.plugin.enabled ? `<span>${T.pluginOk(esc(i.plugin.version ?? ''))}</span>` : `<span class="plugin-missing">${T.pluginMissing(!i.plugin.installed)}</span>`) : ''}<span class="folders">${T.folders}: ${folderChips(h)}</span>${i.max_sessions ? `<span>${T.maxSessions(i.max_sessions)}</span>` : ''}<span>${i.allow_input === false ? T.typingOff : T.typingOn}</span></div>
         <div class="host-terms">${rows || `<div class="host-empty">${T.noTerminals}</div>`}</div>
       </div>`
   }).join('')}</div>`)
@@ -219,13 +219,16 @@ export function addMachineDialog() {
       d.el.querySelector('[data-step="2"]').hidden = false
       // One command for the machine's system, with its copy button.
       const guess = /Mac/i.test(navigator.platform) ? 'macos' : /Win/i.test(navigator.platform) ? 'windows' : 'linux'
-      let os = guess, home = false, root = false
+      let os = guess, home = false, root = false, osUser = ''
       const cmd = text => `<div class="cmdrow"><pre class="cmd">${esc(text)}</pre><button class="btn" data-copy>${T.copy}</button></div>`
       const insecure = /^http:\/\//.test(r.server_url) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(r.server_url)
       const draw = () => {
         for (const b of d.el.querySelectorAll('[data-os]')) b.classList.toggle('on', b.dataset.os === os)
         const extra = (home ? ' --allow-home' : '') + (root && os !== 'macos' ? ' --allow-root' : '') + (insecure ? ' --insecure' : '')
-        d.el.querySelector('.steps').innerHTML = `<p>${T.runOn(os)}</p>${cmd(String(r.install?.[os] ?? '') + extra)}
+        // (A new system user needs root: the installer does the rest as that user.)
+        const withUser = text => (os === 'linux' && osUser ? `${text.replace('| bash -s --', '| sudo bash -s --')} --os-user=${osUser}` : text)
+        d.el.querySelector('.steps').innerHTML = `<p>${T.runOn(os)}</p>${cmd(withUser(String(r.install?.[os] ?? '') + extra))}
+            ${os === 'linux' ? `<label class="field"><span>${T.osUser}</span><input type="text" data-osuser value="${esc(osUser)}" maxlength="32" autocomplete="off"><span class="hint">${T.osUserHint}</span></label>` : ''}
             <label class="check"><input type="checkbox" data-home ${home ? 'checked' : ''}> <span>${T.allowHome}</span></label>
             ${os === 'macos' ? '' : `<label class="check"><input type="checkbox" data-root ${root ? 'checked' : ''}> <span>${T.allowRoot}</span></label>`}
             <p class="note">${T.runWhat}${os === 'windows' ? ` ${T.windowsNote}` : ''}</p>
@@ -239,6 +242,7 @@ export function addMachineDialog() {
       d.el.querySelector('.steps').addEventListener('change', ev => {
         if (ev.target.matches('[data-home]')) { home = ev.target.checked; draw() }
         if (ev.target.matches('[data-root]')) { root = ev.target.checked; draw() }
+        if (ev.target.matches('[data-osuser]')) { osUser = /^[a-z_][a-z0-9_-]{0,31}$/.test(ev.target.value) ? ev.target.value : ''; draw() }
       })
       hostListeners.add(listener)
       d.el.querySelector('.steps').addEventListener('click', async ev => {

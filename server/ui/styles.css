@@ -452,3 +452,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .modal .cmdrow .btn { flex: none; }
 .modal [data-body] > h4 { margin: 18px 0 4px; font-size: 14px; }
 .modal [data-body] .note { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.host-warn { margin: 4px 0; font-size: 12.5px; color: var(--warn); }
+.warn-text { color: var(--warn); }
+table.people .warn-text { color: var(--warn); }

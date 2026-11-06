@@ -17,7 +17,7 @@ export function openPeople() {
   const manager = can('manager')
   const tabs = [
     ...(manager ? [['members', T.tabMembers]] : []),
-    ...(admin ? [['companies', T.tabCompanies], ['users', T.tabUsers]] : []),
+    ...(admin ? [['companies', T.tabCompanies], ['users', T.tabUsers], ['machines', T.tabMachines]] : []),
     ['account', T.tabAccount],
   ]
   const d = dialog(`<h3>${esc(T.people)}</h3>
@@ -37,7 +37,7 @@ export function openPeople() {
     current = tab
     ok()
     for (const b of d.el.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab)
-    try { await ({ members, companies, users, account })[tab]() } catch (err) { fail(err) }
+    try { await ({ members, companies, users, machines, account })[tab]() } catch (err) { fail(err) }
   }
 
   async function members() {
@@ -101,6 +101,16 @@ export function openPeople() {
     body.innerHTML = `<table class="people"><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b>${u.is_platform_admin ? ` <span class="note">${esc(T.administrator)}</span>` : ''}<br><span class="note">${esc(u.email)}${u.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td><button class="btn" data-reset="${esc(u.id)}">${esc(T.resetLink)}</button>
         ${u.id === state.me.user.id ? '' : `<button class="btn ${u.disabled ? '' : 'danger'}" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button>`}</td></tr>`).join('')}</tbody></table><div data-link></div>`
+  }
+
+  // What runs where: several companies on one machine, and how far apart they are.
+  async function machines() {
+    const turn = ++drawing
+    const list = await call('/api/machines')
+    if (turn !== drawing) return
+    body.innerHTML = list.length ? `<table class="people"><tbody>${list.map(m => `<tr><td><b>${esc(m.hostname)}</b> <span class="note">${esc(T.machineSessions(m.sessions))}</span><br>
+        <span class="note">${esc(T.isolation[m.isolation])}</span>${m.isolation === 'same-user' ? ` <span class="note warn-text">⚠️ ${esc(T.sharedUserWarn)}</span>` : ''}
+        ${m.instances.map(i => `<br><span class="dot ${i.online ? 'ok' : ''}"></span> ${esc(i.company_name)} · ${esc(i.name)}${i.os_user ? ` <span class="note">(${esc(i.os_user)})</span>` : ''} <span class="note">${esc(T.instanceSessions(i.sessions, i.max_sessions))}</span>`).join('')}</td></tr>`).join('')}</tbody></table>` : `<p class="note">${esc(T.noMachines)}</p>`
   }
 
   function account() {

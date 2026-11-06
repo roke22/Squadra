@@ -22,6 +22,11 @@
  * restarts of this program and can be attached locally:
  *   tmux -L squadra attach -t sq-<name>
  *
+ * A machine can serve several companies: one copy of this program per company
+ * (--company=<id>, which the dashboard's command says), with its own folder,
+ * tmux server, Claude Code configuration and service. Apart for accidents only
+ * under one system user: to separate them for real, use one user per company.
+ *
  * Requirements: Node >= 22.13, tmux >= 3.2 and Claude Code. No npm dependencies.
  * Runs on Linux and macOS. On Windows, run it inside WSL (it needs tmux).
  */
@@ -42,13 +47,24 @@ const run = promisify(execFile)
 // Never talk to the server without checking its certificate.
 delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
 
-const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')
+// The company this copy serves. (None: the server's first company, or a server
+// without companies, with everything where it always was.)
+const COMPANY = process.argv.slice(2).find(a => a.startsWith('--company='))?.slice('--company='.length) ?? process.env.SQUADRA_COMPANY ?? ''
+if (COMPANY && !/^[a-z0-9]{8}$/.test(COMPANY)) {
+  process.stderr.write('squadra-host: --company must be the 8 characters the dashboard gives\n')
+  process.exit(2)
+}
+if (COMPANY) process.env.SQUADRA_COMPANY = COMPANY // (for what this program starts again)
+const BASE_DIR = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'squadra-host')
+const CONFIG_DIR = process.env.SQUADRA_HOST_DIR ?? (COMPANY ? join(BASE_DIR, 'companies', COMPANY) : BASE_DIR)
+// Its own Claude Code: another login, history, skills and plugin settings.
+if (COMPANY && !process.env.CLAUDE_CONFIG_DIR) process.env.CLAUDE_CONFIG_DIR = join(CONFIG_DIR, 'claude')
 const CREDENTIALS_FILE = join(CONFIG_DIR, 'credentials.json')
 const HOST_KEY_FILE = join(CONFIG_DIR, 'host-key.json')
 const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json')
 const INSTALLED_SCRIPT = join(CONFIG_DIR, 'squadra-host.mjs')
 
-const TMUX_SOCKET = process.env.SQUADRA_TMUX_SOCKET ?? 'squadra'
+const TMUX_SOCKET = process.env.SQUADRA_TMUX_SOCKET ?? (COMPANY ? `squadra-${COMPANY}` : 'squadra')
 const PREFIX = 'sq-'
 const NAME_RE = /^[A-Za-z0-9_-]{1,32}$/
 const COMPACT_MIN = 50_000
@@ -136,6 +152,26 @@ function forbiddenFolder(real, { allowHome = false } = {}) {
     dir = up
   }
   return null
+}
+
+// The other copies of this program for this system user: each serves another
+// company. (Not for a custom SQUADRA_HOST_DIR: a setup of its own, like the tests'.)
+function otherInstances() {
+  if (process.env.SQUADRA_HOST_DIR) return []
+  const dirs = [BASE_DIR]
+  try { for (const d of readdirSync(join(BASE_DIR, 'companies'))) dirs.push(join(BASE_DIR, 'companies', d)) } catch {}
+  return dirs.filter(d => resolve(d) !== resolve(CONFIG_DIR) && existsSync(join(d, 'credentials.json')))
+}
+// A folder belongs to one company on a machine: two would share its repository
+// and its .claude/, each without knowing. (The settings of each say which.)
+function folderOfAnotherCompany(real) {
+  for (const dir of otherInstances()) {
+    const list = readJson(join(dir, 'settings.json'), null)?.folders
+    for (const f of Array.isArray(list) ? list : []) {
+      if (typeof f === 'string' && (withinById(real, realOr(f)) || withinById(realOr(f), real))) return true
+    }
+  }
+  return false
 }
 
 // Text that came from the server, printed on this terminal: no control
@@ -664,6 +700,7 @@ function checkFolder(folder, settings) {
   if (/[#;\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/.test(real)) throw new Error('folder contains characters that are not allowed (#, ; or control characters)')
   const why = forbiddenFolder(real, { allowHome: settings.allow_home })
   if (why) throw new Error(`sessions cannot be opened in ${real}: it is ${why}`)
+  if (folderOfAnotherCompany(real)) throw new Error(`sessions cannot be opened in ${real}: it belongs to another company on this machine`)
   return real
 }
 
@@ -1479,11 +1516,29 @@ function wsUrl(server) {
   return u.toString()
 }
 
+// Which machine this is, for showing the copies on it together: never for
+// deciding anything, since it is only this program's word.
+let MACHINE = null
+function machineId() {
+  if (MACHINE) return MACHINE
+  let id = ''
+  for (const f of ['/etc/machine-id', '/var/lib/dbus/machine-id']) { try { id ||= readFileSync(f, 'utf8').trim() } catch {} }
+  if (!id && platform() === 'darwin') {
+    try { id = /"IOPlatformUUID" = "([^"]+)"/.exec(execFileSync('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8', timeout: 5000 }))?.[1] ?? '' } catch {}
+  }
+  MACHINE = createHash('sha256').update(`squadra-machine|${id || hostname()}`).digest('hex').slice(0, 32)
+  return MACHINE
+}
+
 async function hostInfo() {
   const settings = loadSettings()
   const tv = await tmuxVersion()
   return {
     hostname: hostname(),
+    machine: machineId(),
+    os_user: (() => { try { return userInfo().username } catch { return null } })(),
+    // Another company runs here under this same system user: apart for accidents only.
+    shares_user: otherInstances().length > 0,
     platform: platform(),
     arch: arch(),
     node: process.version,
@@ -1831,6 +1886,8 @@ const USAGE = `Usage: squadra-host [command] [options]
   squadra-host service               Run in the background and start with the computer
                                      (service remove: stop doing that; service print: show the file)
   squadra-host forget                Delete this machine's credential
+  squadra-host --company=<id> ...    The same, for that company's copy on this machine (each has its own
+                                     folder, tmux, Claude Code login and service)
   squadra-host enroll <server> <code>  Join a Squadra server: the dashboard gives you this
                                      (with --server-key=<hash>, the key that server must prove)
                                      command in Machines → + Add machine. It also installs the
@@ -1972,6 +2029,10 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   try { if (existsSync(CREDENTIALS_FILE)) accessSync(realOr(CREDENTIALS_FILE), FS.W_OK) } catch { die(`${CREDENTIALS_FILE} can't be written: nothing was done`, 2) }
   server = server.replace(/\/+$/, '')
   checkScheme(server, insecure)
+  // Already another server's: its sessions would go on running here, and appear
+  // in the new one. Only by asking for it, and never by accident.
+  const enrolled = readJson(CREDENTIALS_FILE, null)
+  if (enrolled?.server && enrolled.server !== server) die(`this machine already belongs to ${plain(enrolled.server)}: nothing was done. To leave it first: ${cli()} forget`, 2)
   // The dashboard's command says which server this should be: with it, nothing
   // here depends on who answers first.
   let proved = null
@@ -1983,7 +2044,8 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
     res = await fetch(`${server}/host/enroll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code.trim().toUpperCase(), info }),
+      // (The server refuses a code of another company before spending it.)
+      body: JSON.stringify({ code: code.trim().toUpperCase(), company: COMPANY || 'default', info }),
       redirect: 'error',
     })
   } catch (err) { die(`cannot reach ${server}: ${err.cause?.message ?? err.message}`) }
@@ -1993,7 +2055,8 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
   if (typeof r.id !== 'string' || !/^h_[0-9a-f]{8,64}$/.test(r.id) || typeof r.secret !== 'string' || !/^sh_[A-Za-z0-9_-]{20,200}$/.test(r.secret)) {
     die('the server answered the enrollment with something unexpected')
   }
-  writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure, ...(proved ? { server_key: proved.key } : {}) })
+  writeJson(CREDENTIALS_FILE, { server, id: r.id, secret: r.secret, insecure, ...(COMPANY ? { company: COMPANY } : {}), ...(proved ? { server_key: proved.key } : {}) })
+  ensureClaudeHome()
   // No folder is allowed until the user says which (folders add): enrolling
   // from wherever the script was downloaded must not open that place up.
   if (!existsSync(SETTINGS_FILE)) writeJson(SETTINGS_FILE, { ...DEFAULT_SETTINGS, settings_version: SETTINGS_VERSION })
@@ -2045,10 +2108,15 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
 squadra-host: this machine is now "${plain(r.name)}" on ${server}.
   ${svc?.ok ? `It runs in the background as ${svc.how}.` : 'It keeps running while this terminal stays open.'}
   Next, in the dashboard: Machines → this machine → + Folder, to choose where sessions may be opened.
-  ${launcher?.onPath === false ? `The squadra-host command is in ${dirname(LAUNCHER)}: open a new terminal to use it (or add that folder to your PATH).` : launcher?.skipped ? `${LAUNCHER} already exists and isn't this program's: use node ${INSTALLED_SCRIPT}.` : 'Commands: squadra-host status · squadra-host help'}
+  ${COMPANY ? `This company has its own Claude Code login. Sign in once: CLAUDE_CONFIG_DIR='${process.env.CLAUDE_CONFIG_DIR}' claude, then /login.\n  ` : ''}  ${launcher?.onPath === false ? `The squadra-host command is in ${dirname(LAUNCHER)}: open a new terminal to use it (or add that folder to your PATH).` : launcher?.skipped ? `${LAUNCHER} already exists and isn't this program's: use node ${INSTALLED_SCRIPT}.` : 'Commands: squadra-host status · squadra-host help'}
 
 `)
   return !!svc?.ok
+}
+
+// A company's Claude Code folder, private like everything of this program's.
+function ensureClaudeHome() {
+  if (COMPANY && process.env.CLAUDE_CONFIG_DIR) mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true, mode: 0o700 })
 }
 
 // The settings file as written (for changing it), or an error if it can't be
@@ -2089,6 +2157,7 @@ function changeFolders(action, path) {
     if (!st.isDirectory()) throw new FolderRefused(`${plain(abs)} is not a folder`)
     const why = forbiddenFolder(realOr(abs), { allowHome: s.allow_home === true })
     if (why) throw new FolderRefused(`${plain(abs)} can't be allowed: it is ${why}`)
+    if (folderOfAnotherCompany(realOr(abs))) throw new FolderRefused(`${plain(abs)} can't be allowed: it belongs to another company on this machine`)
     if (!s.folders.includes(abs)) {
       if (s.folders.length >= MAX_FOLDERS) throw new Error(`at most ${MAX_FOLDERS} folders: remove one first`)
       s.folders.push(abs)
@@ -2121,6 +2190,7 @@ const absolutePath = () => String(process.env.PATH ?? '').split(':').filter(d =>
 // the defaults (the service would otherwise look in the default places).
 const serviceEnv = () => {
   const env = [['PATH', absolutePath()], ['SQUADRA_SERVICE', '1']]
+  if (COMPANY) env.push(['SQUADRA_COMPANY', COMPANY])
   for (const k of ['SQUADRA_HOST_DIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR']) {
     const v = process.env[k]
     if (v && isAbsolute(v) && !/[\x00-\x1f\x7f]/.test(v)) env.push([k, v])
@@ -2137,23 +2207,26 @@ const serviceEnv = () => {
 // (Run as root — installed with --allow-root —: a system service, since root
 // rarely has a systemd user session.)
 const AS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0
-const SYSTEMD_UNIT = AS_ROOT ? '/etc/systemd/system/squadra-host.service' : join(process.env.XDG_CONFIG_HOME && isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : join(HOME, '.config'), 'systemd', 'user', 'squadra-host.service')
+// (One per company, so each starts and stops by itself.)
+const SERVICE_NAME = COMPANY ? `squadra-host-${COMPANY}` : 'squadra-host'
+const SYSTEMD_UNIT = AS_ROOT ? `/etc/systemd/system/${SERVICE_NAME}.service` : join(process.env.XDG_CONFIG_HOME && isAbsolute(process.env.XDG_CONFIG_HOME) ? process.env.XDG_CONFIG_HOME : join(HOME, '.config'), 'systemd', 'user', `${SERVICE_NAME}.service`)
 const userFlag = AS_ROOT ? [] : ['--user']
-const LAUNCHD_PLIST = join(HOME, 'Library', 'LaunchAgents', 'com.squadra.host.plist')
+const LAUNCHD_LABEL = COMPANY ? `com.squadra.host.${COMPANY}` : 'com.squadra.host'
+const LAUNCHD_PLIST = join(HOME, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`)
 // System tools only from the system's own folders.
 const systemTool = name => ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].map(d => join(d, name)).find(f => { try { accessSync(f, FS.X_OK); return true } catch { return false } }) ?? null
 
 function serviceFile() {
   const node = process.execPath
   if (platform() === 'darwin') {
-    const logFile = join(HOME, 'Library', 'Logs', 'squadra-host.log')
+    const logFile = join(HOME, 'Library', 'Logs', `${SERVICE_NAME}.log`)
     const x = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     return { path: LAUNCHD_PLIST, script: x(INSTALLED_SCRIPT), text: `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Written by squadra-host. Log: ${x(logFile)} -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.squadra.host</string>
+  <key>Label</key><string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array><string>${x(node)}</string><string>${x(INSTALLED_SCRIPT)}</string></array>
   <key>EnvironmentVariables</key>
@@ -2168,7 +2241,7 @@ function serviceFile() {
   }
   return { path: SYSTEMD_UNIT, script: sd(INSTALLED_SCRIPT), text: `# Written by squadra-host.
 [Unit]
-Description=Squadra host
+Description=Squadra host${COMPANY ? ` (company ${COMPANY})` : ''}
 After=network-online.target
 
 [Service]
@@ -2216,8 +2289,8 @@ async function installService() {
   write()
   try {
     await run(systemctl, [...userFlag, 'daemon-reload'], { timeout: 30_000 })
-    await run(systemctl, [...userFlag, 'enable', 'squadra-host'], { timeout: 30_000 })
-    await run(systemctl, [...userFlag, 'restart', 'squadra-host'], { timeout: 30_000 })
+    await run(systemctl, [...userFlag, 'enable', SERVICE_NAME], { timeout: 30_000 })
+    await run(systemctl, [...userFlag, 'restart', SERVICE_NAME], { timeout: 30_000 })
   } catch (err) { return { ok: false, why: `systemctl failed (${String(err.stderr || err.message).trim().split('\n')[0]})` } }
   if (AS_ROOT) return { ok: true, how: `a system service (${f.path}); it starts with the machine` }
   // Running also while you are logged out (may need an administrator: optional).
@@ -2235,7 +2308,7 @@ async function removeService() {
     return
   }
   const systemctl = systemTool('systemctl')
-  if (systemctl) await run(systemctl, [...userFlag, 'disable', '--now', 'squadra-host'], { timeout: 30_000 }).catch(() => {})
+  if (systemctl) await run(systemctl, [...userFlag, 'disable', '--now', SERVICE_NAME], { timeout: 30_000 }).catch(() => {})
   rmSync(SYSTEMD_UNIT, { force: true })
   if (systemctl) await run(systemctl, [...userFlag, 'daemon-reload'], { timeout: 30_000 }).catch(() => {})
 }
@@ -2260,17 +2333,17 @@ async function service(action) {
 
 // The "squadra-host" command: a small launcher in ~/.local/bin (in the PATH
 // of most systems), so nobody has to type the path of this program.
-const LAUNCHER = typeof process.getuid === 'function' && process.getuid() === 0 ? '/usr/local/bin/squadra-host' : join(HOME, '.local', 'bin', 'squadra-host')
+const LAUNCHER = typeof process.getuid === 'function' && process.getuid() === 0 ? `/usr/local/bin/${SERVICE_NAME}` : join(HOME, '.local', 'bin', SERVICE_NAME)
 const LAUNCHER_MARK = '# squadra-host launcher (written by squadra-host)'
 const launcherOnPath = () => String(process.env.PATH ?? '').split(':').some(d => d && resolve(d) === dirname(LAUNCHER))
-const cli = () => (existsSync(LAUNCHER) && launcherOnPath() ? 'squadra-host' : `node ${INSTALLED_SCRIPT}`)
+const cli = () => (existsSync(LAUNCHER) && launcherOnPath() ? SERVICE_NAME : `node ${INSTALLED_SCRIPT}${COMPANY ? ` --company=${COMPANY}` : ''}`)
 function installLauncher() {
   const q = v => `'${String(v).replace(/'/g, `'\\''`)}'`
   // (Someone else's, or one that can't be read: left alone.)
   try { if (!readFileSync(LAUNCHER, 'utf8').includes(LAUNCHER_MARK)) return { skipped: true } } catch (err) { if (err.code !== 'ENOENT') return { skipped: true } }
   mkdirSync(dirname(LAUNCHER), { recursive: true, mode: 0o755 })
   const tmp = `${LAUNCHER}.${process.pid}.tmp`
-  writeFileSync(tmp, `#!/bin/sh\n${LAUNCHER_MARK}\nN=${q(process.execPath)}\n[ -x "$N" ] || N=node\nexec "$N" ${q(INSTALLED_SCRIPT)} "$@"\n`, { mode: 0o755, flag: 'wx' })
+  writeFileSync(tmp, `#!/bin/sh\n${LAUNCHER_MARK}\nN=${q(process.execPath)}\n[ -x "$N" ] || N=node\nexec "$N" ${q(INSTALLED_SCRIPT)}${COMPANY ? ` --company=${COMPANY}` : ''} "$@"\n`, { mode: 0o755, flag: 'wx' })
   renameSync(tmp, LAUNCHER)
   return { onPath: launcherOnPath() }
 }
@@ -2429,7 +2502,7 @@ async function main() {
   const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade']
   const serverKeyArg = argv.find(a => a.startsWith('--server-key='))?.slice('--server-key='.length)
   if (serverKeyArg !== undefined && !/^[0-9a-f]{64}$/.test(serverKeyArg)) die('--server-key must be the 64 hex characters the dashboard gives', 2)
-  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
+  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=') && !f.startsWith('--company=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
   if (flags.has('--allow-home') && flags.has('--no-allow-home')) die('--allow-home or --no-allow-home, not both', 2)
   if (flags.has('--allow-home') || flags.has('--no-allow-home')) {
     try { setAllowHome(flags.has('--allow-home')) } catch (err) { die(err.message, 2) }
@@ -2443,7 +2516,7 @@ async function main() {
   if (cmd === 'forget') { rmSync(CREDENTIALS_FILE, { force: true }); return log('credential deleted') }
   if (cmd === 'status') {
     const creds = readJson(CREDENTIALS_FILE, null)
-    process.stdout.write(JSON.stringify({ server: creds?.server ?? null, running: runningInstance() ? { pid: runningInstance() } : false, service: existsSync(serviceFile().path) ? serviceFile().path : null, settings: loadSettings(), terminals: await listTerminals() }, null, 2) + '\n')
+    process.stdout.write(JSON.stringify({ server: creds?.server ?? null, ...(COMPANY ? { company: COMPANY } : {}), running: runningInstance() ? { pid: runningInstance() } : false, service: existsSync(serviceFile().path) ? serviceFile().path : null, settings: loadSettings(), terminals: await listTerminals() }, null, 2) + '\n')
     return
   }
   if (typeof WebSocket !== 'function') die(`Node ${process.version} has no WebSocket: use Node 22 or newer`, 2)
@@ -2465,9 +2538,10 @@ async function main() {
     if (other && UNDER_SERVICE) {
       log(`another squadra-host is running here (pid ${other}): waiting for it to end`)
       while (runningInstance()) await new Promise(r => setTimeout(r, 10_000))
-    } else if (other) die(`squadra-host is already running on this machine (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`, 2)
+    } else if (other) die(`squadra-host is already running here for this company (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`, 2)
     await claimInstance()
   }
+  ensureClaudeHome()
   // (Exit 2 is "not enrolled", for good. A file that can't be read just now is not that.)
   let creds = null
   try { creds = JSON.parse(readFileSync(CREDENTIALS_FILE, 'utf8')) } catch (err) { if (err.code !== 'ENOENT') die(`cannot read ${CREDENTIALS_FILE}: ${err.message}`, 1) }

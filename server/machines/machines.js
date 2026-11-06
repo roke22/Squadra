@@ -46,7 +46,7 @@ export const offeredCredential = req => offeredProtocols(req).find(x => x.starts
 export function createMachines(platform, { sessions, observation }) {
   const {
     bus, db, broadcast, SERVER_KEY, joinToken, signAsServer, allow, takeChallenge, proofIsGood, credentialPrefix,
-    routeEnrollment, log,
+    routeEnrollment, log, companyId,
   } = platform
   const {
     NAME_RE, roleOf, checkApproval, isOnline, keyRefused, holdsName, leases, linksOf, register, dropLease,
@@ -170,6 +170,8 @@ export function createMachines(platform, { sessions, observation }) {
     // The command checks the program it downloads against this server's copy
     // (sha256sum on Linux, shasum on macOS) before running it.
     const sha = hostScript()?.sha ?? null
+    // (A company's machine gets its own copy of everything: see squadra-host.)
+    const company = credentialPrefix ? ` --company=${companyId}` : ''
     const verify = sha ? ` && echo ${q(`${sha}  squadra-host.mjs`)} | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -)` : ''
     return {
       code,
@@ -183,14 +185,14 @@ export function createMachines(platform, { sessions, observation }) {
       // One command per system: the installer prepares the machine (tmux, Node,
       // Claude Code) and runs squadra-host with this code. (Windows: inside WSL.)
       install: {
-        linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
-        macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}`,
+        linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}${company}`,
+        macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}${company}`,
         // (PowerShell's quotes. "--server-key x", not "=": a .bat splits its arguments at "=".)
-        windows: `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}`,
+        windows: `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}${credentialPrefix ? ` --company ${companyId}` : ''}`,
       },
       // Just squadra-host, on a machine that already has what it needs.
       // Downloaded into a new private folder: nobody can swap the file between the check and the run.
-      command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code} --server-key=${SERVER_KEY.hash}`,
+      command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code} --server-key=${SERVER_KEY.hash}${company}`,
     }
   }
 
@@ -204,6 +206,9 @@ export function createMachines(platform, { sessions, observation }) {
     if (!row || row.expires_at < t) {
       throw new ApiError(403, 'Forbidden: the code is wrong or has expired; generate a new one in the dashboard (Machines → + Add machine)')
     }
+    // A copy of squadra-host set up for another company (without what the
+    // dashboard's command says, say) would use another's folder. (Older ones don't say.)
+    if (p.company != null && String(p.company) !== companyId) throw new ApiError(403, 'Forbidden: this code is for another company: run the whole command the dashboard gives')
     db.prepare('DELETE FROM host_enrollments WHERE code_hash = ?').run(row.code_hash) // single use
     const id = `h_${randomBytes(8).toString('hex')}`
     const info = ownTerminals(sanitizeHostInfo(p.info), id)
@@ -249,6 +254,9 @@ export function createMachines(platform, { sessions, observation }) {
     })).filter(t => t.id && NAME_RE.test(t.id))
     return {
       hostname: str(info.hostname, 100),
+      machine: /^[0-9a-f]{16,64}$/.test(String(info.machine)) ? info.machine : null, // (its word: only for showing)
+      os_user: str(info.os_user, 64),
+      shares_user: info.shares_user === true,
       platform: str(info.platform, 40),
       arch: str(info.arch, 40),
       node: str(info.node, 40),

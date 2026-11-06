@@ -98,6 +98,30 @@ export function createCompanies(server) {
   const view = r => ({ id: r.id, name: r.name, status: failed.has(r.id) ? 'unavailable' : r.status, limits: quotasOf(r), created_at: r.created_at })
   const list = () => control.prepare('SELECT * FROM companies ORDER BY created_at, id').all().map(view)
 
+  // Which machines serve which companies, by what each machine says it is:
+  // for looking at, never for deciding anything.
+  function machines() {
+    const byMachine = new Map()
+    for (const c of open.values()) {
+      for (const h of c.machines.listHosts()) {
+        const key = h.info?.machine ?? h.id
+        if (!byMachine.has(key)) byMachine.set(key, { machine: key, hostname: h.info?.hostname ?? h.name, instances: [] })
+        byMachine.get(key).instances.push({
+          company: c.id, company_name: nameOf(c.id), host: h.id, name: h.name, online: h.online, os_user: h.info?.os_user ?? null,
+          sessions: h.info?.terminals?.length ?? 0, max_sessions: h.info?.max_sessions ?? null,
+        })
+      }
+    }
+    return [...byMachine.values()].map(m => {
+      const users = new Set(m.instances.map(i => i.os_user))
+      return {
+        ...m,
+        sessions: m.instances.reduce((n, i) => n + i.sessions, 0),
+        isolation: m.instances.length < 2 ? 'dedicated' : users.size === m.instances.length && !users.has(null) ? 'os-user' : 'same-user',
+      }
+    }).sort((a, b) => String(a.hostname).localeCompare(String(b.hostname)))
+  }
+
   function newId() {
     for (;;) {
       const id = [...randomBytes(8)].map(b => ID_ALPHABET[b % ID_ALPHABET.length]).join('')
@@ -151,7 +175,7 @@ export function createCompanies(server) {
   }
 
   return {
-    control, first, get, of, nameOf, dropClients, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
+    control, machines, first, get, of, nameOf, dropClients, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
   }
 }
 

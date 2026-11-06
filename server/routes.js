@@ -84,6 +84,10 @@ export function createRoutes(server, companies, accounts) {
       return sendJson(res, 200, { ok: true, result: mine.map(c => ({ id: c.id, name: c.name, status: c.status })) })
     }
     if (!actor.token && !actor.is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
+    if (what === 'machines') {
+      if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
+      return sendJson(res, 200, { ok: true, result: companies.machines() })
+    }
     if (what === 'companies/create') {
       if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
       const params = await readParams(req, url)
@@ -198,7 +202,7 @@ export function createRoutes(server, companies, accounts) {
           if (!m) throw new ApiError(404, 'Not Found')
           return await companyCall(named(m[1]), m[2], req, res, url, actor)
         }
-        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/')) return await platformCall(what, req, res, url, actor)
+        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/') || what === 'machines') return await platformCall(what, req, res, url, actor)
         // Without a company: scripts with the server token, on the first one.
         if (!actor.token) throw new ApiError(404, 'Not Found')
         return await companyCall(companies.first(), what, req, res, url, actor)

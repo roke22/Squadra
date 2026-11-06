@@ -6,7 +6,7 @@
 
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, chmodSync, existsSync, realpathSync, rmSync, symlinkSync, lstatSync, readdirSync, statSync } from 'node:fs'
 import { tmpdir, homedir, userInfo } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -1307,4 +1307,88 @@ test('a machine and its server prove who they are, and their link is theirs alon
 test('the server hands out the release signature next to the program', async () => {
   const r = await fetch(`${URL_}/host/squadra-host.mjs.sig`)
   assert.equal(r.status, existsSync(join(ROOT, 'host/squadra-host.mjs.sig')) ? 200 : 404)
+})
+
+test('one machine, two companies, the same session name: two separate copies of everything', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const xdg = mkdtempSync(join(homedir(), '.squadra-host-test-xdg-'))
+  const project = name => { const d = join(allowed, name); mkdirSync(d, { recursive: true }); return d }
+  const company = async name => (await (await fetch(`${URL_}/admin/createCompany`, { method: 'POST', headers: { Authorization: `Bearer ${SERVER_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })).json()).result
+  const [a, b] = [await company('Shared A'), await company('Shared B')]
+  const inDash = async (co, what, body) => (await fetch(`${URL_}/api/c/${co.id}/${what}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${SERVER_TOKEN}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })).json()
+  const env = { ...process.env, XDG_CONFIG_HOME: xdg, SQUADRA_HOST_TEST_ALLOW_TMP: '1' }
+  for (const k of ['SQUADRA_HOST_DIR', 'SQUADRA_TMUX_SOCKET', 'CLAUDE_CONFIG_DIR', 'SQUADRA_COMPANY']) delete env[k]
+  const hosts = []
+  const host = (co, args) => execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${co.id}`, ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const settingsOf = co => join(xdg, 'squadra-host', 'companies', co.id, 'settings.json')
+  try {
+    // A code, its command, and a copy of squadra-host for the right company only.
+    const en = (await inDash(a, 'hosts/enroll', { name: 'box' })).result
+    for (const c of [en.command, en.install.linux, en.install.macos]) assert.match(c, new RegExp(`--company=${a.id}`))
+    assert.match(en.install.windows, new RegExp(`--company ${a.id}`))
+    const refused = spawnSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${b.id}`, 'enroll', URL_, en.code, '--no-service', '--no-plugin'], { env, encoding: 'utf8', timeout: 20_000 })
+    assert.match(refused.stderr, /for another company/)
+
+    const start = async (co, code) => {
+      mkdirSync(dirname(settingsOf(co)), { recursive: true })
+      writeFileSync(settingsOf(co), JSON.stringify({ folders: [], max_sessions: 2, allow_input: true, claude_command: fakeClaude }))
+      const p = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${co.id}`, 'enroll', URL_, code, '--no-service', '--no-plugin'], { env, stdio: 'ignore' })
+      hosts.push(p)
+      return waitFor(async () => (await inDash(co, 'hosts')).result[0]?.online && (await inDash(co, 'hosts')).result[0], { what: `the machine of ${co.name}` })
+    }
+    const hostA = await start(a, en.code)
+    const hostB = await start(b, (await inDash(b, 'hosts/enroll', { name: 'box' })).result.code)
+
+    // Each has its own folder, Claude Code folder and credential.
+    const creds = co => JSON.parse(readFileSync(join(xdg, 'squadra-host', 'companies', co.id, 'credentials.json'), 'utf8'))
+    assert.match(creds(a).secret, new RegExp(`^sh_${a.id}_`))
+    assert.match(creds(b).secret, new RegExp(`^sh_${b.id}_`))
+    assert.ok(existsSync(join(xdg, 'squadra-host', 'companies', a.id, 'claude')))
+
+    // They say they share a user; and the matrix shows them on one machine.
+    await waitFor(async () => (await inDash(a, 'hosts')).result[0].info.shares_user, { what: 'the warning', timeout: 40_000 })
+    const matrix = (await (await fetch(`${URL_}/api/machines`, { headers: { Authorization: `Bearer ${SERVER_TOKEN}` } })).json()).result
+    const here = matrix.find(m => m.instances.some(i => i.host === hostA.id))
+    assert.ok([a.id, b.id].every(id => here.instances.some(i => i.company === id && i.os_user === userInfo().username)))
+    assert.equal(here.isolation, 'same-user')
+
+    // A folder belongs to one company.
+    const shared = project('shared-a')
+    assert.deepEqual((await inDash(a, 'hosts/folders', { host: hostA.id, action: 'add', path: shared })).result.folders, [shared])
+    const clash = await inDash(b, 'hosts/folders', { host: hostB.id, action: 'add', path: shared })
+    assert.equal(clash.ok, false)
+    const inside = project('shared-a/sub')
+    assert.equal((await inDash(b, 'hosts/folders', { host: hostB.id, action: 'add', path: inside })).ok, false)
+    assert.throws(() => host(b, ['folders', 'add', shared]), /belongs to another company/)
+    const own = project('shared-b')
+    assert.ok((await inDash(b, 'hosts/folders', { host: hostB.id, action: 'add', path: own })).ok)
+
+    // The same session name in both: two sessions, each in its own tmux.
+    for (const [co, h, folder] of [[a, hostA, shared], [b, hostB, own]]) {
+      const r = await inDash(co, 'terminals/open', { host: h.id, spec: { name: 'same', role: 'solo', folder } })
+      assert.ok(r.ok, r.description)
+    }
+    const panes = co => execFileSync('tmux', ['-L', `squadra-${co.id}`, 'list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' }).trim()
+    assert.equal(panes(a), 'sq-same')
+    assert.equal(panes(b), 'sq-same')
+    const cwd = co => execFileSync('tmux', ['-L', `squadra-${co.id}`, 'display-message', '-p', '-t', 'sq-same', '#{pane_current_path}'], { encoding: 'utf8' }).trim()
+    assert.equal(realpathSync(cwd(a)), realpathSync(shared))
+    assert.equal(realpathSync(cwd(b)), realpathSync(own))
+    await waitFor(async () => (await inDash(a, 'hosts')).result[0].info.terminals.some(t => t.id === 'same'), { what: 'its terminal' })
+    // Closing one leaves the other.
+    assert.ok((await inDash(a, 'terminals/kill', { host: hostA.id, term: 'same' })).ok)
+    assert.equal(panes(b), 'sq-same')
+
+    // A machine of another server is not taken over by accident.
+    const moved = spawnSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${a.id}`, 'enroll', 'http://127.0.0.1:9', 'ABCD-EFGH', '--no-service', '--no-plugin', '--insecure'], { env, encoding: 'utf8', timeout: 20_000 })
+    assert.match(moved.stderr, /already belongs to/)
+
+    // And the service of each is its own.
+    const unit = host(a, ['service', 'print'])
+    assert.match(unit, new RegExp(`Environment="SQUADRA_COMPANY=${a.id}"`))
+    assert.match(unit, new RegExp(`companies/${a.id}/squadra-host\\.mjs`))
+  } finally {
+    for (const p of hosts) p.kill('SIGTERM')
+    for (const co of [a, b]) { try { execFileSync('tmux', ['-L', `squadra-${co.id}`, 'kill-server'], { stdio: 'ignore' }) } catch {} }
+    rmSync(xdg, { recursive: true, force: true })
+  }
 })

@@ -33,7 +33,7 @@ What it does not cover:
 
 - Whoever administers the server can read every company's data: messages are not encrypted end to end.
 - The server's own log is common to all companies, and its lines say which company they are about.
-- A machine serves one company. Enrolling it again into another one, or running a second `squadra-host` under the same operating-system user, doesn't separate them yet: terminals and session state would be shared. Until machines can be shared between companies, use a different operating-system user or a different machine.
+- A machine can serve several companies, with one `squadra-host` per company. Under one operating-system user they are kept apart only against accidents: an agent with a shell, or a person at a terminal, can read the other company's folder. The dashboard warns about it. To really separate them, use a different operating-system user or a different machine.
 - Whoever holds the server token can always use `/admin` and `/register`, on any company, also once there are users. What is done on `/admin` is written down in the server's audit table.
 - Someone removed from a company who could manage it may have kept its join token: replace it (the dashboard reminds you). Unused machine codes are cancelled at that moment.
 - Limits on connections and on what is being received are for the whole server, so a company can slow down the others, but not reach them.

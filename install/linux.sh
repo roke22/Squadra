@@ -16,17 +16,21 @@ set -eu
 main() {
   SERVER="${1:-}"; CODE="${2:-}"
   if [ -z "$SERVER" ] || [ -z "$CODE" ]; then
-    echo "usage: linux.sh <server-url> <code> [--allow-home] [--insecure] [--no-service]" >&2
+    echo "usage: linux.sh <server-url> <code> [--allow-home] [--insecure] [--no-service] [--company <id>] [--os-user <name>]" >&2
     exit 2
   fi
   shift 2
   SHA=""
   ROOT_OK=""
+  OS_USER=""
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
       --server-key) ARGS+=("--server-key=${2:-}"); shift 2 ;; # (from windows.bat: no "=" there)
+      --company) ARGS+=("--company=${2:-}"); shift 2 ;;
+      --os-user) [ $# -ge 2 ] || { echo "--os-user needs a name" >&2; exit 2; }; OS_USER="$2"; shift 2 ;;
+      --os-user=*) OS_USER="${1#--os-user=}"; shift ;;
       --allow-root) ROOT_OK=1; shift ;;
       *) ARGS+=("$1"); shift ;;
     esac
@@ -42,6 +46,27 @@ main() {
     else echo "Install $* with your package manager, then run this command again." >&2; exit 1
     fi
   }
+
+  # Another system user for this company's sessions, created if needed: what
+  # really keeps companies apart on one machine. The rest runs again as that user.
+  if [ -n "$OS_USER" ]; then
+    case "$OS_USER" in
+      root|*[!a-z0-9_-]*|[!a-z_]*) echo "--os-user: \"$OS_USER\" is not a name for a new user (lowercase letters, digits, - and _)" >&2; exit 2 ;;
+    esac
+    [ "$(id -u)" -eq 0 ] || { echo "--os-user needs root: run this with sudo." >&2; exit 1; }
+    if ! id "$OS_USER" >/dev/null 2>&1; then
+      say "Creating the system user $OS_USER"
+      useradd -m -s /bin/bash "$OS_USER"
+    fi
+    if ! command -v tmux >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then install_pkg tmux curl; fi
+    # (So its service keeps running without anyone logged in as it.)
+    loginctl enable-linger "$OS_USER" 2>/dev/null || true
+    AS_USER_ENV=("HOME=$(getent passwd "$OS_USER" | cut -d: -f6)" "XDG_RUNTIME_DIR=/run/user/$(id -u "$OS_USER")" "PATH=$PATH")
+    SWITCH=(runuser -u "$OS_USER" --)
+    command -v runuser >/dev/null 2>&1 || SWITCH=(sudo -H -u "$OS_USER")
+    curl -fsSL "${SERVER%/}/install/linux.sh" | "${SWITCH[@]}" env "${AS_USER_ENV[@]}" bash -s -- "$SERVER" "$CODE" ${SHA:+--sha256 "$SHA"} ${ARGS[@]+"${ARGS[@]}"}
+    exit $?
+  fi
 
   if [ "$(id -u)" -eq 0 ] && [ -z "$ROOT_OK" ]; then
     echo "This is root: sessions run as the user who installs them, so they would have full control of this machine." >&2
@@ -99,7 +124,10 @@ main() {
   node squadra-host.mjs enroll "$SERVER" "$CODE" ${ARGS[@]+"${ARGS[@]}"}
 
   say "Done"
-  echo "If you haven't yet: run 'claude' once in a terminal and sign in, so the sessions can start."
+  case " ${ARGS[*]-} " in
+    *" --company="*) ;; # (It has said how: this company has its own login.)
+    *) echo "If you haven't yet: run 'claude' once in a terminal and sign in, so the sessions can start." ;;
+  esac
 }
 
 main "$@"

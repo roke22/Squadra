@@ -23,6 +23,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
+      --os-user*) echo "--os-user is for Linux. On macOS: create the user, log in as it, and run this command there." >&2; exit 2 ;;
       *) ARGS+=("$1"); shift ;;
     esac
   done
