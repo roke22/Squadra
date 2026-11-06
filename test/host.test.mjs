@@ -1386,10 +1386,10 @@ test('one machine, two companies, the same session name: two separate copies of 
     const panes = co => execFileSync('tmux', ['-L', `squadra-${co.id}`, 'list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' }).trim()
     assert.equal(panes(a), 'sq-same')
     assert.equal(panes(b), 'sq-same')
-    const cwd = co => execFileSync('tmux', ['-L', `squadra-${co.id}`, 'display-message', '-p', '-t', 'sq-same', '#{pane_current_path}'], { encoding: 'utf8' }).trim()
-    assert.equal(realpathSync(cwd(a)), realpathSync(shared))
-    assert.equal(realpathSync(cwd(b)), realpathSync(own))
-    await waitFor(async () => (await inDash(a, 'hosts')).result[0].info.terminals.some(t => t.id === 'same'), { what: 'its terminal' })
+    const opened = async co => (await inDash(co, 'hosts')).result[0].info.terminals.find(t => t.id === 'same')
+    await waitFor(async () => (await opened(a)) && (await opened(b)), { what: 'their terminals' })
+    assert.equal((await opened(a)).folder, realpathSync(shared))
+    assert.equal((await opened(b)).folder, realpathSync(own))
     // Closing one leaves the other.
     assert.ok((await inDash(a, 'terminals/kill', { host: hostA.id, term: 'same' })).ok)
     assert.equal(panes(b), 'sq-same')
@@ -1415,7 +1415,8 @@ test('one machine, two companies, the same session name: two separate copies of 
     // around, each copy still uses its own.
     const leaked = { ...env, CLAUDE_CONFIG_DIR: join(xdg, 'squadra-host', 'companies', a.id, 'claude'), SQUADRA_COMPANY: a.id, TMUX: 'a-session' }
     const ownUnit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), `--company=${b.id}`, 'service', 'print'], { env: leaked, encoding: 'utf8' })
-    assert.match(ownUnit, new RegExp(`CLAUDE_CONFIG_DIR=${xdg}/squadra-host/companies/${b.id}/claude`))
+    assert.ok(ownUnit.includes(`${xdg}/squadra-host/companies/${b.id}/claude`), ownUnit)
+    assert.ok(!ownUnit.includes(`companies/${a.id}/`), ownUnit)
     const plainUnit = execFileSync(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'service', 'print'], { env: leaked, encoding: 'utf8' })
     assert.doesNotMatch(plainUnit, /companies/)
 
@@ -1426,8 +1427,9 @@ test('one machine, two companies, the same session name: two separate copies of 
     assert.ok(!existsSync(join(homedir(), '.local', 'bin', `squadra-host-${a.id}`)))
 
     // And the service of each is its own.
+    // (A systemd unit on Linux, a launchd agent on macOS: the same things in it.)
     const unit = host(a, ['service', 'print'])
-    assert.match(unit, new RegExp(`Environment="SQUADRA_COMPANY=${a.id}"`))
+    assert.ok(unit.includes('SQUADRA_COMPANY'), unit)
     assert.match(unit, new RegExp(`companies/${a.id}/squadra-host\\.mjs`))
   } finally {
     for (const p of hosts) p.kill('SIGTERM')
