@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -2598,4 +2598,17 @@ test('what else in the environment changes whom Node trusts is refused unless th
   ]
   assert.deepEqual(check(fine), fine.map(() => ''))
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('a CLAUDE_CONFIG_DIR that is set and ignored stops the login: the default folder may be another copy\'s', async () => {
+  // (Relative, and one where others can write: this test's own folder stays out of the way.)
+  const open = mkdtempSync(join(tmpdir(), 'squadra-cfg-open-'))
+  chmodSync(open, 0o777)
+  for (const value of ['relative/cfg', open]) {
+    const p = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1', CLAUDE_CONFIG_DIR: value })
+    await p.init()
+    await assert.rejects(p.tool('login', { role: 'solo', name: 'ignored1' }), /CLAUDE_CONFIG_DIR .* not used/)
+    p.close()
+  }
+  rmSync(open, { recursive: true, force: true })
 })

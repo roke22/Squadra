@@ -30,6 +30,7 @@ export function claudeConfigDir() {
   try { home = userInfo().homedir || homedir() } catch { home = homedir() }
   const c = process.env.CLAUDE_CONFIG_DIR
   configDirNote = null
+  if (c && !isAbsolute(c)) configDirNote = `CLAUDE_CONFIG_DIR ${c} not used: it is not an absolute path`
   if (c && isAbsolute(c)) {
     const dir = realNearest(c), h = realNearest(home)
     // (Without a working folder — deleted — where the project is can't be

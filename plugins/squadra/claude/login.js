@@ -6,7 +6,7 @@ import { normalizeLevel, createObserver } from '../observe.js'
 import { prepareSocketDir, socketDirFor } from '../paths.js'
 import { keyFingerprint } from '../signing.js'
 import {
-  COORDINATOR_WORDS, defaultObserve, SERVER_URL, transportProblem, DEFAULT_COORDINATOR, NAME_RE,
+  COORDINATOR_WORDS, defaultObserve, SERVER_URL, transportProblem, CONFIG_DIR_IGNORED, DEFAULT_COORDINATOR, NAME_RE,
   log, OBSERVE_ORDER, RUN_DIR, VERSION, SERVER_TOKEN, ROOT_ENV_FILE, S, setSession, readApproved,
   listedApprovers, prepareAccess, writeApproved, personaLabel, linkedCoordinators, loadAccess, call,
   claimPidFile, releasePidFile, nameOrQ, readPeerKey, checkCoordinator, connect, startLoops, writePrivateFile,
@@ -35,6 +35,7 @@ function parseRole(role) {
 // that only has SQUADRA_NAME, which a project could set).
 export async function login({ name, role, coordinator, staticAccess = false, seedAllow = [], observe, approved = false, mustAsk = false, relayOff = false, persona = null } = {}) {
   if (process.platform === 'win32') throw new Error(WINDOWS_HINT)
+  if (CONFIG_DIR_IGNORED) throw new Error(`${CONFIG_DIR_IGNORED}. Not logging in with what the default folder holds: it may be another copy's. Unset it, or use a folder that is yours and private`)
   const level = observe == null || observe === '' ? defaultObserve() : normalizeLevel(observe)
   if (!level) throw new Error(`invalid observation level "${observe}": use off, activity or full`)
   observe = level

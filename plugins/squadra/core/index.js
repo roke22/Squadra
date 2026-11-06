@@ -2,7 +2,7 @@
 // session, and what arrives. It knows the agent only through agent.js.
 export { useAgent } from './agent.js'
 export {
-  PS_BIN, log, COORDINATOR_WORDS, defaultObserve, SERVER_URL, transportProblem, DEFAULT_COORDINATOR,
+  PS_BIN, log, COORDINATOR_WORDS, defaultObserve, SERVER_URL, transportProblem, CONFIG_DIR_IGNORED, DEFAULT_COORDINATOR,
   NAME_RE, OBSERVE_ORDER, RUN_DIR, VERSION, SERVER_TOKEN, ROOT_ENV_FILE, REPORTS, GROUP_ID_RE,
   MAX_CHUNK_LIMIT, PHOTO_EXTS, RELAY_OFF, stateDirFor,
 } from './settings.js'

@@ -19,6 +19,9 @@ export const VERSION = (() => {
 
 export const ROOT_DIR = join(claudeConfigDir(), 'channels', 'squadra')
 if (configDirNote) process.stderr.write(`squadra: ${configDirNote}; using ${ROOT_DIR}\n`)
+// (Set and ignored: what is in the default folder may belong to another copy of
+// this machine, another company's session or server. Logging in stops at this.)
+export const CONFIG_DIR_IGNORED = configDirNote
 export const ROOT_ENV_FILE = join(ROOT_DIR, '.env')
 
 // Formerly "Claude Swarm": move the old state folder once, so identities,
