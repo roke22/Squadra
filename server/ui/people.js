@@ -141,11 +141,12 @@ export function openPeople() {
 
   async function users() {
     const turn = ++drawing
-    const list = await call('/api/users')
+    const [list, links] = await Promise.all([call('/api/users'), call('/api/links')])
     if (turn !== drawing) return
     body.innerHTML = `<table class="people"><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b>${u.is_platform_admin ? ` <span class="note">${esc(T.administrator)}</span>` : ''}<br><span class="note">${esc(u.email)}${u.disabled ? ` · ${esc(T.disabled)}` : ''}</span></td>
         <td><button class="btn" data-reset="${esc(u.id)}">${esc(T.resetLink)}</button>
-        ${u.id === state.me.user.id ? '' : `<button class="btn ${u.disabled ? '' : 'danger'}" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button>`}</td></tr>`).join('')}</tbody></table><div data-link></div>`
+        ${u.id === state.me.user.id ? '' : `<button class="btn ${u.disabled ? '' : 'danger'}" data-${u.disabled ? 'enable' : 'disable'}="${esc(u.id)}">${esc(u.disabled ? T.enable : T.disable)}</button>`}</td></tr>`).join('')}</tbody></table><div data-link></div>
+      ${links.length ? `<h4>${esc(T.pendingLinks)}</h4><table class="people"><tbody>${links.map(l => `<tr><td>${esc(l.email)} <span class="note">${esc(l.kind === 'reset' ? T.linkReset : T.linkInvite)} · ${esc(fmtTime(l.expires_at))}</span></td><td><button class="btn danger" data-cancel-link="${esc(l.id)}">${esc(T.cancelInvite)}</button></td></tr>`).join('')}</tbody></table>` : ''}`
   }
 
   // What runs where: several companies on one machine, and how far apart they are.
@@ -189,11 +190,16 @@ export function openPeople() {
         await members()
         if (r.rotate_join_token) d.el.querySelector('.err').textContent = T.rotateAdvice
       }
+      if (b.dataset.cancelLink) { await call('/api/links/cancel', { id: b.dataset.cancelLink }); await users() }
       if (b.dataset.cancelInvite) { await call(inCompany('/api/invitations/cancel'), { id: b.dataset.cancelInvite }); await members() }
       if (b.dataset.rotate !== undefined) { await call(inCompany('/api/join-token/rotate'), {}); await members() }
       if (b.dataset.join) { await call('/api/companies/join', { company: b.dataset.join }); state.me.companies.push({ id: b.dataset.join, role: 'owner' }); await companies() }
       if (b.dataset.restore) { await call('/api/companies/restore', { company: b.dataset.restore }); location.href = `${location.pathname}?company=${encodeURIComponent(b.dataset.restore)}` }
-      if (b.dataset.reset) body.querySelector('[data-link]').innerHTML = linkBox(await call('/api/users/reset', { user: b.dataset.reset }))
+      if (b.dataset.reset) {
+        const made = await call('/api/users/reset', { user: b.dataset.reset })
+        await users()
+        body.querySelector('[data-link]').innerHTML = linkBox(made)
+      }
       if (b.dataset.disable) { await call('/api/users/disable', { user: b.dataset.disable }); await users() }
       if (b.dataset.enable) { await call('/api/users/enable', { user: b.dataset.enable }); await users() }
     } catch (err) { fail(err) }

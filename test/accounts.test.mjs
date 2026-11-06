@@ -531,3 +531,51 @@ test('the QR code for an authenticator app stays what a decoder read', async () 
   assert.equal(createHash('sha256').update(/ d="([^"]+)"/.exec(qrSvg(uri))[1]).digest('hex'), '3296ecfd6a02d8f1ff238e603e9f4eecbcd8c02d2d24510e14912b4e28946625')
   assert.equal(qrSvg('x'.repeat(2000)), null)
 })
+
+test('a password checked just as it stops being right counts for nothing', async () => {
+  const { link } = ok(await owner.post('api/c/default/members/invite', { email: 'racing@example.com', role: 'observer' }))
+  const b = browser()
+  const me = ok(await b.post('auth/invite/accept', { token: link.split('/#/invite/')[1], name: 'Racing', password: PASSWORD }))
+  const reset = ok(await owner.post('api/users/reset', { user: me.user.id })).link.split('/#/reset/')[1]
+  // Several sign-ins with the old password under way when the new one lands (scrypt takes tens of ms).
+  const old = Array.from({ length: 6 }, () => browser()).map(x => x.post('auth/login', { email: 'racing@example.com', password: PASSWORD }).then(r => ({ r, x })))
+  await sleep(5)
+  ok(await browser().post('auth/reset', { token: reset, password: 'a password after the race' }))
+  for (const { r, x } of await Promise.all(old)) {
+    // Finished before the reset or not, none of them has a session now.
+    assert.equal((await x.get('api/me')).error_code, 401, JSON.stringify(r).slice(0, 80))
+  }
+  assert.equal((await browser().post('auth/login', { email: 'racing@example.com', password: PASSWORD })).error_code, 401)
+})
+
+test('only the last password link works, and an administrator can see and cancel links', async () => {
+  const { link } = ok(await owner.post('api/c/default/members/invite', { email: 'links@example.com', role: 'observer' }))
+  const b = browser()
+  const me = ok(await b.post('auth/invite/accept', { token: link.split('/#/invite/')[1], name: 'Links', password: PASSWORD }))
+  const first = (await owner.post('api/users/reset', { user: me.user.id })).result.link.split('/#/reset/')[1]
+  const second = (await owner.post('api/users/reset', { user: me.user.id })).result.link.split('/#/reset/')[1]
+  assert.equal((await browser().post('auth/reset', { token: first, password: 'a password that fails' })).error_code, 404)
+  // Listed, without anything that works as the link; and cancelled.
+  const listed = ok(await owner.get('api/links')).find(l => l.email === 'links@example.com')
+  assert.equal(listed.kind, 'reset')
+  assert.ok(!JSON.stringify(listed).includes(second))
+  ok(await owner.post('api/links/cancel', { id: listed.id }))
+  assert.equal((await browser().post('auth/reset', { token: second, password: 'a password that fails' })).error_code, 404)
+  // A password changed from inside, or by a link, ends the links around.
+  const third = (await owner.post('api/users/reset', { user: me.user.id })).result.link.split('/#/reset/')[1]
+  ok(await b.post('auth/password', { current: PASSWORD, password: 'changed from inside now' }))
+  assert.equal((await browser().post('auth/reset', { token: third, password: 'a password that fails' })).error_code, 404)
+  assert.equal((await b.get('api/links')).error_code, 403)
+})
+
+test('nobody can lock an account: wrong passwords from many addresses leave the right one working', async () => {
+  const { link } = ok(await owner.post('api/c/default/members/invite', { email: 'locked@example.com', role: 'observer' }))
+  ok(await browser().post('auth/invite/accept', { token: link.split('/#/invite/')[1], name: 'Locked', password: PASSWORD }))
+  const addresses = Array.from({ length: 22 }, () => browser())
+  for (const a of addresses) {
+    await Promise.all(Array.from({ length: 10 }, () => a.post('auth/login', { email: 'locked@example.com', password: 'wrong password' })))
+  }
+  // Those addresses are out; the person, from anywhere else, isn't.
+  assert.equal((await addresses[0].post('auth/login', { email: 'locked@example.com', password: 'wrong password' })).error_code, 429)
+  ok(await browser().post('auth/login', { email: 'locked@example.com', password: PASSWORD }))
+})

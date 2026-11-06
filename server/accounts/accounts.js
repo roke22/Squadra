@@ -168,18 +168,27 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
     return codes
   }
 
-  // Wrong passwords: 10 every 15 minutes per address and account, and a high cap
-  // per account. Only the wrong ones count, and per address: someone else's
-  // failures don't lock anyone out, unless they come from very many addresses.
+  // Wrong passwords: 10 every 15 minutes per address and account, also per /48 for
+  // IPv6, where one site has many /64. Only wrong ones count, so someone else's
+  // failures never lock out whoever has the right password, however many
+  // addresses they come from. (The cost: guesses spread over very many addresses
+  // aren't stopped. Those who can do anything have a second factor as well.)
   const PASSWORD_WINDOW = 15 * 60_000
   const passwordKey = (req, email) => `${ipKey(clientIp(req))}\0${email}`
+  const siteKey = (req, email) => { const ip = ipKey(clientIp(req)); return ip.endsWith('/64') ? `${ip.split(':').slice(0, 3).join(':')}\0${email}` : null }
   function checkPasswordBudget(req, email) {
-    if (countedServerWide('wrong-password', passwordKey(req, email), PASSWORD_WINDOW) >= 10 || countedServerWide('wrong-password-all', email, PASSWORD_WINDOW) >= 200) throw tooMany()
+    const site = siteKey(req, email)
+    if (countedServerWide('wrong-password', passwordKey(req, email), PASSWORD_WINDOW) >= 10 || (site && countedServerWide('wrong-password-site', site, PASSWORD_WINDOW) >= 50)) throw tooMany()
   }
   function passwordFailed(req, email) {
     allowServerWide('wrong-password', passwordKey(req, email), 1000, PASSWORD_WINDOW)
-    allowServerWide('wrong-password-all', email, 1000, PASSWORD_WINDOW)
+    const site = siteKey(req, email)
+    if (site) allowServerWide('wrong-password-site', site, 1000, PASSWORD_WINDOW)
   }
+  // What a password was checked against may be out of date when the check ends
+  // (it takes time, on purpose): a reset or a disable meanwhile wins.
+  const stillHolds = user => { const now_ = userById(user.id); return !!now_ && !now_.disabled_at && now_.password_hash === user.password_hash }
+  const dropResetLinks = email => q("DELETE FROM invitations WHERE kind = 'reset' AND email = ? AND used_at IS NULL").run(email)
 
   async function newUser({ email, name, password, isAdmin = false }) {
     checkNewPassword(password)
@@ -259,7 +268,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       checkPasswordBudget(req, email)
       const user = userByEmail(email)
       const good = await passwordMatches(String(params.password ?? '').slice(0, 200), user?.password_hash ?? NOBODY)
-      if (!user || !good || user.disabled_at) {
+      if (!user || !good || !stillHolds(user)) {
         passwordFailed(req, email)
         // (Only for an account: what is typed for no account is written nowhere.)
         if (user) audit(user, 'login-failed', email, req)
@@ -284,7 +293,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       if (user) {
         // Someone who has an account already: joining another company needs its password.
         checkPasswordBudget(req, user.email)
-        if (user.disabled_at || !await passwordMatches(String(params.password ?? '').slice(0, 200), user.password_hash)) {
+        if (!await passwordMatches(String(params.password ?? '').slice(0, 200), user.password_hash) || !stillHolds(user)) {
           passwordFailed(req, user.email)
           audit(user, 'invite-password-failed', row.company_id ?? 'platform', req)
           throw new ApiError(401, 'Unauthorized: wrong password')
@@ -314,6 +323,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       const hash = await hashPassword(params.password)
       if (!q('UPDATE invitations SET used_at = ? WHERE token_hash = ? AND used_at IS NULL').run(now(), row.token_hash).changes) throw new ApiError(404, 'Not Found: this link was used already')
       q('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id)
+      dropResetLinks(user.email)
       if (row.role === 'clear-totp') {
         q('UPDATE users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = ?').run(user.id)
         q('DELETE FROM recovery_codes WHERE user_id = ?').run(user.id)
@@ -370,7 +380,10 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       if (!allowServerWide('password', user.id, 5, 15 * 60_000)) throw tooMany()
       if (!await passwordMatches(String(params.current ?? '').slice(0, 200), user.password_hash)) throw new ApiError(401, 'Unauthorized: wrong password')
       checkNewPassword(params.password)
-      q('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(params.password), user.id)
+      const next = await hashPassword(params.password)
+      // (Only if nothing changed meanwhile: this session may have ended, or another password been set.)
+      if (!sessionOf(req) || !q('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?').run(next, user.id, user.password_hash).changes) throw new ApiError(401, 'Unauthorized')
+      dropResetLinks(user.email)
       endAllSessions(user.id, { except: session.token_hash })
       audit(user, 'password-changed', user.email, req)
       return answer({ done: true })
@@ -491,6 +504,22 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
         return newLink(req, 'invite', { email, company: params.company == null ? null : String(params.company), role: params.role ?? null, isAdmin: params.is_platform_admin === true }, INVITE_MS, actor.id)
       },
     },
+    // Links not used yet, of any kind, across the server, and cancelling one.
+    'links': {
+      method: 'GET',
+      run: () => q('SELECT token_hash, kind, email, company_id, role, is_platform_admin, expires_at FROM invitations WHERE used_at IS NULL AND expires_at > ? ORDER BY expires_at').all(now())
+        .map(r => ({ id: sha256(r.token_hash), kind: r.kind, email: r.email, company: r.company_id, role: r.role === 'clear-totp' ? null : r.role, clears_codes: r.role === 'clear-totp', is_platform_admin: !!r.is_platform_admin, expires_at: r.expires_at })),
+    },
+    'links/cancel': {
+      method: 'POST',
+      run({ actor, params, req }) {
+        const row = q('SELECT token_hash, kind, email FROM invitations WHERE used_at IS NULL').all().find(r => sha256(r.token_hash) === String(params.id ?? ''))
+        if (!row) throw bad('no such link')
+        q('DELETE FROM invitations WHERE token_hash = ?').run(row.token_hash)
+        audit(actor, 'link-cancelled', row.email, req, row.kind)
+        return { cancelled: true }
+      },
+    },
     'users/disable': { method: 'POST', run: args => setDisabled(args, true) },
     'users/enable': { method: 'POST', run: args => setDisabled(args, false) },
     'users/reset': {
@@ -499,6 +528,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
         const target = userById(String(params.user ?? ''))
         if (!target) throw bad('no such user')
         audit(actor, 'password-reset-link', target.email, req, params.clear_totp === true ? 'with codes cleared' : null)
+        dropResetLinks(target.email) // (Only the last one works.)
         return newLink(req, 'reset', { email: target.email, role: params.clear_totp === true ? 'clear-totp' : null }, RESET_MS, actor.id)
       },
     },
@@ -535,6 +565,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
     const target = userByEmail(cleanEmail(p.email))
     if (!target) throw bad('no such user')
     audit({ token: true }, 'access-recovered', target.email, req)
+    dropResetLinks(target.email)
     return newLink(req, 'reset', { email: target.email, role: 'clear-totp' }, RESET_MS, null)
   }
 
