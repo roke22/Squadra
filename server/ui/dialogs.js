@@ -48,10 +48,10 @@ export function openMenu(anchor, name) {
   })
 }
 
-export function confirmDialog({ title, text, confirm, danger = false, run }) {
+export function confirmDialog({ title, text, confirm, danger = false, option = null, run }) {
   const bg = document.createElement('div')
   bg.className = 'modal-bg'
-  bg.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${esc(title)}</h3><p>${text}</p><div class="err"></div>
+  bg.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${esc(title)}</h3><p>${text}</p>${option ? `<label class="check"><input type="checkbox" data-option checked> <span>${esc(option)}</span></label>` : ''}<div class="err"></div>
       <div class="actions"><button class="btn" data-cancel>${T.cancel}</button><button class="btn primary ${danger ? 'danger' : ''}" data-ok>${esc(confirm)}</button></div></div>`
   document.body.appendChild(bg)
   const close = () => bg.remove()
@@ -61,7 +61,7 @@ export function confirmDialog({ title, text, confirm, danger = false, run }) {
   ;(danger ? bg.querySelector('[data-cancel]') : ok).focus() // Enter never confirms something destructive
   ok.addEventListener('click', async () => {
     ok.disabled = true
-    try { await run(); close() } catch (err) {
+    try { await run(bg.querySelector('[data-option]')?.checked); close() } catch (err) {
       bg.querySelector('.err').textContent = err.message
       ok.disabled = false
     }

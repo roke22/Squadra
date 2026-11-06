@@ -792,8 +792,16 @@ test('a worker opened with no coordinator named follows the default from the sta
 })
 
 test('disconnecting a machine revokes it and stops squadra-host there', { skip: !hasTmux && 'tmux not installed' }, async () => {
-  const r = await dash('hosts/remove', { host: hostId })
+  // With its sessions, if asked: what it held of them stops working.
+  assert.ok((await dash('terminals/open', { host: hostId, spec: { name: 'gone1', role: 'worker', coordinator: 'boss', folder: allowed } })).ok)
+  const { secret } = JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', 'gone1', 'identity.json'), 'utf8'))
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'gone1' })).ok)
+  const asIt = () => fetch(`${URL_}/getMe`, { headers: { Authorization: `Bearer ${secret}` } }).then(x => x.status)
+  assert.equal(await asIt(), 200)
+  const r = await dash('hosts/remove', { host: hostId, disconnect_sessions: true })
   assert.ok(r.ok, r.description)
+  assert.ok(r.result.disconnected.includes('gone1'))
+  assert.equal(await asIt(), 401)
   await waitFor(() => hostExit !== null, { what: 'host exit' })
   assert.equal(hostExit, 0, "exit 0: the service manager must not start it again")
   assert.match(hostStderr, /no longer accepts this machine/)

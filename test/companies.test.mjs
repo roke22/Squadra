@@ -341,6 +341,78 @@ function socket(path, cred) {
   })
 }
 
+// A machine of this company, played here, connected.
+async function machineOf(company, name) {
+  const en = ok(await act(company, 'hosts/enroll', { name }))
+  const host = ok(await call('host/enroll', { code: en.code, company: company.id, info: { hostname: name } }))
+  return { host, connect: async terminals => {
+    const machine = await socket('/host/connect', ok(await call('host/ticket', {}, host.secret)).ticket)
+    machine.ws.send(JSON.stringify({ t: 'hello', info: { hostname: name, terminals } }))
+    await waitFor(() => machine.inbox.some(m => m.t === 'welcome'), { what: 'the welcome' })
+    return machine
+  } }
+}
+
+test('after a session ends, a dashboard socket types into no later one of that name without a new attach, written down', async () => {
+  const a = await newCompany('Typing')
+  const { host, connect } = await machineOf(a, 'typing-box')
+  const machine = await connect([])
+  const viewer = await socket('/api/terminal', ok(await act(a, 'terminal/ticket', {})).ticket)
+  const sends = m => viewer.ws.send(JSON.stringify({ host: host.id, term: 'w1', ...m }))
+  const typed = () => machine.inbox.filter(m => m.t === 'in')
+  const written = async () => (await read(a, 'company/audit')).filter(e => e.action === 'terminal-type').length
+  sends({ t: 'attach', cols: 80, rows: 24 })
+  await waitFor(() => machine.inbox.some(m => m.t === 'attach'), { what: 'attach' })
+  sends({ t: 'in', data: 'one' })
+  await waitFor(() => typed().length === 1, { what: 'first input' })
+  assert.equal(await written(), 1)
+  // It ends. Whoever was on it has to come back to the next one.
+  machine.ws.send(JSON.stringify({ t: 'exit', term: 'w1' }))
+  await waitFor(() => viewer.inbox.some(m => m.t === 'exit'), { what: 'exit' })
+  sends({ t: 'in', data: 'into the next one' })
+  await sleep(300)
+  assert.equal(typed().length, 1, 'nothing reached the machine')
+  sends({ t: 'attach', cols: 80, rows: 24 })
+  await waitFor(() => machine.inbox.filter(m => m.t === 'attach').length === 2, { what: 'second attach' })
+  sends({ t: 'in', data: 'two' })
+  await waitFor(() => typed().length === 2, { what: 'second input' })
+  assert.equal(await written(), 2)
+  // Detached, typing counts as new when it comes back; an image counts as typing.
+  sends({ t: 'detach' })
+  await sleep(100)
+  sends({ t: 'attach', cols: 80, rows: 24 })
+  await waitFor(() => machine.inbox.filter(m => m.t === 'attach').length === 3, { what: 'third attach' })
+  sends({ t: 'image', type: 'image/png', data: 'AAAA' })
+  await waitFor(() => machine.inbox.some(m => m.t === 'image'), { what: 'the image' })
+  assert.equal(await written(), 3)
+  viewer.ws.close(); machine.ws.close()
+})
+
+test('links changed while a machine is away: the dashboard says so, and the machine hears when it connects', async () => {
+  const a = await newCompany('Away')
+  const { host, connect } = await machineOf(a, 'away-box')
+  const [lead, peer] = [await register(a, 'lead'), await register(a, 'peer')]
+  for (const [secret, instance] of [[lead, 'inst-lead-0001'], [peer, 'inst-peer-0001']]) ok(await call('claimSession', { instance, role: 'coordinator' }, secret))
+  const direct = new DatabaseSync(join(dataDir, 'companies', a.id, 'squadra.db'))
+  direct.prepare('UPDATE identities SET host_id = ? WHERE name = ?').run(host.id, 'lead')
+  direct.close()
+  const added = ok(await act(a, 'links/add', { a: 'lead', b: 'peer' }))
+  assert.match(added.warnings.join(), /lead: its machine isn't connected/)
+  const terminals = [{ id: 'lead', role: 'coordinator' }]
+  let machine = await connect(terminals)
+  const told = m => m.inbox.find(x => x.t === 'links' && x.name === 'lead')
+  await waitFor(() => told(machine), { what: 'the links' })
+  assert.deepEqual(told(machine).coordinators, ['peer'])
+  machine.ws.close()
+  await waitFor(async () => !(await read(a, 'hosts'))[0].online, { what: 'it left' })
+  const removed = ok(await act(a, 'links/delete', { a: 'lead', b: 'peer' }))
+  assert.match(removed.warnings.join(), /lead: its machine isn't connected/)
+  machine = await connect(terminals)
+  await waitFor(() => told(machine), { what: 'the unlink' })
+  assert.deepEqual(told(machine).coordinators, [])
+  machine.ws.close()
+})
+
 test('a machine belongs to its company, and a terminal ticket only reaches that company\'s machines', async () => {
   const [a, b] = [await newCompany('Term A'), await newCompany('Term B')]
   const en = ok(await act(a, 'hosts/enroll', { name: 'shared-name' }))

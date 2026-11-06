@@ -275,7 +275,14 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     unarchive: p => setArchived(String(p.session ?? ''), false),
     'hosts/enroll': (p, req) => createEnrollment(p, req),
     'hosts/rename': p => renameHost(String(p.host ?? ''), p.name),
-    'hosts/remove': p => removeHost(String(p.host ?? '')),
+    'hosts/remove': p => {
+      const host = String(p.host ?? '')
+      // (Read first: removing it clears what says which ones it opened.)
+      const opened = p.disconnect_sessions === true ? db.prepare('SELECT name FROM identities WHERE host_id = ?').all(host).map(r => r.name) : []
+      const removed = removeHost(host)
+      for (const name of opened) kickSession(name)
+      return { ...removed, disconnected: opened }
+    },
     'hosts/folders': p => changeHostFolders(p),
     'hosts/personas': p => hostPersonas(p),
     'templates/save': p => saveTemplate(p),

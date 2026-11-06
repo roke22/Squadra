@@ -146,9 +146,14 @@ export function createOrganization(platform, { sessions, messaging, observation,
 
   // Tell the machine running this coordinator what it is linked with now.
   // Returns a warning, or null.
+  bus.on('machine-listed', (hostId, info) => {
+    for (const t of info?.terminals ?? []) if (t.role === 'coordinator') void pushLinks(t.id)
+  })
   async function pushLinks(name) {
     const host = db.prepare('SELECT host_id FROM identities WHERE name = ?').get(name)?.host_id
-    if (!host || !hostLinks.get(host)?.info?.terminals?.some(t => t.id === name)) return null
+    if (!host) return null
+    // (Only the plugin enforces links: until its machine hears, the old ones hold.)
+    if (!hostLinks.get(host)?.info?.terminals?.some(t => t.id === name)) return `${name}: its machine isn't connected or isn't running it: it will be told when it connects`
     try {
       await askHost(host, { t: 'links', name, coordinators: linksOf(name) })
       return null

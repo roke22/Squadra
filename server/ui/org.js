@@ -413,7 +413,7 @@ function linkMenu(anchor, a, b) {
   const l = state.links.find(x => x.a === a && x.b === b)
   if (!l || !can('manager')) return
   orgMenuAt(anchor, [
-    { label: T.unlink, danger: true, run: () => postJson('/api/links/delete', { a, b }).catch(err => alertBox(err.message)) },
+    { label: T.unlink, danger: true, run: () => postJson('/api/links/delete', { a, b }).then(r => { if (r?.warnings?.length) alertBox(r.warnings.join(' · ')) }).catch(err => alertBox(err.message)) },
   ], `${esc(squadTitle(a))} ↔ ${esc(squadTitle(b))}<br>${esc(T.orgLinkRecent(recentOf(l)))}`)
 }
 

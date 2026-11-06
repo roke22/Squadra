@@ -142,7 +142,7 @@ export function hostAction(action, id, term, extra = term) {
     return confirmDialog({ title: T.removeFolderTitle, text: T.removeFolderText(esc(extra)), confirm: T.stopAllowing, danger: true, run: () => postJson('/api/hosts/folders', { host: id, action: 'remove', path: extra }) })
   }
   if (action === 'disconnect' && h) {
-    return confirmDialog({ title: T.disconnectTitle(h.name), text: T.disconnectText(esc(h.name)), confirm: T.disconnect, danger: true, run: () => postJson('/api/hosts/remove', { host: id }) })
+    return confirmDialog({ title: T.disconnectTitle(h.name), text: T.disconnectText(esc(h.name)), confirm: T.disconnect, danger: true, option: T.disconnectSessions, run: all => postJson('/api/hosts/remove', { host: id, disconnect_sessions: all === true }) })
   }
   if (action === 'kill') {
     return confirmDialog({

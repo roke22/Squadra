@@ -316,7 +316,7 @@ export function createMachines(platform, { sessions, observation }) {
   function dropHostLink(hostId, link) {
     for (const p of link.pending.values()) { clearTimeout(p.timer); p.reject(new ApiError(502, 'Bad Gateway: the machine disconnected')) }
     link.pending.clear()
-    for (const [term, set] of link.viewers) for (const v of set) { v.ws.send(JSON.stringify({ t: 'host_down', host: hostId, term })); v.attached.delete(`${hostId}\0${term}`) }
+    for (const [term, set] of link.viewers) for (const v of set) { v.ws.send(JSON.stringify({ t: 'host_down', host: hostId, term })); v.attached.delete(`${hostId}\0${term}`); v.typed.delete(`${hostId}\0${term}`) }
     link.viewers.clear()
   }
 
@@ -357,6 +357,7 @@ export function createMachines(platform, { sessions, observation }) {
         ws.send(JSON.stringify({ t: 'welcome', host: { id: hostId, name: row.name } }))
         log(`host "${row.name}" connected from ${req.socket.remoteAddress}`)
         broadcastHost(hostId)
+        if (m.info) { link.listed = true; bus.emit('machine-listed', hostId, link.info) }
         return
       }
       switch (m.t) {
@@ -371,6 +372,8 @@ export function createMachines(platform, { sessions, observation }) {
           // it nonstop is ignored (each one is a database write and a broadcast).
           if (!allow('hostinfo', hostId, 60)) break
           link.info = ownTerminals(sanitizeHostInfo(m.info), hostId)
+          // (Its sessions, the first time since it connected: what changed while it was away.)
+          if (!link.listed) { link.listed = true; bus.emit('machine-listed', hostId, link.info) }
           db.prepare('UPDATE hosts SET last_seen_at = ?, info = ? WHERE id = ?').run(now(), JSON.stringify(link.info), hostId)
           broadcastHost(hostId)
           break
@@ -400,7 +403,11 @@ export function createMachines(platform, { sessions, observation }) {
             if (link.viewers.get(term) !== set) break // (that send closed the machine's link: they were told)
             v.ws.send(out)
           }
-          if (m.t === 'exit') link.viewers.delete(term)
+          if (m.t === 'exit') {
+            // That session is over: a later one of this name needs its own attach, written down.
+            for (const v of set) { v.attached.delete(`${hostId}\0${term}`); v.typed.delete(`${hostId}\0${term}`) }
+            link.viewers.delete(term)
+          }
           break
         }
       }
@@ -468,21 +475,24 @@ export function createMachines(platform, { sessions, observation }) {
         return link.ws.send(JSON.stringify({ t: 'attach', term, ...size(m.cols, m.rows) }))
       }
       if (!viewer.attached.has(key) || !link) return
-      if (m.t === 'detach') { viewer.attached.delete(key); return detach(host, term) }
+      if (m.t === 'detach') { viewer.attached.delete(key); viewer.typed.delete(key); return detach(host, term) }
       if (m.t === 'resize') return link.ws.send(JSON.stringify({ t: 'resize', term, ...size(m.cols, m.rows) }))
       if (m.t === 'refresh') { viewer.stale = false; return link.ws.send(JSON.stringify({ t: 'refresh', term })) }
+      const wroteDown = () => {
+        if (viewer.typed.has(key)) return
+        viewer.typed.add(key)
+        log(`${who} is typing in "${term}" on host ${host}`)
+        audit(actor ?? { token: true }, 'terminal-type', `${host}/${term}`, clientIp(req))
+      }
       if (m.t === 'in' && typeof m.data === 'string' && m.data.length <= 64 * 1024) {
-        if (!viewer.typed.has(key)) {
-          viewer.typed.add(key)
-          log(`${who} is typing in "${term}" on host ${host}`)
-          audit(actor ?? { token: true }, 'terminal-type', `${host}/${term}`, clientIp(req))
-        }
+        wroteDown()
         return link.ws.send(JSON.stringify({ t: 'in', term, data: m.data }))
       }
       // An image pasted into the terminal: to the machine, which saves it and
       // pastes its path into Claude Code (a few a minute per terminal).
       if (m.t === 'image' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(m.type) && typeof m.data === 'string' && m.data.length <= 800_000) {
         if (!allow('paste-image', key, 20)) return ws.send(JSON.stringify({ t: 'notice', host, term, text: 'too many images pasted: wait a minute' }))
+        wroteDown()
         return link.ws.send(JSON.stringify({ t: 'image', term, type: m.type, data: m.data }))
       }
     }
