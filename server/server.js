@@ -28,7 +28,7 @@ import { createRoutes } from './routes.js'
 
 const credentials = openServerCredentials()
 const companies = createCompanies(credentials)
-const accounts = createAccounts(credentials, { control: companies.control, companyName: companies.nameOf, companyStatus: companies.statusOf, dropClients: companies.dropClients })
+const accounts = createAccounts(credentials, { control: companies.control, companyName: companies.nameOf, companyStatus: companies.statusOf, dropClients: companies.dropClients, cancelEnrollments: id => companies.get(id)?.machines.cancelEnrollments() })
 const { handle, onUpgrade } = createRoutes(credentials, companies, accounts)
 
 setInterval(guarded(cleanupServerLimits), 60 * 1000).unref()

@@ -516,6 +516,33 @@ test('nobody keeps a way back: tickets and invitations made before losing access
   assert.equal(await socketOpens(last), false, 'the ticket after logging out')
 })
 
+test('a manager who loses the role takes their links and codes along: demoted to anything, or disabled', async () => {
+  const co = ok(await owner.post('api/companies/create', { name: 'Ways back' }))
+  const path = `api/c/${co.id}`
+  ok(await owner.post('api/companies/join', { company: co.id }))
+  const m = await member(owner, path, 'demoted@example.com', 'manager')
+  const invite = async (email, role) => ok(await m.b.post(`${path}/members/invite`, { email, role })).link.split('/#/invite/')[1]
+  const accept = token => browser().post('auth/invite/accept', { token, name: 'Late', password: PASSWORD })
+  const enroll = code => fetch(`${URL_}/host/enroll`, { method: 'POST', body: JSON.stringify({ code, company: co.id, info: {} }) }).then(r => r.json())
+  // Links a demoted manager could still have granted.
+  const asOperator = await invite('late1@example.com', 'operator')
+  const asObserver = await invite('late2@example.com', 'observer')
+  ok(await owner.post(`${path}/members/role`, { user: m.id, role: 'operator' }))
+  assert.equal((await accept(asOperator)).error_code, 404)
+  assert.equal((await accept(asObserver)).error_code, 404)
+  // And a later promotion doesn't bring them back.
+  ok(await owner.post(`${path}/members/role`, { user: m.id, role: 'manager' }))
+  assert.equal((await accept(asOperator)).error_code, 404)
+  // Disabled: the same, and its unused machine codes.
+  const link = await invite('late3@example.com', 'operator')
+  const { code } = ok(await m.b.post(`${path}/hosts/enroll`, { name: 'later' }))
+  const done = ok(await owner.post('api/users/disable', { user: m.id }))
+  assert.deepEqual(done.rotate_join_token, ['Ways back'])
+  assert.equal((await enroll(code)).ok, false)
+  ok(await owner.post('api/users/enable', { user: m.id }))
+  assert.equal((await accept(link)).error_code, 404)
+})
+
 test('an invitation never lowers anyone: not the last owner, not anybody', async () => {
   const co = ok(await owner.post('api/companies/create', { name: 'Keep the owner' }))
   const path = `api/c/${co.id}`

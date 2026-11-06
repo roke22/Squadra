@@ -26,7 +26,7 @@ const cleanName = v => (typeof v === 'string' ? cleanText(v.slice(0, 200)).repla
 // A session goes through stages: 'totp' (password right, code missing),
 // 'totp_setup' (password right, and this user must set codes up first) and 'ok'.
 // Only the last one reaches anything beyond the screens to get there.
-export function createAccounts(server, { control, companyName, companyStatus, dropClients }) {
+export function createAccounts(server, { control, companyName, companyStatus, dropClients, cancelEnrollments }) {
   const { isServerToken } = server
 
   // The key for TOTP secrets: in the data folder, not in the database.
@@ -223,6 +223,9 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
   }
 
   // Pending invitations to this company for someone whose place in it was just decided.
+  // Whoever could manage a company stopped being able to: what they made stops too,
+  // and a later promotion doesn't bring it back.
+  const dropInvitationsBy = (company, userId) => q("DELETE FROM invitations WHERE kind = 'invite' AND company_id = ? AND created_by = ? AND used_at IS NULL").run(company, userId)
   const dropInvitationsFor = (company, email) => q("DELETE FROM invitations WHERE kind = 'invite' AND company_id = ? AND email = ? AND used_at IS NULL").run(company, email)
 
   // A link of one use, to copy by hand: there is no mail in this server.
@@ -248,7 +251,7 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
     if (by.is_platform_admin) return true
     if (row.kind !== 'invite' || !row.company_id || row.is_platform_admin) return false
     const role = roleIn(by, row.company_id)
-    return !!role && canGrant(role, row.role)
+    return !!role && atLeast(role, 'manager') && canGrant(role, row.role)
   }
 
   // /auth/* and /bootstrap. Anyone can call them, so each has its limit, and the
@@ -449,7 +452,10 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
         if (current === 'owner' && params.role !== 'owner' && ownersOf(company.id) <= 1) throw new ApiError(409, 'Conflict: a company needs an owner')
         q('UPDATE memberships SET role = ? WHERE user_id = ? AND company_id = ?').run(params.role, target.id, company.id)
         dropInvitationsFor(company.id, target.email)
-        if (atLeast(current, 'manager') && !atLeast(params.role, 'manager')) company.machines.cancelEnrollments()
+        if (atLeast(current, 'manager') && !atLeast(params.role, 'manager')) {
+          company.machines.cancelEnrollments()
+          dropInvitationsBy(company.id, target.id)
+        }
         company.dropClients(a => a?.id === target.id)
         audit(actor, 'member-role', company.id, req, `${target.email}: ${current} to ${params.role}`)
         return { id: target.id, role: params.role }
@@ -467,7 +473,10 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
         dropInvitationsFor(company.id, target.email)
         // Who could manage the company may have kept its join token, or a code.
         const couldManage = atLeast(current, 'manager')
-        if (couldManage) company.machines.cancelEnrollments()
+        if (couldManage) {
+          company.machines.cancelEnrollments()
+          dropInvitationsBy(company.id, target.id)
+        }
         company.dropClients(a => a?.id === target.id)
         audit(actor, 'member-removed', company.id, req, target.email)
         return { id: target.id, removed: true, rotate_join_token: couldManage }
@@ -567,9 +576,15 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
     if (disabled && target.is_platform_admin && !q('SELECT 1 FROM users WHERE is_platform_admin = 1 AND disabled_at IS NULL AND id != ?').get(target.id)) throw new ApiError(409, 'Conflict: the server needs an administrator')
     if (disabled) for (const m of membershipsOf(target.id)) if (m.role === 'owner' && ownersOf(m.company_id) <= 1) throw new ApiError(409, `Conflict: this is the only owner of the company ${companyName(m.company_id) ?? m.company_id}`)
     q('UPDATE users SET disabled_at = ? WHERE id = ?').run(disabled ? now() : null, target.id)
+    // As with removing them from a company: their ways back go too.
+    const managed = disabled ? membershipsOf(target.id).filter(m => atLeast(m.role, 'manager')) : []
+    for (const m of managed) {
+      cancelEnrollments(m.company_id)
+      dropInvitationsBy(m.company_id, target.id)
+    }
     if (disabled) endAllSessions(target.id)
     audit(actor, disabled ? 'user-disabled' : 'user-enabled', target.email, req)
-    return { id: target.id, disabled }
+    return { id: target.id, disabled, rotate_join_token: managed.map(m => companyName(m.company_id)) }
   }
 
   // The server token gets someone back in: a link to set a new password, and

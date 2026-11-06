@@ -2,7 +2,7 @@ import { T, LOCALE } from './i18n.js'
 import { state, can } from './state.js'
 import { call, inCompany } from './api.js'
 import { esc } from './format.js'
-import { dialog } from './dialogs.js'
+import { dialog, alertBox } from './dialogs.js'
 
 const ROLES = ['observer', 'operator', 'manager', 'owner']
 // Only owners give or take the role of owner.
@@ -200,7 +200,11 @@ export function openPeople() {
         await users()
         body.querySelector('[data-link]').innerHTML = linkBox(made)
       }
-      if (b.dataset.disable) { await call('/api/users/disable', { user: b.dataset.disable }); await users() }
+      if (b.dataset.disable) {
+        const r = await call('/api/users/disable', { user: b.dataset.disable })
+        await users()
+        if (r.rotate_join_token?.length) alertBox(T.rotateAdviceIn(r.rotate_join_token.join(', ')))
+      }
       if (b.dataset.enable) { await call('/api/users/enable', { user: b.dataset.enable }); await users() }
     } catch (err) { fail(err) }
   })
