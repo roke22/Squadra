@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { totpCode, totpStep } from '../server/accounts/totp.js'
 
@@ -519,4 +520,13 @@ test('what is done with the server token on /admin is written down', async () =>
   const db = new DatabaseSync(join(dataDir, 'control.db'), { readOnly: true })
   assert.ok(db.prepare("SELECT 1 FROM platform_audit WHERE action = 'admin-listIdentities' AND user_id = 'server-token'").get())
   db.close()
+})
+
+test('the QR code for an authenticator app stays what a decoder read', async () => {
+  // (This one was checked once with an independent decoder, jsQR, like other
+  // lengths and versions. A change here needs that check again.)
+  const { qrSvg } = await import('../server/ui/qr.js')
+  const uri = 'otpauth://totp/Squadra%3Aowner%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Squadra&algorithm=SHA1&digits=6&period=30'
+  assert.equal(createHash('sha256').update(qrSvg(uri)).digest('hex'), '2fe22c8243a4755a3054e87dd9517cd2f06197bf12d91ef969c2d40c4c24e99d')
+  assert.equal(qrSvg('x'.repeat(2000)), null)
 })

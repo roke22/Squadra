@@ -54,6 +54,7 @@ test('the first owner: made with the token, with codes, and it stays until signi
     await form.locator('[name=token]').fill(SERVER_TOKEN)
     await page.locator('#loginBtn').click()
     const secret = await page.locator('.secret code').textContent()
+    await expect(page.locator('#loginForm svg.qr')).toBeVisible()
     await form.locator('[name=code]').fill(totpCode(secret, totpStep()))
     await page.locator('#loginBtn').click()
     await expect(page.locator('.codes')).toContainText(/[0-9a-f]{20}/)

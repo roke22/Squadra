@@ -3,6 +3,7 @@ import { T } from './i18n.js'
 import { state } from './state.js'
 import { call } from './api.js'
 import { esc } from './format.js'
+import { qrSvg } from './qr.js'
 
 // The screens before the dashboard: the first owner, signing in, codes, and the
 // links of an invitation or a new password. Each is a form; what comes next
@@ -63,7 +64,8 @@ function codeScreen(recovery = false) {
 
 async function setupScreen() {
   const { secret, uri } = await call('/auth/totp/setup', {})
-  screen(T.setupIntro, `<p class="secret"><code>${esc(secret)}</code></p><p class="note"><a href="${esc(uri)}">${esc(T.setupLink)}</a></p>${input('code', T.code, 'text', 'one-time-code', 'inputmode="numeric" maxlength="6"')}`, T.setupConfirm, async v => {
+  // (Made here: the key goes to no service. The page's only images are its own.)
+  screen(T.setupIntro, `${qrSvg(uri) ?? ''}<p class="note">${esc(T.setupKey)}</p><p class="secret"><code>${esc(secret)}</code></p><p class="note"><a href="${esc(uri)}">${esc(T.setupLink)}</a></p>${input('code', T.code, 'text', 'one-time-code', 'inputmode="numeric" maxlength="6"')}`, T.setupConfirm, async v => {
     const done = await call('/auth/totp/enable', v)
     screen(T.recoveryShow, `<pre class="codes">${esc(done.recovery_codes.join('\n'))}</pre>`, T.recoverySaved, async () => next(done))
   })
