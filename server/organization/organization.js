@@ -1,7 +1,7 @@
 import { bad, unix, now, cleanText, oneLine } from '../platform/index.js'
 
 export function createOrganization(platform, { sessions, messaging, observation, machines }) {
-  const { db, broadcast, inTx, bus, readLimit } = platform
+  const { db, broadcast, inTx, bus, readLimit, log } = platform
   const {
     roleOf, isOnline, presenceOf, personaView, NAME_RE, linkKey, linked, linksOf, identityExists,
   } = sessions
@@ -138,7 +138,7 @@ export function createOrganization(platform, { sessions, messaging, observation,
       throw bad('those two are not linked')
     }
     broadcast('links', listLinks())
-    process.stderr.write(`squadra-server: ${add ? 'linked' : 'unlinked'} coordinators "${a}" and "${b}"\n`)
+    log(`${add ? 'linked' : 'unlinked'} coordinators "${a}" and "${b}"`)
     // (A machine that refuses, or isn't connected: said, the link stays.)
     const warnings = (await Promise.all([a, b].map(pushLinks))).filter(Boolean)
     return { a, b, linked: add, warnings }

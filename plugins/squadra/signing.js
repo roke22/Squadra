@@ -108,7 +108,8 @@ export function openServerIdentity(answer, nonce) {
 }
 
 // A notice the server generated (it has no sender to sign it).
-export const serverNoticeIsGood = (serverKey, sig, { from, to, id, date, text }) => signedBy(serverKey, ['squadra-notice-1', from, to, id, date, text], sig)
+// (company: the one this session is of, on a server with several. A notice is signed for it.)
+export const serverNoticeIsGood = (serverKey, sig, { company, from, to, id, date, text }) => signedBy(serverKey, [...(company ? ['squadra-notice-2', company] : ['squadra-notice-1']), from, to, id, date, text], sig)
 
 // That this session holds its key, for this server and this login only.
 export const proveKey = (key, serverKey, purpose, subject, challenge, extra) => sign(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', serverKey, purpose, subject, challenge, extra])), key.privateKey).toString('base64url')

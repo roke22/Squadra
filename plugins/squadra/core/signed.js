@@ -50,7 +50,7 @@ export async function serverIdentity() {
 // A notice only if the server signed it, for this session, and not one seen before.
 export function noticeAccepted(s, msg) {
   if (!s.serverKey) return true
-  const good = serverNoticeIsGood(s.serverKey, msg.squadra_server_sig, { from: String(msg.from?.id), to: s.name, id: msg.message_id, date: msg.date, text: msg.text ?? '' })
+  const good = serverNoticeIsGood(s.serverKey, msg.squadra_server_sig, { company: s.claimed?.company, from: String(msg.from?.id), to: s.name, id: msg.message_id, date: msg.date, text: msg.text ?? '' })
   if (!good || msg.message_id <= (s.lastNoticeId ?? 0)) { log(`notice "from" ${msg.from?.id} ignored: the server did not sign it, or it was seen before`); return false }
   s.lastNoticeId = msg.message_id
   return true

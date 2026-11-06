@@ -103,7 +103,7 @@ export function openServerCredentials() {
 }
 
 // What is a company's: its folder, and the token its machines join with.
-export function openCompanyCredentials(dir, { SERVER_TOKEN }) {
+export function openCompanyCredentials(dir, { SERVER_TOKEN }, { credentialPrefix }) {
   mkdirSync(join(dir, 'files'), { recursive: true, mode: 0o700 })
   for (const p of [dir, join(dir, 'files')]) { try { chmodSync(p, 0o700) } catch {} }
   for (const f of ['squadra.db', 'squadra.db-wal', 'squadra.db-shm']) { try { chmodSync(join(dir, f), 0o600) } catch {} }
@@ -113,8 +113,10 @@ export function openCompanyCredentials(dir, { SERVER_TOKEN }) {
   // keep on disk; the server token above is the admin credential (dashboard,
   // web terminals, /admin, rotating identities) and never leaves the browser.
   const JOIN_TOKEN_FILE = join(dir, 'join-token')
+  // (The first company's, the one a server without companies has.)
+  const FROM_ENV = credentialPrefix ? null : process.env.SQUADRA_JOIN_TOKEN
   let { token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE } = (() => {
-    const fromEnv = process.env.SQUADRA_JOIN_TOKEN
+    const fromEnv = FROM_ENV
     if (fromEnv) {
       if (fromEnv.length < 16 || fromEnv === SERVER_TOKEN) {
         process.stderr.write('squadra-server: SQUADRA_JOIN_TOKEN must be at least 16 chars and differ from the server token\n')
@@ -126,7 +128,7 @@ export function openCompanyCredentials(dir, { SERVER_TOKEN }) {
       const saved = readFileSync(JOIN_TOKEN_FILE, 'utf8').trim()
       if (saved.length >= 16 && saved !== SERVER_TOKEN) return { token: saved, source: JOIN_TOKEN_FILE }
     } catch {}
-    const generated = `sj_${randomBytes(24).toString('hex')}`
+    const generated = `sj_${credentialPrefix}${randomBytes(24).toString('hex')}`
     writeFileSync(JOIN_TOKEN_FILE, generated + '\n', { mode: 0o600 })
     return { token: generated, source: `${JOIN_TOKEN_FILE} (new)` }
   })()
@@ -137,11 +139,11 @@ export function openCompanyCredentials(dir, { SERVER_TOKEN }) {
   // A new join token: machines configured with the old one can no longer
   // register new names (their existing identities keep working).
   function rotateJoinToken() {
-    if (process.env.SQUADRA_JOIN_TOKEN) throw new ApiError(409, 'Conflict: the join token comes from SQUADRA_JOIN_TOKEN; change it there')
-    JOIN_TOKEN = `sj_${randomBytes(24).toString('hex')}`
+    if (FROM_ENV) throw new ApiError(409, 'Conflict: the join token comes from SQUADRA_JOIN_TOKEN; change it there')
+    JOIN_TOKEN = `sj_${credentialPrefix}${randomBytes(24).toString('hex')}`
     JOIN_TOKEN_SOURCE = JOIN_TOKEN_FILE
     writeFileSync(JOIN_TOKEN_FILE, JOIN_TOKEN + '\n', { mode: 0o600 })
-    process.stderr.write('squadra-server: join token rotated\n')
+    process.stderr.write(`squadra-server: ${credentialPrefix && `[${credentialPrefix.slice(0, -1)}] `}join token rotated\n`)
     return { join_token: JOIN_TOKEN }
   }
 

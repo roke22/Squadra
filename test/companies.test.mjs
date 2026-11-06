@@ -7,10 +7,12 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
+import { serverNoticeIsGood } from '../plugins/squadra/signing.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ADMIN = 'companies-admin-token-0123456789'
@@ -18,8 +20,6 @@ const PORT = 24000 + Math.floor(Math.random() * 2000)
 const URL_ = `http://127.0.0.1:${PORT}`
 const dataDir = mkdtempSync(join(tmpdir(), 'squadra-companies-'))
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-// Until the server has companies, these tests describe what it has to do.
-const PENDING = { todo: 'companies arrive in phase 2' }
 let server
 
 async function waitFor(fn, { timeout = 8000, what = 'condition' } = {}) {
@@ -45,7 +45,8 @@ const get = (path, auth) => fetch(`${URL_}/${path}`, { headers: auth ? { Authori
 const ok = r => { assert.ok(r.ok, r.description); return r.result }
 
 const newCompany = async name => ok(await call('admin/createCompany', { name }, ADMIN))
-const register = async (company, name) => ok(await call('register', { name }, company.join_token)).secret
+// (With the server token: the join token is 10 names a minute per address.)
+const register = async (company, name) => ok(await call('register', { name, company: company.id }, ADMIN)).secret
 const api = (company, what) => `api/c/${company.id}/${what}`
 const read = async (company, what) => ok(await get(api(company, what), ADMIN))
 const act = (company, what, body) => call(api(company, what), body, ADMIN)
@@ -63,7 +64,7 @@ before(async () => {
 })
 after(() => server?.kill('SIGTERM'))
 
-test('a company has its own folder, and its credentials say whose they are', PENDING, async () => {
+test('a company has its own folder, and its credentials say whose they are', async () => {
   const a = await newCompany('Acme')
   assert.match(a.id, /^[a-z0-9]{8}$/)
   assert.match(a.join_token, new RegExp(`^sj_${a.id}_`))
@@ -77,7 +78,7 @@ test('a company has its own folder, and its credentials say whose they are', PEN
   assert.match(await register(a, 'prefixed2'), /^sq_[A-Za-z0-9_-]{20,64}$/)
 })
 
-test('the same name in two companies is two sessions', PENDING, async () => {
+test('the same name in two companies is two sessions', async () => {
   const [a, b] = [await newCompany('Same A'), await newCompany('Same B')]
   const [coordA, coordB] = [await register(a, 'coord'), await register(b, 'coord')]
   const [anaA, anaB] = [await register(a, 'ana'), await register(b, 'ana')]
@@ -93,7 +94,7 @@ test('the same name in two companies is two sessions', PENDING, async () => {
   assert.deepEqual(onlyB.map(m => m.text), ['for b only'])
 })
 
-test('a session cannot reach or discover a name of another company', PENDING, async () => {
+test('a session cannot reach or discover a name of another company', async () => {
   const [a, b] = [await newCompany('Reach A'), await newCompany('Reach B')]
   const alone = await register(a, 'alone')
   await register(b, 'only-in-b')
@@ -106,7 +107,7 @@ test('a session cannot reach or discover a name of another company', PENDING, as
   assert.equal(chat.description, nowhere.description.replaceAll('no-such-name', 'only-in-b'))
 })
 
-test('a join token only opens its own company', PENDING, async () => {
+test('a join token only opens its own company', async () => {
   const [a, b] = [await newCompany('Join A'), await newCompany('Join B')]
   const secret = await register(a, 'joined')
   assert.ok((await read(a, 'state')).sessions.some(s => s.name === 'joined'))
@@ -120,7 +121,7 @@ test('a join token only opens its own company', PENDING, async () => {
   ok(await get('getMe', secret))
 })
 
-test('a secret of one company does nothing with the id of another', PENDING, async () => {
+test('a secret of one company does nothing with the id of another', async () => {
   const [a, b] = [await newCompany('Secret A'), await newCompany('Secret B')]
   const secret = await register(a, 'mine')
   // The same random part, under the other company's prefix.
@@ -129,7 +130,7 @@ test('a secret of one company does nothing with the id of another', PENDING, asy
   assert.equal((await call('register', { name: 'x' }, a.join_token.replace(a.id, b.id))).error_code, 401)
 })
 
-test('credentials without a company, or of one that does not exist, are the first company\'s', PENDING, async () => {
+test('credentials without a company, or of one that does not exist, are the first company\'s', async () => {
   const JOIN = readFileSync(join(dataDir, 'join-token'), 'utf8').trim()
   assert.match(JOIN, /^sj_[0-9a-f]+$/)
   const plain = ok(await call('register', { name: 'old-style' }, JOIN)).secret
@@ -142,29 +143,33 @@ test('credentials without a company, or of one that does not exist, are the firs
   assert.equal((await get('getMe', 'sq_abcdefgh_nothingofthekind000000000')).error_code, 401)
 })
 
-test('reads of a company show only that company', PENDING, async () => {
+test('reads of a company show only that company', async () => {
   const [a, b] = [await newCompany('Reads A'), await newCompany('Reads B')]
   const [x, y] = [await register(a, 'x'), await register(a, 'y')]
   const instance = 'instance-reads-1'
   ok(await call('claimSession', { instance }, x))
   ok(await call('sendMessage', { chat_id: 'y', text: 'private to a' }, x, instance))
-  ok(await call('logEvents', { events: [{ kind: 'prompt', ts: Date.now(), text: 'event of a' }] }, x, instance))
+  ok(await call('observe', { events: [{ kind: 'prompt', ts: Date.now(), text: 'event of a' }] }, x, instance))
   await inbox(y)
   for (const what of ['timeline?session=x', 'events', 'messages', 'hosts', 'state']) {
     const here = JSON.stringify(await read(a, what)), there = JSON.stringify(await read(b, what))
     assert.doesNotMatch(there, /private to a|event of a/, what)
-    if (what.startsWith('messages')) assert.match(here, /private to a/)
+    if (what === 'messages') assert.match(here, /private to a/)
+    if (what === 'events') assert.match(here, /event of a/)
   }
   assert.deepEqual((await read(b, 'state')).sessions, [])
 })
 
-test('actions of a company change only that company', PENDING, async () => {
+test('actions of a company change only that company', async () => {
   const [a, b] = [await newCompany('Acts A'), await newCompany('Acts B')]
   await register(a, 'lead')
   await register(b, 'lead')
-  ok(await act(a, 'org/squad', { coordinator: 'lead', title: 'Acme squad' }))
+  ok(await call('claimSession', { instance: 'instance-boss-1', role: 'coordinator' }, await register(a, 'boss')))
+  ok(await act(a, 'org/squad', { coordinator: 'boss', title: 'Acme squad' }))
+  assert.equal((await read(a, 'state')).squads.length, 1)
   assert.deepEqual((await read(b, 'state')).squads, [])
-  ok(await act(a, 'templates/save', { name: 'tpl', sessions: [{ name: 'w1', role: 'worker' }] }))
+  ok(await act(a, 'templates/save', { name: 'tpl', coordinator: { name: 'c1', folder: '/tmp/c1' }, workers: [{ name: 'w1', folder: '/tmp/w1' }] }))
+  assert.equal((await read(a, 'state')).templates.length, 1)
   assert.deepEqual((await read(b, 'state')).templates, [])
   ok(await act(a, 'delete', { session: 'lead' }))
   assert.ok(!(await read(a, 'state')).sessions.some(s => s.name === 'lead'))
@@ -177,7 +182,7 @@ test('actions of a company change only that company', PENDING, async () => {
   assert.ok((await read(b, 'state')).sessions.some(s => s.name === 'b-only'))
 })
 
-test('the stream of a company carries only that company', PENDING, async () => {
+test('the stream of a company carries only that company', async () => {
   const [a, b] = [await newCompany('Stream A'), await newCompany('Stream B')]
   const [x, y] = [await register(a, 'x'), await register(a, 'y')]
   await register(b, 'watcher')
@@ -197,7 +202,7 @@ test('the stream of a company carries only that company', PENDING, async () => {
   assert.match(got, /"name":"watcher"/)
 })
 
-test('an attachment is in its company\'s folder and only opens there', PENDING, async () => {
+test('an attachment is in its company\'s folder and only opens there', async () => {
   const [a, b] = [await newCompany('Files A'), await newCompany('Files B')]
   const [x, y] = [await register(a, 'x'), await register(a, 'y')]
   const other = await register(b, 'y')
@@ -213,7 +218,7 @@ test('an attachment is in its company\'s folder and only opens there', PENDING, 
   assert.equal((await fetch(`${URL_}/file/${path}`, { headers: { Authorization: `Bearer ${other}` } })).status, 404)
 })
 
-test('budgets are per company: one using up its own leaves the same name elsewhere alone', PENDING, async () => {
+test('budgets are per company: one using up its own leaves the same name elsewhere alone', async () => {
   const [a, b] = [await newCompany('Budget A'), await newCompany('Budget B')]
   const [x, y] = [await register(a, 'x'), await register(a, 'y')]
   const [bx, by] = [await register(b, 'x'), await register(b, 'y')]
@@ -236,7 +241,7 @@ function socket(path, cred) {
   })
 }
 
-test('a machine belongs to its company, and a terminal ticket only reaches that company\'s machines', PENDING, async () => {
+test('a machine belongs to its company, and a terminal ticket only reaches that company\'s machines', async () => {
   const [a, b] = [await newCompany('Term A'), await newCompany('Term B')]
   const en = ok(await act(a, 'hosts/enroll', { name: 'shared-name' }))
   const host = ok(await call('host/enroll', { code: en.code, info: { hostname: 'shared-name' } }))
@@ -270,14 +275,14 @@ test('a machine belongs to its company, and a terminal ticket only reaches that 
   for (const s of [machine, viewer, own]) s.ws.close()
 })
 
-test('a company that does not exist is not found, and an id cannot leave the companies folder', PENDING, async () => {
-  for (const id of ['nosuch00', '..', '%2e%2e', 'default/..', 'ABCDEFGH', 'a']) {
+test('a company that does not exist is not found, and an id cannot leave the companies folder', async () => {
+  for (const id of ['nosuch00', 'ABCDEFGH', 'a', '__proto__', 'constructor', '.hidden']) {
     const r = await get(`api/c/${id}/state`, ADMIN)
-    assert.notEqual(r.ok, true, id)
+    assert.equal(r.error_code, 404, id)
   }
 })
 
-test('the server token is what opens a company, for now; a join token or a session never does', PENDING, async () => {
+test('the server token is what opens a company, for now; a join token or a session never does', async () => {
   const a = await newCompany('Auth A')
   const secret = await register(a, 'x')
   for (const cred of [undefined, 'wrong', a.join_token, secret]) {
@@ -287,7 +292,7 @@ test('the server token is what opens a company, for now; a join token or a sessi
   }
 })
 
-test('the first company is the data of a server upgraded, untouched', PENDING, async () => {
+test('the first company is the data of a server upgraded, untouched', async () => {
   assert.ok(existsSync(join(dataDir, 'squadra.db')))
   const list = ok(await get('api/companies', ADMIN))
   const first = list.find(c => c.id === 'default')
@@ -297,14 +302,72 @@ test('the first company is the data of a server upgraded, untouched', PENDING, a
   assert.deepEqual(ok(await get('api/state', ADMIN)).sessions, ok(await get('api/c/default/state', ADMIN)).sessions)
 })
 
-test('a server notice names its company: it can\'t be replayed in another', PENDING, async () => {
+test('a server notice names its company: it can\'t be replayed in another', async () => {
   const a = await newCompany('Notice A')
   const coord = await register(a, 'coord')
   const worker = await register(a, 'worker')
   ok(await call('claimSession', { instance: 'instance-coord-1', role: 'coordinator' }, coord))
   ok(await call('claimSession', { instance: 'instance-worker-1', role: 'worker', coordinator: 'coord' }, worker))
+  // (Notices only reach a coordinator that has written to that worker.)
+  ok(await call('sendMessage', { chat_id: 'worker', text: 'a task' }, coord, 'instance-coord-1'))
   ok(await call('releaseSession', { instance: 'instance-worker-1', reason: 'logout' }, worker, 'instance-worker-1'))
-  const notice = await waitFor(async () => (await inbox(coord).catch(() => [])).find(u => u.message?.squadra_notice)?.message, { what: 'the notice' })
+  const res = await fetch(`${URL_}/getUpdates?timeout=0&instance=instance-coord-1`, { headers: { Authorization: `Bearer ${coord}`, 'X-Squadra-Instance': 'instance-coord-1' } })
+  const notice = ok(await res.json()).find(u => u.message?.squadra_notice)?.message
+  assert.ok(notice, 'the notice arrived')
   assert.equal(notice.squadra_company, a.id)
-  assert.ok(notice.squadra_server_sig)
+  const { key } = ok(await get('server-identity?nonce=0123456789abcdef'))
+  const fields = { from: 'worker', to: 'coord', id: notice.message_id, date: notice.date, text: notice.text }
+  assert.ok(serverNoticeIsGood(key, notice.squadra_server_sig, { ...fields, company: a.id }))
+  // A session of another company, or of a server without them, doesn't take it.
+  assert.ok(!serverNoticeIsGood(key, notice.squadra_server_sig, { ...fields, company: 'otherco0' }))
+  assert.ok(!serverNoticeIsGood(key, notice.squadra_server_sig, fields))
+})
+
+test('a server with data keeps it as the first company, with its machines and sessions, and a copy from before', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-companies-up-'))
+  const port = PORT + 3000
+  const start = async () => {
+    const proc = spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: dir, SQUADRA_SERVER_TOKEN: ADMIN }, stdio: 'ignore' })
+    await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, { what: 'server' })
+    return proc
+  }
+  const stop = proc => new Promise(r => { proc.on('exit', r); proc.kill('SIGTERM') })
+  const on = (path, init) => fetch(`http://127.0.0.1:${port}/${path}`, init).then(r => r.json())
+  const admin = body => ({ method: 'POST', headers: { Authorization: `Bearer ${ADMIN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) })
+
+  // What a server looks like before companies: its data, and no control.db.
+  let proc = await start()
+  const secret = ok(await on('register', admin({ name: 'veteran' }))).secret
+  const en = ok(await on('api/hosts/enroll', admin({ name: 'old-machine' })))
+  const host = ok(await on('host/enroll', { method: 'POST', body: JSON.stringify({ code: en.code, info: { hostname: 'old-machine' } }) }))
+  const join_ = readFileSync(join(dir, 'join-token'), 'utf8')
+  await stop(proc)
+  for (const f of ['control.db', 'control.db-wal', 'control.db-shm']) rmSync(join(dir, f), { force: true })
+
+  proc = await start()
+  try {
+    assert.equal(readFileSync(join(dir, 'join-token'), 'utf8'), join_)
+    const me = ok(await on('getMe', { headers: { Authorization: `Bearer ${secret}` } }))
+    assert.equal(me.id, 'veteran')
+    assert.ok(ok(await on('host/ticket', { method: 'POST', headers: { Authorization: `Bearer ${host.secret}` }, body: '{}' })).ticket)
+    const copy = new DatabaseSync(join(dir, 'squadra-before-companies.db'), { readOnly: true })
+    assert.equal(copy.prepare("SELECT COUNT(*) AS n FROM identities WHERE name = 'veteran'").get().n, 1)
+    copy.close()
+    assert.equal(statSync(join(dir, 'squadra-before-companies.db')).mode & 0o077, 0)
+  } finally { await stop(proc) }
+})
+
+test('limits are per company, can be changed, and bad ones are refused', async () => {
+  const a = ok(await call('admin/createCompany', { name: 'Quota A', limits: { max_sessions: 1 } }, ADMIN))
+  const b = await newCompany('Quota B')
+  ok(await call('register', { name: 'one' }, a.join_token))
+  assert.equal((await call('register', { name: 'two' }, a.join_token)).error_code, 403)
+  ok(await call('register', { name: 'two' }, b.join_token))
+  ok(await call('admin/setCompanyLimits', { company: a.id, limits: { max_sessions: 2 } }, ADMIN))
+  ok(await call('register', { name: 'two' }, a.join_token))
+  for (const limits of [{ max_sessions: 0 }, { max_sessions: 'x' }, { other: 1 }]) {
+    assert.equal((await call('admin/setCompanyLimits', { company: a.id, limits }, ADMIN)).error_code, 400)
+  }
+  assert.equal((await call('admin/createCompany', { name: 'Quota A' }, ADMIN)).error_code, 409)
+  assert.equal((await call('admin/createCompany', { name: '<b>' }, ADMIN)).error_code, 400)
 })

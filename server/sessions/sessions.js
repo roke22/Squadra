@@ -4,7 +4,7 @@ import {
 } from '../platform/index.js'
 
 export function createSessions(platform) {
-  const { db, bus, readLimit, allow, takeChallenge, proofIsGood } = platform
+  const { db, bus, readLimit, allow, takeChallenge, proofIsGood, quota, companyId, credentialPrefix } = platform
 
   const MAX_UPDATES = Number(process.env.SQUADRA_MAX_UPDATES ?? 500_000)       // undelivered updates kept, in all
   const MAX_UPDATES_PER_SESSION = 10_000                                        // undelivered updates kept, per recipient
@@ -38,7 +38,7 @@ export function createSessions(platform) {
     if (existing && !reset) {
       throw new ApiError(409, `Conflict: identity "${name}" already registered. Use the existing secret, or register with reset: true to rotate it.`)
     }
-    const secret = `sq_${randomBytes(24).toString('base64url')}`
+    const secret = `sq_${credentialPrefix}${randomBytes(24).toString('base64url')}`
     if (existing) {
       db.prepare('UPDATE identities SET secret_hash = ?, needs_approval = 0, public_key = NULL, proven_instance = NULL WHERE name = ?').run(sha256(secret), name)
       // A rotated identity must not keep a stale poller (or answer) alive.
@@ -268,6 +268,8 @@ export function createSessions(platform) {
       markPolled(name) // a claim is a sign of life: don't let the down sweep fire before the first poll
       return {
         name, role, since: unix(leases.get(name).since),
+        // (What the server's notices to it are signed for.)
+        ...(credentialPrefix ? { company: companyId } : {}),
         ...(role === 'coordinator' && approval.needs_approval ? { approval_pending: true } : {}),
         ...(role === 'worker' && coordinator && approvalRow(coordinator)?.needs_approval ? { coordinator_pending: true } : {}),
       }
@@ -467,7 +469,7 @@ export function createSessions(platform) {
 
   function cleanupUpdates() {
     db.prepare('DELETE FROM updates WHERE created_at < ?').run(now() - UPDATE_TTL_MS)
-    db.prepare('DELETE FROM updates WHERE update_id <= (SELECT update_id FROM updates ORDER BY update_id DESC LIMIT 1 OFFSET ?)').run(MAX_UPDATES)
+    db.prepare('DELETE FROM updates WHERE update_id <= (SELECT update_id FROM updates ORDER BY update_id DESC LIMIT 1 OFFSET ?)').run(quota('max_updates', MAX_UPDATES))
   }
 
   const keyRefused = text => new ApiError(403, `Forbidden: ${text}`, { parameters: { reason: 'key_refused' } })

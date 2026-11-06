@@ -18,16 +18,16 @@
  * Only Node built-ins: node:http, node:sqlite (Node >= 22.13).
  */
 
-// This file only starts what is the whole server's and the first company;
-// server/company.js joins the parts of a company.
+// This file only starts what is the whole server's. server/companies.js keeps
+// the companies, and server/company.js joins the parts of one.
 
-import { DATA_DIR, cleanupServerLimits, guarded, logError, openServerCredentials, startListening } from './platform/index.js'
-import { createCompany } from './company.js'
+import { cleanupServerLimits, guarded, logError, openServerCredentials, startListening } from './platform/index.js'
+import { createCompanies } from './companies.js'
 import { createRoutes } from './routes.js'
 
 const credentials = openServerCredentials()
-const company = createCompany(credentials, { dir: DATA_DIR })
-const { handle } = createRoutes(credentials, company)
+const companies = createCompanies(credentials)
+const { handle, onUpgrade } = createRoutes(credentials, companies)
 
 setInterval(guarded(cleanupServerLimits), 60 * 1000).unref()
 
@@ -41,7 +41,7 @@ const failed = what => err => { logError(`${what}: ${err?.stack ?? err}`); if (!
 process.on('uncaughtException', failed('uncaught'))
 process.on('unhandledRejection', failed('unhandled rejection'))
 
-const { servers } = await startListening(credentials, { handle, onUpgrade: company.machines.onUpgrade, nowServing: company.sessions.nowServing, joinToken: company.platform.joinToken })
+const { servers } = await startListening(credentials, { handle, onUpgrade, nowServing: companies.nowServing, joinToken: companies.first().platform.joinToken })
 serving = true
 
 // Ctrl+C / SIGTERM: close right away. Dashboards keep a stream open (and
@@ -55,7 +55,7 @@ function shutdown(signal) {
   }
   stopping = true
   process.stderr.write(`\nsquadra-server: ${signal} received, shutting down…\n`)
-  company.close()
+  companies.close()
   for (const srv of servers) { srv.close(); srv.closeAllConnections?.() }
   process.exit(0)
 }

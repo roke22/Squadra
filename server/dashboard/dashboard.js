@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { unix, now, guarded, bad, ApiError, VERSION } from '../platform/index.js'
 
 export function createDashboard(platform, { sessions, observation, machines, messaging, organization }) {
-  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir } = platform
+  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir, log } = platform
   const {
     register, approveSession, presenceOf, personaView, identityCreatedAt, identityExists, isOnline, linksOf,
     forgetSession, leases, kickHolder, announceDown, dropLease,
@@ -262,7 +262,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     dropLease(name)
     register(name, true)
     broadcast('session', sessionView(name))
-    process.stderr.write(`squadra-server: session "${name}" disconnected from the dashboard\n`)
+    log(`session "${name}" disconnected from the dashboard`)
     return sessionView(name)
   }
 

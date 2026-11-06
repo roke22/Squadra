@@ -18,14 +18,20 @@ import { upgradeStoredData } from './data-upgrade.js'
 //   machines       squadra-host: joining, its link, terminals
 //   organization   squads, links between them, templates
 //   dashboard      what the dashboard reads and does
-export function createCompany(server, { dir }) {
-  const platform = createPlatform(server, { dir })
+export function createCompany(server, options) {
+  const platform = createPlatform(server, options)
   const sessions = createSessions(platform)
   const messaging = createMessaging(platform, { sessions })
   const observation = createObservation(platform)
   const machines = createMachines(platform, { sessions, observation })
   const organization = createOrganization(platform, { sessions, messaging, observation, machines })
   const dashboard = createDashboard(platform, { sessions, messaging, observation, machines, organization })
+
+  // What a session can ask for, by its name in the request.
+  const methods = {
+    ...observation.observationMethods, ...machines.machineMethods, ...organization.organizationMethods,
+    ...sessions.sessionMethods, ...messaging.messagingMethods,
+  }
 
   function cleanup() {
     messaging.cleanupMessages()
@@ -34,7 +40,8 @@ export function createCompany(server, { dir }) {
     platform.cleanupLimits()
     platform.truncateLogHourly()
   }
-  setInterval(guarded(cleanup), 60 * 1000).unref()
+  const cleaning = setInterval(guarded(cleanup), 60 * 1000)
+  cleaning.unref()
   cleanup()
 
   upgradeStoredData(platform, { messaging, observation, machines })
@@ -42,6 +49,7 @@ export function createCompany(server, { dir }) {
 
   // The server is stopping: everything open ends right away.
   function close() {
+    clearInterval(cleaning)
     for (const w of [...sessions.waiters.values()]) sessions.finishPoll(w, null, [])
     for (const res of platform.sseClients) { try { res.end() } catch {} }
     platform.sseClients.clear()
@@ -49,5 +57,5 @@ export function createCompany(server, { dir }) {
     try { platform.db.close() } catch {}
   }
 
-  return { platform, sessions, messaging, observation, machines, organization, dashboard, close }
+  return { id: options.id, platform, sessions, messaging, observation, machines, organization, dashboard, methods, close }
 }

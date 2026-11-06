@@ -1,7 +1,7 @@
 import { cutText, cleanText, now, ApiError, bad } from '../platform/index.js'
 
 export function createObservation(platform) {
-  const { db, inTx, bus, broadcast, spendStorage } = platform
+  const { db, inTx, bus, broadcast, spendStorage, quota } = platform
 
   const MAX_EVENTS = Number(process.env.SQUADRA_MAX_EVENTS ?? 1_000_000)       // observation events kept, in all
   const EVENT_TTL_MS = Number(process.env.OBSERVE_TTL_HOURS ?? 24) * 60 * 60 * 1000 // live-observation events
@@ -199,7 +199,7 @@ export function createObservation(platform) {
     const t = now()
     db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
     // Over the cap: the oldest go first.
-    db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(MAX_EVENTS)
+    db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(quota('max_events', MAX_EVENTS))
     for (const [k, v] of observeLog) if (!v.some(x => t - x.t < 60_000)) observeLog.delete(k)
   }
 

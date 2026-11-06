@@ -1,7 +1,7 @@
 import { now, cleanText } from './platform/index.js'
 
 export function upgradeStoredData(platform, { observation, messaging, machines }) {
-  const { db, inTx } = platform
+  const { db, inTx, log } = platform
   const { cleanEvent } = observation
   const { uploadMime } = messaging
   const { ownTerminals, sanitizeHostInfo } = machines
@@ -24,7 +24,7 @@ export function upgradeStoredData(platform, { observation, messaging, machines }
       if (!rows.length) break
       inTx(() => { for (const r of rows) fix(r); last = rows[rows.length - 1].rid_; metaSet(`${key}_last`, last) })
       done += rows.length
-      if (done % 50_000 < 1000) process.stderr.write(`squadra-server: cleaning ${table} stored by an older version: ${done} done…\n`)
+      if (done % 50_000 < 1000) log(`cleaning ${table} stored by an older version: ${done} done…`)
     }
     metaSet(`${key}_done`, now())
   }

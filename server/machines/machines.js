@@ -33,12 +33,21 @@ export const hostSignature = () => {
 // overall cap on purpose: anyone could use it to block real enrollments, and
 // codes are 40 bits, single use and valid 15 minutes, so guessing one is out
 // of reach even from many addresses.
+export const enrollmentKey = code => sha256(String(code ?? '').trim().toUpperCase())
 export function checkEnrollRate(req) {
   if (!allowServerWide('enroll', ipKey(clientIp(req)), 10)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
 }
 
+// What a socket says it comes with: as subprotocols, the only thing a browser
+// can set on one.
+const offeredProtocols = req => String(req.headers['sec-websocket-protocol'] ?? '').split(',').map(x => x.trim())
+export const offeredCredential = req => offeredProtocols(req).find(x => x.startsWith('auth.'))?.slice('auth.'.length) ?? ''
+
 export function createMachines(platform, { sessions, observation }) {
-  const { bus, db, broadcast, SERVER_KEY, joinToken, signAsServer, allow, takeChallenge, proofIsGood } = platform
+  const {
+    bus, db, broadcast, SERVER_KEY, joinToken, signAsServer, allow, takeChallenge, proofIsGood, credentialPrefix,
+    routeEnrollment, log,
+  } = platform
   const {
     NAME_RE, roleOf, checkApproval, isOnline, keyRefused, holdsName, leases, linksOf, register, dropLease,
   } = sessions
@@ -79,7 +88,7 @@ export function createMachines(platform, { sessions, observation }) {
         return no('machine_refused', `its machine did not clear it: ${err.message.replace(/^(Bad Request|Conflict): /, '')}`)
       }
       if (await confirmed) {
-        process.stderr.write(`squadra-server: "${name}" cleared the context of its worker "${worker}"\n`)
+        log(`"${name}" cleared the context of its worker "${worker}"`)
         return { cleared: true }
       }
       return no('not_confirmed', `/clear was typed in the terminal of "${worker}" but it didn't confirm it within ${Math.round(FRESH_WAIT_MS / 1000)} s`)
@@ -153,7 +162,8 @@ export function createMachines(platform, { sessions, observation }) {
     // that used this very code from any other one that connects.)
     const ticket = randomBytes(12).toString('hex')
     db.prepare('INSERT INTO host_enrollments (code_hash, name, created_at, expires_at, configure_plugin, ticket) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(sha256(code), name, t, t + ENROLL_TTL_MS, p.configure_plugin === true ? 1 : 0, ticket)
+      .run(enrollmentKey(code), name, t, t + ENROLL_TTL_MS, p.configure_plugin === true ? 1 : 0, ticket)
+    routeEnrollment(enrollmentKey(code), t + ENROLL_TTL_MS)
     const base = serverBaseUrl(req)
     const q = s => `'${String(s).replace(/'/g, `'\\''`)}'` // always a single shell word
     const ps = s => `'${String(s).replace(/'/g, "''")}'`
@@ -187,22 +197,21 @@ export function createMachines(platform, { sessions, observation }) {
   function enrollHost(p, req) {
     const ip = clientIp(req)
     const t = now()
-    const code = String(p.code ?? '').trim().toUpperCase()
-    const row = db.prepare('SELECT * FROM host_enrollments WHERE code_hash = ?').get(sha256(code))
+    const row = db.prepare('SELECT * FROM host_enrollments WHERE code_hash = ?').get(enrollmentKey(p.code))
     if (!row || row.expires_at < t) {
       throw new ApiError(403, 'Forbidden: the code is wrong or has expired; generate a new one in the dashboard (Machines → + Add machine)')
     }
     db.prepare('DELETE FROM host_enrollments WHERE code_hash = ?').run(row.code_hash) // single use
     const id = `h_${randomBytes(8).toString('hex')}`
     const info = ownTerminals(sanitizeHostInfo(p.info), id)
-    const secret = `sh_${randomBytes(32).toString('base64url')}`
+    const secret = `sh_${credentialPrefix}${randomBytes(32).toString('base64url')}`
     // The hostname comes from the machine: keep only the characters a name may have.
     const fromHost = String(info?.hostname ?? '').replace(/[^\p{L}\p{N} ._-]/gu, '').trim().slice(0, 40)
     const name = row.name || fromHost || id
     db.prepare('INSERT INTO hosts (id, name, secret_hash, created_at, last_seen_at, info, enrollment) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, uniqueHostName(name), sha256(secret), t, t, JSON.stringify(info), row.ticket ?? null)
     broadcastHost(id)
-    process.stderr.write(`squadra-server: host "${hostRow(id).name}" (${id}) enrolled from ${ip}\n`)
+    log(`host "${hostRow(id).name}" (${id}) enrolled from ${ip}`)
     return {
       id, secret, name: hostRow(id).name,
       // The plugin's server address always; the join token only if the admin
@@ -328,7 +337,7 @@ export function createMachines(platform, { sessions, observation }) {
         hostLinks.set(hostId, link)
         db.prepare('UPDATE hosts SET last_seen_at = ?, info = ?, first_connected_at = COALESCE(first_connected_at, ?) WHERE id = ?').run(now(), JSON.stringify(link.info), now(), hostId)
         ws.send(JSON.stringify({ t: 'welcome', host: { id: hostId, name: row.name } }))
-        process.stderr.write(`squadra-server: host "${row.name}" connected from ${req.socket.remoteAddress}\n`)
+        log(`host "${row.name}" connected from ${req.socket.remoteAddress}`)
         broadcastHost(hostId)
         return
       }
@@ -385,7 +394,7 @@ export function createMachines(platform, { sessions, observation }) {
       hostLinks.delete(hostId)
       dropHostLink(hostId, link)
       if (hostRow(hostId)) db.prepare('UPDATE hosts SET last_seen_at = ? WHERE id = ?').run(now(), hostId)
-      process.stderr.write(`squadra-server: host ${hostId} disconnected\n`)
+      log(`host ${hostId} disconnected`)
       broadcastHost(hostId)
     }
   }
@@ -433,7 +442,7 @@ export function createMachines(platform, { sessions, observation }) {
         if (!link.viewers.has(term)) link.viewers.set(term, new Set())
         link.viewers.get(term).add(viewer)
         viewer.attached.add(key)
-        process.stderr.write(`squadra-server: dashboard (${req.socket.remoteAddress}) is viewing "${term}" on host ${host}\n`)
+        log(`dashboard (${req.socket.remoteAddress}) is viewing "${term}" on host ${host}`)
         return link.ws.send(JSON.stringify({ t: 'attach', term, ...size(m.cols, m.rows) }))
       }
       if (!viewer.attached.has(key) || !link) return
@@ -443,7 +452,7 @@ export function createMachines(platform, { sessions, observation }) {
       if (m.t === 'in' && typeof m.data === 'string' && m.data.length <= 64 * 1024) {
         if (!viewer.typed.has(key)) {
           viewer.typed.add(key)
-          process.stderr.write(`squadra-server: dashboard (${req.socket.remoteAddress}) is typing in "${term}" on host ${host}\n`)
+          log(`dashboard (${req.socket.remoteAddress}) is typing in "${term}" on host ${host}`)
         }
         return link.ws.send(JSON.stringify({ t: 'in', term, data: m.data }))
       }
@@ -493,8 +502,8 @@ export function createMachines(platform, { sessions, observation }) {
     // subprotocol ("squadra", "auth.<credential>"). The dashboard's is a
     // one-time ticket (POST /api/terminal/ticket), and so is a machine's (POST
     // /host/ticket); machines older than 0.0.7 send their secret here.
-    const offered = String(req.headers['sec-websocket-protocol'] ?? '').split(',').map(x => x.trim())
-    const cred = offered.find(x => x.startsWith('auth.'))?.slice('auth.'.length) ?? ''
+    const offered = offeredProtocols(req)
+    const cred = offeredCredential(req)
     // (Credentials are random, 192 bits or more: a wrong one costs one lookup.)
     const refuse = (status, text) => refuseSocket(socket, `${status} ${text}`)
     if (!offered.includes('squadra') || !cred) {
@@ -502,7 +511,7 @@ export function createMachines(platform, { sessions, observation }) {
       // told why, in the close reason it prints, and the log says so (once a
       // minute at most). The socket is closed at once.
       if (path === '/host/connect' && req.headers.upgrade?.toLowerCase() === 'websocket') {
-        if (allowServerWide('old-host-log', 'all', 1)) process.stderr.write(`squadra-server: a squadra-host older than 0.0.2 tried to connect from ${req.socket.remoteAddress}: update it (see the README)\n`)
+        if (allowServerWide('old-host-log', 'all', 1)) log(`a squadra-host older than 0.0.2 tried to connect from ${req.socket.remoteAddress}: update it (see the README)`)
         const old = acceptWebSocket(req, socket, head, { log: logError, maxMessage: 1024 })
         old?.close(4426, 'this squadra-host is older than the server (0.0.2): update it: add the machine again from the dashboard (+ Add machine)')
         return
@@ -628,6 +637,8 @@ export function createMachines(platform, { sessions, observation }) {
     terminalTickets.delete(ticket)
     return exp >= Date.now()
   }
+  // (Tickets say nothing of whose they are: each company knows its own.)
+  const hasTicket = ticket => hostTickets.has(ticket) || terminalTickets.has(ticket)
   const wsClients = new Set()
 
   function removeHost(id) {
@@ -637,7 +648,7 @@ export function createMachines(platform, { sessions, observation }) {
     db.prepare('DELETE FROM hosts WHERE id = ?').run(id)
     hostLinks.get(id)?.ws.close(4001, 'this machine was disconnected from the dashboard')
     broadcast('host', { id, removed: true })
-    process.stderr.write(`squadra-server: host "${row.name}" (${id}) removed from the dashboard\n`)
+    log(`host "${row.name}" (${id}) removed from the dashboard`)
     return { id, removed: true }
   }
 
@@ -746,7 +757,7 @@ export function createMachines(platform, { sessions, observation }) {
     if (openedRole === 'worker' && NAME_RE.test(String(spec.coordinator ?? ''))) db.prepare('UPDATE identities SET coordinator = ? WHERE name = ?').run(spec.coordinator, name)
     try {
       const result = await askHost(id, { t: 'open', spec })
-      process.stderr.write(`squadra-server: opened session "${name}" on host ${id}\n`)
+      log(`opened session "${name}" on host ${id}`)
       return result
     } catch (err) {
       // Only when the machine said no: after a timeout it may still open the
@@ -766,6 +777,6 @@ export function createMachines(platform, { sessions, observation }) {
   return {
     machineMethods, onUpgrade, wsClients, sanitizeHostInfo, ownTerminals, PERSONA_ID_RE, listHosts,
     createEnrollment, renameHost, removeHost, changeHostFolders, hostPersonas, openTerminalOn,
-    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer,
+    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer, hasTicket,
   }
 }
