@@ -56,7 +56,7 @@ export function createMachines(platform, { sessions, observation }) {
 
   // A persona: a skill or an agent a session follows (its machine found it in
   // the session's folder, or in that user's ~/.claude). Its id on the machine:
-  const PERSONA_ID_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
+  const PERSONA_ID_RE = /^(skill|agent):(project|user):[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
   // A coordinator giving one of its workers a new task, unrelated to the last
   // one, can have the worker's context cleared first: lighter (cheaper) turns

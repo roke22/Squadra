@@ -718,7 +718,7 @@ function checkFolder(folder, settings) {
 }
 
 // A persona as the server asks for it (see Claude Code, below).
-const PERSONA_RE = /^(skill|agent):(project|user):[A-Za-z0-9._-]{1,64}$/
+const PERSONA_RE = /^(skill|agent):(project|user):[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 // "0.0.1" < "0.0.2" (numeric parts; anything unreadable is not "older").
 function olderVersion(a, b) {
@@ -854,7 +854,8 @@ export function listPersonas(folder, home = claudeHome()) {
       const name = String(data.name ?? '')
       // Claude Code finds an agent by its name, the project's first: a user's
       // agent with the name of one of the project's is never the one used.
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || agentNames.has(name)) continue
+      // (Never with a dash first: it goes to Claude Code's command line.)
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name) || agentNames.has(name)) continue
       agentNames.add(name)
       const tools = Array.isArray(data.tools) ? data.tools : typeof data.tools === 'string' && data.tools.trim() ? data.tools.split(',') : null
       // An agent limited to some tools, none of them Squadra's, can't message its squad.
