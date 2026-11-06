@@ -1378,6 +1378,14 @@ test('server: links between squads: only coordinators, shown to each other, and 
   assert.match(over.description, /"lsa" and "lsb" \(two coordinators\) have sent each other 60 messages in the last hour.*Tell the user/)
   // A worker of theirs is not held back by it.
   assert.ok((await a('sendMessage', { chat_id: 'lsw', text: 'task' })).ok)
+  // Nor do they go around it: an edit, a group they share, or saying it is automatic.
+  await a('joinGroup', { chat_id: '#lsg' })
+  await a('inviteToGroup', { chat_id: '#lsg', name: 'lsb' })
+  await b('joinGroup', { chat_id: '#lsg' })
+  const toGroup = await a('sendMessage', { chat_id: '#lsg', text: 'around it' })
+  assert.deepEqual([toGroup.error_code, toGroup.parameters?.reason], [429, 'coordinators_limit'])
+  for (let i = 0; i < 10; i++) assert.ok((await a('sendMessage', { chat_id: 'lsb', text: `auto ${i}`, squadra_auto: true })).ok, `auto ${i}`)
+  assert.equal((await a('sendMessage', { chat_id: 'lsb', text: 'auto over', squadra_auto: true })).parameters?.reason, 'coordinators_limit')
   // Unlinked; and a deleted coordinator takes its links with it.
   assert.ok((await post('links/delete', { a: 'lsa', b: 'lsb' })).ok)
   assert.equal((await post('links/delete', { a: 'lsa', b: 'lsb' })).ok, false)

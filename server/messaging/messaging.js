@@ -7,7 +7,7 @@ import {
 
 export function createMessaging(platform, { sessions }) {
   const {
-    db, signAsServer, broadcast, inTx, bus, dataDir, allow, rateLimit, spendStorage, ensureRoom, readLimit, groupLimit, quota,
+    db, signAsServer, broadcast, inTx, bus, dataDir, allow, counted, rateLimit, spendStorage, ensureRoom, readLimit, groupLimit, quota,
     companyId, credentialPrefix, log,
   } = platform
   const {
@@ -145,6 +145,7 @@ export function createMessaging(platform, { sessions }) {
   }
 
   const COORDINATOR_PAIR_MAX = 60
+  const COORDINATOR_AUTO_MAX = 10
   const REPORTS = ['done', 'blocked', 'failed', 'question']
 
   // A sender's signature: carried as it came, never read here.
@@ -158,6 +159,20 @@ export function createMessaging(platform, { sessions }) {
   // doesn't see either.
   function spendStored(from, text, recipients) {
     spendStorage('stored-text', from, Buffer.byteLength(text ?? '', 'utf8') * (1 + recipients.length), quota('stored_text_mb_hour', STORED_TEXT_MB_PER_HOUR) * 1024 ** 2)
+  }
+
+  // Two coordinators can keep each other busy forever: each message wakes the
+  // other, in a group or edited too. So many an hour between each two, then the
+  // user decides. All checked before any is charged. (The plugin's own replies
+  // say they are, which a client can say of anything: a small budget apart.)
+  function spendCoordinatorPairs(from, target, auto = false) {
+    if (roleOf(from) !== 'coordinator') return
+    const pairs = recipientsOf(target, from).filter(r => roleOf(r) === 'coordinator').map(r => [r, linkKey(from, r).join('\0')])
+    const [bucket, max] = auto ? ['coordinators-auto', COORDINATOR_AUTO_MAX] : ['coordinators', COORDINATOR_PAIR_MAX]
+    for (const [other, key] of pairs) {
+      if (counted(bucket, key, 3600_000) >= max) throw new ApiError(429, `Too Many Requests: "${from}" and "${other}" (two coordinators) have sent each other ${max} messages in the last hour; no more for now, so two sessions can't keep each other going. Tell the user`, { parameters: { reason: 'coordinators_limit', retry_after: 3600 } })
+    }
+    for (const [, key] of pairs) allow(bucket, key, max, 3600_000)
   }
 
   function storeMessage(from, target, { text, replyTo, fileId, fileKind, system = false, auto = false, fyi = false, report = null, sig = null, hello = false }) {
@@ -180,12 +195,7 @@ export function createMessaging(platform, { sessions }) {
     if (!system && roleOf(from) === 'solo') throw new ApiError(403, 'Forbidden: this is a standalone session: it does not message other sessions')
     if (!system && !target.startsWith('#') && roleOf(target) === 'solo') throw new ApiError(403, `Forbidden: "${target}" is a standalone Claude Code session: it does not take messages from other sessions`)
     if (!system) checkApproval(from, target, hello)
-    // Two coordinators can keep each other busy forever (each message wakes the
-    // other): at most so many an hour between the two, then the user decides.
-    if (!system && !auto && !target.startsWith('#') && roleOf(from) === 'coordinator' && roleOf(target) === 'coordinator' &&
-      !allow('coordinators', linkKey(from, target).join('\0'), COORDINATOR_PAIR_MAX, 3600_000)) {
-      throw new ApiError(429, `Too Many Requests: "${from}" and "${target}" (two coordinators) have sent each other ${COORDINATOR_PAIR_MAX} messages in the last hour; no more for now, so two sessions can't keep each other going. Tell the user`, { parameters: { reason: 'coordinators_limit', retry_after: 3600 } })
-    }
+    if (!system) spendCoordinatorPairs(from, target, auto)
     const recipients = recipientsOf(target, from)
     // (When it was last seen only for a session it is related to, as getChat.)
     // A worker that stopped responding is sent to until it is announced DOWN:
@@ -260,6 +270,7 @@ export function createMessaging(platform, { sessions }) {
       resolveTarget(row.target, name)
       checkApproval(name, row.target, false)
       ensureRoom()
+      spendCoordinatorPairs(name, row.target)
       const recipients = recipientsOf(row.target, name)
       spendStored(name, p.text, recipients)
       db.prepare('UPDATE messages SET text = ?, edited_at = ?, sig = ? WHERE id = ?').run(p.text, now(), sigParam(p.squadra_sig), id)

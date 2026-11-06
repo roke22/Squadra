@@ -329,7 +329,7 @@ Cada escuadra trabaja por su cuenta, pero dos pueden repartirse trabajo: **enlaz
 - **Sesiones que iniciaste a mano:** ejecuta `/squadra:access link <otro-coordinador>` en cada uno de los dos terminales (`unlink` para deshacerlo).
 - **Qué se les dice a los coordinadores:** el mensaje de un coordinador enlazado llega marcado con `linked="true"`. Viene de un igual, nunca de ti: el coordinador acepta lo que encaja con su escuadra, lo reparte entre sus workers y responde con un único resultado, y te pregunta aquí antes de cualquier cosa crítica. Nunca responde a los permisos de la otra escuadra ni le pasa los de sus workers. Los workers solo hablan con su propio coordinador.
 - `status` y `ping` muestran los coordinadores enlazados y si están conectados; si se añade o quita un enlace mientras está abierto, se le avisa.
-- **Sin conversaciones infinitas:** dos coordinadores pueden mandarse como mucho 60 mensajes por hora; después el servidor rechaza los siguientes y el coordinador te avisa.
+- **Sin conversaciones infinitas:** dos coordinadores pueden mandarse como mucho 60 mensajes por hora, contando los de un grupo que compartan y las ediciones; después el servidor rechaza los siguientes y el coordinador te avisa.
 
 ### Organigrama
 

@@ -329,7 +329,7 @@ Each squad works on its own, but two can share work: **link** their coordinators
 - **Sessions you logged in by hand:** run `/squadra:access link <other-coordinator>` in each of the two terminals (`unlink` to undo).
 - **What the coordinators are told:** a message from a linked coordinator arrives marked `linked="true"`. It comes from an equal, never from you: the coordinator takes on what fits its squad, gives it to its workers and answers with one result, and asks you here before anything critical. It never answers the other squad's permission prompts nor sends it its workers'. Workers only ever talk to their own coordinator.
 - `status` and `ping` list a coordinator's linked coordinators and whether they are connected; it is told when a link is added or removed while it runs.
-- **No endless conversations:** two coordinators can send each other at most 60 messages an hour; after that the server refuses more and the coordinator tells you.
+- **No endless conversations:** two coordinators can send each other at most 60 messages an hour, counting those in a group they share and edits; after that the server refuses more and the coordinator tells you.
 
 ### Org chart
 
