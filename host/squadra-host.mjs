@@ -2108,7 +2108,7 @@ async function enroll(server, code, { plugin = true, insecure = false, service =
 squadra-host: this machine is now "${plain(r.name)}" on ${server}.
   ${svc?.ok ? `It runs in the background as ${svc.how}.` : 'It keeps running while this terminal stays open.'}
   Next, in the dashboard: Machines → this machine → + Folder, to choose where sessions may be opened.
-  ${COMPANY ? `This company has its own Claude Code login. Sign in once: CLAUDE_CONFIG_DIR='${process.env.CLAUDE_CONFIG_DIR}' claude, then /login.\n  ` : ''}  ${launcher?.onPath === false ? `The squadra-host command is in ${dirname(LAUNCHER)}: open a new terminal to use it (or add that folder to your PATH).` : launcher?.skipped ? `${LAUNCHER} already exists and isn't this program's: use node ${INSTALLED_SCRIPT}.` : 'Commands: squadra-host status · squadra-host help'}
+  ${COMPANY ? `This company has its own Claude Code login. Sign in once: CLAUDE_CONFIG_DIR='${process.env.CLAUDE_CONFIG_DIR}' claude, then /login.\n  ` : ''}  ${launcher?.onPath === false ? `The ${SERVICE_NAME} command is in ${dirname(LAUNCHER)}: open a new terminal to use it (or add that folder to your PATH).` : launcher?.skipped ? `${LAUNCHER} already exists and isn't this program's: use node ${INSTALLED_SCRIPT}.` : `Commands: ${SERVICE_NAME} status · ${SERVICE_NAME} help`}
 
 `)
   return !!svc?.ok
@@ -2296,7 +2296,12 @@ async function installService() {
   // Running also while you are logged out (may need an administrator: optional).
   const loginctl = systemTool('loginctl')
   let linger = false
-  if (loginctl) { try { await run(loginctl, ['enable-linger'], { timeout: 15_000 }); linger = true } catch {} }
+  if (loginctl) {
+    try { await run(loginctl, ['enable-linger'], { timeout: 15_000 }); linger = true } catch {
+      // (Not allowed to ask, but it may be on already: the installer does it for a user of its own.)
+      try { linger = /Linger=yes/.test((await run(loginctl, ['show-user', userInfo().username, '-p', 'Linger'], { timeout: 15_000 })).stdout) } catch {}
+    }
+  }
   return { ok: true, how: `a systemd user service (${f.path})${linger ? '; it also runs while you are logged out' : '; it runs while you are logged in (for always: loginctl enable-linger $USER)'}` }
 }
 
@@ -2324,7 +2329,7 @@ async function service(action) {
   if (action === 'print') return process.stdout.write(serviceFile().text)
   const other = someoneElsesService()
   if (other) die(`the service on this machine (${other}) runs another squadra-host, from another configuration folder: nothing was changed. Run this from that one (with its SQUADRA_HOST_DIR), or delete that file to use this one`, 2)
-  if (action === 'remove') { await removeService(); return log('service removed: squadra-host no longer starts by itself (run it with: squadra-host)') }
+  if (action === 'remove') { await removeService(); return log(`service removed: it no longer starts by itself (run it with: ${cli()})`) }
   if (action && action !== 'install') die(`service ${plain(action)}: use "service", "service remove" or "service print"`, 2)
   const r = await installService()
   if (!r.ok) die(`could not install the service: ${r.why}. Run "squadra-host" in a terminal instead (it must stay open), or set it up by hand from "squadra-host service print".`)

@@ -179,6 +179,32 @@ test('adding a machine: the dialog gives a command to run', async ({ page }) => 
   await expect(page.locator('.modal-bg')).toBeVisible()
 })
 
+test('adding a machine for a company: its command says which, and it can have its own system user', async ({ page }) => {
+  await signIn(page)
+  const other = await server.call('admin/createCompany', { name: 'Machine Co' })
+  const cookie = await server.ownerCookie()
+  await fetch(`${server.url}/api/companies/join`, { method: 'POST', headers: { Cookie: cookie, Origin: server.url, 'Content-Type': 'application/json' }, body: JSON.stringify({ company: other.id }) })
+  await page.goto(`${server.url}/?company=${other.id}#/hosts`)
+  await page.locator('#addHostBtn').click()
+  await page.locator('[data-gen]').click()
+  await page.locator('[data-os=linux]').click()
+  const cmd = page.locator('.steps .cmd').first()
+  await expect(cmd).toContainText(`--company=${other.id}`)
+  await expect(cmd).not.toContainText('sudo')
+  await page.locator('[data-osuser]').fill('empresa-1')
+  await page.locator('[data-osuser]').blur()
+  await expect(cmd).toContainText('| sudo bash -s --')
+  await expect(cmd).toContainText('--os-user=empresa-1')
+  // A name that can't be one is not put in a command.
+  await page.locator('[data-osuser]').fill('x; rm -rf /')
+  await page.locator('[data-osuser]').blur()
+  await expect(cmd).not.toContainText('--os-user')
+  await page.keyboard.press('Escape')
+  await page.locator('#peopleBtn').click()
+  await page.locator('[data-tab=machines]').click()
+  await expect(page.locator('.modal')).toContainText('machine1')
+})
+
 test('a terminal: it shows the screen, and what is typed reaches the machine', async ({ page }) => {
   await signIn(page, `#/t/${machine.id}/worker1`)
   const screen = page.locator('#terminal .xterm-rows')

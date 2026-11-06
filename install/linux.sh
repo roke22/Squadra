@@ -57,6 +57,8 @@ main() {
     if ! id "$OS_USER" >/dev/null 2>&1; then
       say "Creating the system user $OS_USER"
       useradd -m -s /bin/bash "$OS_USER"
+      # (Many systems leave a new home readable by everyone: that isn't apart.)
+      chmod 700 "$(getent passwd "$OS_USER" | cut -d: -f6)"
     fi
     if ! command -v tmux >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then install_pkg tmux curl; fi
     # (So its service keeps running without anyone logged in as it.)
