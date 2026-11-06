@@ -1761,7 +1761,8 @@ test('task reports: a worker can\'t end a task without its final report, and its
   await stopHook()
   await wk.tool('reply', { chat_id: 'trc', text: 'Old news', report: 'done', reply_to: String(t9) })
   assert.equal(await stopHook(), null, 'asked once already')
-  assert.ok(t11)
+  // (Its notice arrives in its own time: below counts on what came before.)
+  await coord.waitChannel(p => p.content.includes(`without a final report on your task #${t11}`), 'the notice about eleven')
   // Something still runs in the background: the task isn't over, nothing is
   // asked and nobody is told yet, until the turn that follows ends.
   const announced = () => coord.channel(p => p.content.includes('ended its turn without a final report')).length
