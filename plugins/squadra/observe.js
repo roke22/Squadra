@@ -70,7 +70,8 @@ const KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|pass
 const BEARER = /\b(Bearer|bearer|BEARER|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,1000}/g
 // Secrets in command lines: --password x, --token=x, mysql -pX, curl -u user:pass.
 const CLI_FLAGS = /(--(?:password|passwd|token|secret|api-?key|access-?key|auth)(?:=|\s+))(["']?)[^\s"']{3,500}\2/gi
-const CLI_SHORT = /(\bmysql(?:dump)?\b[^\n|;&]{0,200}?\s-p)([^\s]{3,200})|(\bcurl\b[^\n|;&]{0,200}?\s(?:-u|--user)\s+)([^\s:]{1,100}):([^\s]{1,200})/gi
+// (Case matters for mysql: -P is its port, and it can come before -p.)
+const CLI_SHORT = /(\b(?:mysql(?:dump)?|mariadb(?:-dump)?)\b[^\n|;&]{0,200}?\s-p)([^\s]{3,200})|(\b[Cc][Uu][Rr][Ll]\b[^\n|;&]{0,200}?\s(?:-u|--user)\s+)([^\s:]{1,100}):([^\s]{1,200})/g
 // netrc lines, sshpass -p X, openssl -pass pass:X / -k X, docker/az/mongosh
 // -p X, redis-cli -a X, htpasswd -b file user X, smbclient -U user%X,
 // wget --http-password X, mysqldump -p X, kubectl --from-literal=k=X.
@@ -78,8 +79,7 @@ const OTHER_CLI = /(\bmachine\s+\S{1,200}\s+login\s+\S{1,200}\s+password\s+|\bss
 // Cookie headers.
 const COOKIE = /\b((?:Set-)?Cookie:\s{0,5})[^\n]{1,4000}/gi
 
-// (-P is mysql's port, not its password.)
-const cliShort = (m, a, c, user) => (a ? (a.endsWith('-P') ? m : `${a}[REDACTED]`) : `${c}${user}:[REDACTED]`)
+const cliShort = (m, a, c, user) => (a ? `${a}[REDACTED]` : `${c}${user}:[REDACTED]`)
 
 // The text is cut before matching: what is sent is clipped well below this.
 const REDACT_MAX = 25_000
@@ -105,7 +105,8 @@ export function redact(text) {
 const SECRET_KEY = /^(?:[A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|account[_-]?key|credentials?|authorization|cookie|contrase(?:ñ|n)a|clave))[A-Za-z0-9_.-]{0,40}$/i
 // (Words of a camelCase name count as words: dbPass, hmacKey. Not a secret by
 // name alone: pass_through, and a pwd that is a folder.)
-const secretName = (k, v) => SECRET_KEY.test(k.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')) && !/tokens$|^pass[_-]?through$/i.test(k) && !(/^pwd$/i.test(k) && /^(~|\/[^/]+)\//.test(v))
+const ACRONYM_PASS = /^(?:DB|PG|MYSQL|API|ADMIN|ROOT|USER|SQL|REDIS|SMTP)_?(?:PASS|PWD|PW)$/
+const secretName = (k, v) => (SECRET_KEY.test(k) || SECRET_KEY.test(k.replace(/([a-z0-9])([A-Z])/g, '$1_$2')) || SECRET_KEY.test(k.replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')) || ACRONYM_PASS.test(k)) && !/tokens$|^pass[_-]?through$/i.test(k) && !(/^pwd$/i.test(k) && /^(~|\/[^/]+)\//.test(v))
 export function maskDeep(value, mask, depth = 0) {
   let masked = 0
   const walk = (v, d) => {
@@ -132,7 +133,7 @@ export function maskDeep(value, mask, depth = 0) {
 // `const token = getToken(req)` stays as written. The whole text is checked.
 const OUT_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:password|passwd|passphrase|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?![a-z])|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|account[_-]?key|credentials?)[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/gi
 // The same for camelCase names, where case tells the words apart: dbPass=…, hmacKey=…
-const OUT_CAMEL_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:[A-Za-z0-9](?:Pw|Pwd|Pass|Hmac)(?![a-z])|[a-z0-9](?:PW|PWD|PASS|HMAC)(?![a-z])|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?=[A-Z]))[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/g
+const OUT_CAMEL_KEY_VALUE = /(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:[A-Za-z0-9](?:Pw|Pwd|Pass|Hmac)(?![a-z])|[a-z0-9](?:PW|PWD|PASS|HMAC)(?![a-z])|(?<![A-Za-z0-9])(?:DB|PG|MYSQL|API|ADMIN|ROOT|USER|SQL|REDIS|SMTP)_?(?:PASS|PWD|PW)(?![A-Za-z])|(?<![A-Za-z])(?:pw|pwd|pass|hmac)(?=[A-Z]))[A-Za-z0-9_.-]{0,40})(["']?\s{0,5}[:=]\s{0,5})(["']?)([A-Za-z0-9+/_~.@#$%^&*!-]{8,500})\3(?![A-Za-z0-9(])/g
 const NOT_SECRET = /^(true|false|null|none|undefined|required|optional|string|number|boolean|redacted|\[redacted\]|example|changeme|xxx+|\*+)$/i
 export function maskOutgoing(text) {
   if (typeof text !== 'string' || !text) return { text, masked: 0 }

@@ -37,7 +37,7 @@ export class ChatView {
     // Text being selected isn't redrawn away: the view catches up when it ends
     // (a moment later: the click that ended it lands on what it was aimed at),
     // or after a while (left selected, it must not hide what arrives).
-    this.onSelection = () => { if (this.heldRender && !this.selecting()) setTimeout(() => this.catchUp(), 300) }
+    this.onSelection = () => { if (this.heldRender && !this.selecting()) setTimeout(() => { if (!this.selecting()) this.catchUp() }, 300) }
     document.addEventListener('selectionchange', this.onSelection)
     views.add(this)
     this.renderStatus()

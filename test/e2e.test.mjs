@@ -1754,8 +1754,14 @@ test('task reports: a worker can\'t end a task without its final report, and its
   // Answering none: everything it has seen.
   await wk.tool('reply', { chat_id: 'trc', text: 'Nine done', report: 'done' })
   assert.equal(await stopHook(), null)
-  // Something it started still runs in the background: the task isn't over,
-  // nothing is asked and nobody is told, until the turn that follows ends.
+  // A report that closes nothing doesn't let the turn be kept going again.
+  const t11 = await seen('Task: eleven')
+  await stopHook()
+  await wk.tool('reply', { chat_id: 'trc', text: 'Old news', report: 'done', reply_to: String(t9) })
+  assert.equal(await stopHook(), null, 'asked once already')
+  assert.ok(t11)
+  // Something still runs in the background: the task isn't over, nothing is
+  // asked and nobody is told yet, until the turn that follows ends.
   const announced = () => coord.channel(p => p.content.includes('ended its turn without a final report')).length
   const before = announced()
   const t10 = await seen('Task: ten')
@@ -1942,6 +1948,27 @@ test('eighth audit: masking in a permission prompt never hides a command silentl
     assert.ok(maskOutgoing(t).masked >= 1, t)
 })
 
+test('a task left with work running in the background: its coordinator is told after a while', async () => {
+  const coord = new Plugin(null, { SQUADRA_ASSUME_CHANNEL: '1' })
+  await coord.init()
+  await coord.tool('login', { role: 'coordinator', name: 'bgc' })
+  const accessFile = join(coord.configDir, 'channels', 'squadra', 'bgc', 'access.json')
+  const acc = JSON.parse(readFileSync(accessFile, 'utf8'))
+  acc.allowFrom.push('bgw')
+  writeFileSync(accessFile, JSON.stringify(acc, null, 2))
+  const wk = new Plugin('bgw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'bgc', SQUADRA_BACKGROUND_NOTICE_MS: '400' })
+  await wk.init()
+  await coord.waitChannel(p => p.content.startsWith('👋 bgw connected'), 'greeting')
+  const id = Number(/id: (\d+)/.exec(await coord.tool('reply', { chat_id: 'bgw', text: 'Task: long' }))[1])
+  await wk.waitChannel(p => p.content === 'Task: long', 'task')
+  await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: `<channel source="squadra" chat_id="bgc" message_id="${id}" user="bgc">Task: long</channel>`, session_id: 's', cwd: '/x' })
+  await runHookOut(wk, { hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }], session_id: 's', cwd: '/x' }, ['--stop'])
+  const notice = await coord.waitChannel(p => p.content.includes('work still running in the background'), 'the notice')
+  assert.ok(notice.content.includes(`#${id}`))
+  coord.close()
+  wk.close()
+})
+
 test('a burst from the coordinator: its identity is checked once per batch, not once per message', async t => {
   const proxy = await hostileProxy()
   t.after(() => proxy.close())
@@ -1970,6 +1997,11 @@ test('secrets: camelCase names, a MySQL password in a message, and files named i
   assert.ok(maskOutgoing('DBPass=abc12345xyz').masked >= 1)
   assert.ok(maskOutgoing('APIPass: abc12345xyz').masked >= 1)
   assert.equal(maskOutgoing('mysql -P3306 -h db').text, 'mysql -P3306 -h db', 'the port')
+  assert.equal(maskOutgoing('mysql -h db -P3306 -uroot -pS3cretPw1 mydb').text, 'mysql -h db -P3306 -uroot -p[REDACTED] mydb')
+  assert.equal(redact('mysqldump -P3306 -pS3cretPw1 mydb'), 'mysqldump -P3306 -p[REDACTED] mydb')
+  for (const t of ['DBPASS=abc12345xyz', 'PGPASS=abc12345xyz', 'MYSQLPWD=abc12345xyz', 'APIPASS: abc12345xyz']) assert.ok(maskOutgoing(t).masked >= 1, t)
+  assert.equal(maskOutgoing('COMPASS=abc12345xyz').masked, 0)
+  for (const k of ['SECRETs', 'SECRETkey', 'PASSWORDhash', 'APIKEYvalue', 'ACCESSTOKENvalue', 'DBPASS', 'PGPASS']) assert.equal(maskDeep({ [k]: 'hunter22' }, redact).value[k], '[REDACTED]', k)
   const { value } = maskDeep({ dbPass: 'hunter2', DBPass: 'hunter22', hmacKey: 'abcd1234', adminPw: 'abcd', password: 'x12345', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' }, redact)
   assert.deepEqual({ ...value }, { dbPass: '[REDACTED]', DBPass: '[REDACTED]', hmacKey: '[REDACTED]', adminPw: '[REDACTED]', password: '[REDACTED]', pwd: '/home/u', pass_through: 'yes1', maxTokens: '1000', compass: 'north' })
   // A pwd is a folder only if it reads like one.

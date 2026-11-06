@@ -345,6 +345,8 @@ export function createMessaging(platform, { sessions }) {
       }
       const owner = db.prepare('SELECT owner FROM groups WHERE id = ?').get(id)?.owner
       if (owner && owner !== name) throw new ApiError(403, `Forbidden: only the group's owner ("${owner}") invites to ${id}`)
+      // (Already in it: nothing to invite to, and no way back in after leaving.)
+      if (db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(id, who)) return true
       db.prepare('INSERT INTO group_invites (group_id, name, invited_by, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (group_id, name) DO UPDATE SET invited_by = excluded.invited_by, created_at = excluded.created_at').run(id, who, name, now())
       return true
     },
@@ -358,7 +360,7 @@ export function createMessaging(platform, { sessions }) {
       if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND name = ?').get(id, name)) throw bad('not a member of that group')
       db.prepare('DELETE FROM group_members WHERE group_id = ? AND name = ?').run(id, name)
       // (Whoever left can't keep bringing others in.)
-      db.prepare('DELETE FROM group_invites WHERE group_id = ? AND invited_by = ?').run(id, name)
+      db.prepare('DELETE FROM group_invites WHERE group_id = ? AND (invited_by = ? OR name = ?)').run(id, name, name)
       // The last one out closes the group (it can be created again from scratch).
       if (!db.prepare('SELECT 1 FROM group_members WHERE group_id = ?').get(id)) closeGroup(id)
       else handOverGroup(id, name)

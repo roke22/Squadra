@@ -36,19 +36,40 @@ export function tasksStarting(s, ids) {
 // information only), and its coordinator is waiting for it. Returns what is
 // left, for the answer to tell Claude.
 export function closeTasks(s, replyTo) {
-  for (const id of pendingTasks(s)) if (replyTo == null || id <= replyTo) s.tasks.delete(id)
-  s.stopAsked = false
+  let closed = 0
+  for (const id of pendingTasks(s)) if (replyTo == null || id <= replyTo) { s.tasks.delete(id); closed++ }
+  // (Only for one that closed something: it can't keep the turn going for ever.)
+  if (closed) s.stopAsked = false
+  if (!pendingTasks(s).length) { clearTimeout(s.backgroundTimer); s.backgroundTimer = null }
   return pendingTasks(s)
 }
 
 // The turn is about to end (Stop hook): a reason to go on, or '' to let it.
 // (It can't go on forever: it asks again only after a report or a new task.)
-// background: something this turn started still runs, and the turn that follows
-// it comes when it ends. The work isn't over: nothing to ask for yet.
+// background: something in this session still runs (perhaps not for this task:
+// a dev server, say), and a turn may follow when it ends. Nothing is asked yet,
+// but its coordinator isn't left waiting in silence: told after a while.
+const BACKGROUND_NOTICE_MS = Number(process.env.SQUADRA_BACKGROUND_NOTICE_MS) || 10 * 60_000
 export async function stopCheck(s, { background = false } = {}) {
-  if (S !== s || s.role !== 'worker' || background) return ''
+  if (S !== s || s.role !== 'worker') return ''
   const ids = pendingTasks(s)
   if (!ids.length) return ''
+  if (background) {
+    s.backgroundTimer ??= setTimeout(() => {
+      s.backgroundTimer = null
+      const open = pendingTasks(s)
+      if (S !== s || !open.length) return
+      void call('sendMessage', {
+        chat_id: s.coordinator,
+        text: `⏳ (automatic) ${s.name} ended its turn with work still running in the background, and has not reported on your task ${open.map(i => `#${i}`).join(', ')}. Ask it how it goes, or look at its terminal.`,
+        squadra_auto: true,
+      }, { s }).catch(err => log(`background notice failed: ${err.message}`))
+    }, BACKGROUND_NOTICE_MS)
+    s.backgroundTimer.unref?.()
+    return ''
+  }
+  clearTimeout(s.backgroundTimer)
+  s.backgroundTimer = null
   const list = ids.map(i => `#${i}`).join(', ')
   if (!s.stopAsked) {
     s.stopAsked = true

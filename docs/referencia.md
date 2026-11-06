@@ -358,7 +358,7 @@ Cada mensaje de un coordinador a su worker es una tarea, y cada tarea termina co
 - **Si aun así termina sin él** (ya se le pidió una vez, o algo falló), el coordinador recibe un aviso automático: *"w1 ended its turn without a final report on your task #123"*.
 - **Un informe cubre lo que responde:** con `reply_to` cierra las tareas hasta ese mensaje; una posterior sigue abierta y se le sigue pidiendo. Sin `reply_to` cierra todas las que Claude ha visto.
 - **Una tarea cada vez:** Claude Code le dice a Claude que trate un mensaje de canal que llega durante un turno como información no fiable, no como instrucciones, así que un worker puede no hacerle caso. A los coordinadores se les indica que esperen el informe antes de la siguiente tarea, y a los workers que informen de lo que dejen sin hacer.
-- **Trabajo en segundo plano:** mientras siga en marcha algo que el turno dejó corriendo, no se pide nada, porque el trabajo no ha terminado. Se pide cuando acaba el turno que viene después.
+- **Trabajo en segundo plano:** mientras siga en marcha algo en la sesión, no se pide nada, porque el trabajo puede no haber terminado. Se pide cuando acaba un turno posterior, y a los 10 minutos se avisa al coordinador de que no ha informado.
 - **Información que no necesita respuesta:** el coordinador la envía con `fyi: true`, y no se espera informe.
 - El coordinador ve en `ping` si cada worker está **BUSY** (ocupado) o **free** (libre), y el panel marca en el chat cada informe (✓ hecho, ⛔ bloqueado, ✗ fallido, ? pregunta) y cada mensaje informativo.
 

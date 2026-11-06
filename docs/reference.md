@@ -358,7 +358,7 @@ Every message from a coordinator to its worker is a task, and every task ends wi
 - **If it still ends without one** (asked once already, or something went wrong), the coordinator gets an automatic notice: *"w1 ended its turn without a final report on your task #123"*.
 - **A report covers what it answers:** with `reply_to` it closes the tasks up to that message; a later one stays open and is still asked for. Without `reply_to` it closes every task Claude has seen.
 - **One task at a time:** Claude Code tells Claude to treat a channel message that arrives during a turn as untrusted information, not as instructions, so a worker may not act on it. Coordinators are told to wait for the report before the next task, and workers to report anything they leave undone.
-- **Work left running in the background:** while something the turn started still runs, nothing is asked: the work isn't over. It is asked for when the turn that follows it ends.
+- **Work left running in the background:** while something in the session still runs, nothing is asked: the work may not be over. It is asked for when a later turn ends, and after 10 minutes the coordinator is told it hasn't reported.
 - **Information that needs no answer:** the coordinator sends it with `fyi: true`, and no report is expected.
 - The coordinator sees in `ping` whether each worker is **BUSY** or **free**, and the dashboard marks each report (✓ done, ⛔ blocked, ✗ failed, ? question) and each fyi message in the chat.
 

@@ -27,7 +27,7 @@
  */
 
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { appendFileSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
+import { appendFileSync, linkSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync, statSync, lstatSync, readlinkSync, openSync, readSync, closeSync, renameSync, copyFileSync, rmSync, chmodSync, accessSync, constants as FS } from 'node:fs'
 import { homedir, hostname, platform, arch, userInfo, tmpdir } from 'node:os'
 import { join, resolve, sep, isAbsolute, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1549,9 +1549,10 @@ async function connect(creds) {
   // And a handshake that gets no answer in 30 to 45 s (looked at every 15) is
   // given up (the socket's own wait is 300 s, one more left hanging per retry):
   // its handlers go first, so closing it can't fire them, and a late open just
-  // closes it. Node 22 doesn't let go of such a socket: after many of them, a
-  // program with a service ends with an error, for it to start again (the
-  // sessions stay). Without one it goes on: nothing would start it again.
+  // closes it. Node 22 doesn't let go of such a socket, not even after those
+  // 300 s: after many of them this program ends with an error (the sessions
+  // stay). Soon with a service, which starts it again; without one, only before
+  // it runs out of files, which would end it anyway.
   let abandoned = 0
   setInterval(() => {
     if (ws?.readyState === 1 && Date.now() - lastFromServer > 90_000) dropConnection('nothing from the server for 90 seconds')
@@ -1560,7 +1561,7 @@ async function connect(creds) {
       sock.onmessage = sock.onerror = sock.onclose = null
       sock.onopen = () => { try { sock.close(1000) } catch {} }
       try { sock.close() } catch {}
-      if (++abandoned >= 20 && UNDER_SERVICE) die(`${abandoned} connections to the server were never answered: starting again to let go of them`, 1)
+      if (++abandoned >= (UNDER_SERVICE ? 20 : 500)) die(`${abandoned} connections to the server were never answered: starting again to let go of them`, 1)
       settle({ code: 0, reason: 'the server did not answer the connection in 30 seconds' })
     }
   }, 15_000).unref()
@@ -1967,6 +1968,8 @@ function pinServerKeyForPlugin(server, key) {
 // Returns true when it left squadra-host running in the background (service).
 async function enroll(server, code, { plugin = true, insecure = false, service = true, serverKey = null } = {}) {
   if (!server || !code) die(`enroll needs the server URL and a code.\n\n${USAGE}`, 2)
+  // (Before the code is spent: its secret could not be kept.)
+  try { if (existsSync(CREDENTIALS_FILE)) accessSync(realOr(CREDENTIALS_FILE), FS.W_OK) } catch { die(`${CREDENTIALS_FILE} can't be written: nothing was done`, 2) }
   server = server.replace(/\/+$/, '')
   checkScheme(server, insecure)
   // The dashboard's command says which server this should be: with it, nothing
@@ -2301,16 +2304,25 @@ function runningInstance() {
     : /(^|\/)node[^/\s]*\s+(.*\/)?squadra-host[^/]*\.mjs(\s|$)/.test(cmd.trim())
   return itself ? pid : null
 }
-function claimInstance() {
+async function claimInstance() {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-  const claim = () => writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
-  const lost = () => die('another squadra-host is starting on this machine: nothing to do', 2)
-  try { claim() } catch (err) {
-    // One left behind is replaced; another that just took it, not.
-    if (err.code !== 'EEXIST' || runningInstance()) lost()
-    rmSync(PID_FILE, { force: true })
-    try { claim() } catch { lost() }
-  }
+  // (Under a service, losing starts it again: the other one may not last.)
+  const lost = () => die('another squadra-host is starting on this machine: nothing to do', UNDER_SERVICE ? 1 : 2)
+  // Linked into place whole: nobody can read it empty and take it for one left behind.
+  const tmp = `${PID_FILE}.${process.pid}.tmp`
+  writeFileSync(tmp, `${process.pid}\n`, { mode: 0o600 })
+  const claim = () => { try { linkSync(tmp, PID_FILE) } catch (err) { if (err.code === 'EEXIST') throw err; writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600, flag: 'wx' }) } }
+  try {
+    try { claim() } catch (err) {
+      // One left behind is replaced; another that just took it, not.
+      if (err.code !== 'EEXIST' || runningInstance()) lost()
+      rmSync(PID_FILE, { force: true })
+      try { claim() } catch { lost() }
+    }
+  } finally { rmSync(tmp, { force: true }) }
+  // Whoever removed one left behind may have removed this one: the last still there stays.
+  await new Promise(r => setTimeout(r, 200))
+  try { if (readFileSync(PID_FILE, 'utf8').trim() !== String(process.pid)) lost() } catch { lost() }
   const release = () => { try { if (readFileSync(PID_FILE, 'utf8').trim() === String(process.pid)) rmSync(PID_FILE, { force: true }) } catch {} }
   process.on('exit', release)
   for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(sig, () => { release(); process.exit(0) })
@@ -2454,7 +2466,7 @@ async function main() {
       log(`another squadra-host is running here (pid ${other}): waiting for it to end`)
       while (runningInstance()) await new Promise(r => setTimeout(r, 10_000))
     } else if (other) die(`squadra-host is already running on this machine (pid ${other}${existsSync(serviceFile().path) ? ', as a service' : ''}): nothing to do. To stop the service: squadra-host service remove`, 2)
-    claimInstance()
+    await claimInstance()
   }
   // (Exit 2 is "not enrolled", for good. A file that can't be read just now is not that.)
   let creds = null

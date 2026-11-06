@@ -661,6 +661,13 @@ test('nineteenth audit: a name registered again cannot edit the old one\'s messa
   assert.ok((await call('inviteToGroup', { chat_id: '#gl19new', name: 'gl19p' }, other)).ok)
   assert.ok((await call('leaveChat', { chat_id: '#gl19new' }, other)).ok)
   assert.equal((await call('joinGroup', { chat_id: '#gl19new' }, pending)).error_code, 403, 'an invitation goes with whoever made it')
+  // A member isn't invited (it could come back with it after leaving).
+  const member = (await call('register', { name: 'gl19m' }, ADMIN)).result.secret
+  assert.ok((await call('inviteToGroup', { chat_id: '#gl19new', name: 'gl19m' }, b)).ok)
+  assert.ok((await call('joinGroup', { chat_id: '#gl19new' }, member)).ok)
+  assert.ok((await call('inviteToGroup', { chat_id: '#gl19new', name: 'gl19m' }, b)).ok)
+  assert.ok((await call('leaveChat', { chat_id: '#gl19new' }, member)).ok)
+  assert.equal((await call('joinGroup', { chat_id: '#gl19new' }, member)).error_code, 403)
   assert.ok((await call('inviteToGroup', { chat_id: '#gl19new', name: 'gl19o' }, b)).ok, 'the new owner invites')
 
   // Parameters that can't be read are a 400, not a crash.
