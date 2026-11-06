@@ -1901,7 +1901,7 @@ const USAGE = `Usage: squadra-host [command] [options]
   squadra-host forget                Delete this machine's credential
   squadra-host --company=<id> ...    The same, for that company's copy on this machine (each has its own
                                      folder, tmux, Claude Code login and service)
-  squadra-host enroll <server> <code>  Join a Squadra server: the dashboard gives you this
+  squadra-host enroll <server> --code-file=<file>  Join a Squadra server: the dashboard gives you this
                                      (with --server-key=<hash>, the key that server must prove)
                                      command in Machines → + Add machine. It also installs the
                                      plugin, this command and the service
@@ -2526,7 +2526,7 @@ async function main() {
   const known = ['--allow-home', '--no-allow-home', '--insecure', '--no-plugin', '--no-service', '--allow-unsigned', '--allow-downgrade']
   const serverKeyArg = argv.find(a => a.startsWith('--server-key='))?.slice('--server-key='.length)
   if (serverKeyArg !== undefined && !/^[0-9a-f]{64}$/.test(serverKeyArg)) die('--server-key must be the 64 hex characters the dashboard gives', 2)
-  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
+  for (const f of flags) if (!known.includes(f) && !f.startsWith('--server-key=') && !f.startsWith('--code-file=')) die(`unknown option ${plain(f)}\n\n${USAGE}`, 2)
   if (flags.has('--allow-home') && flags.has('--no-allow-home')) die('--allow-home or --no-allow-home, not both', 2)
   if (flags.has('--allow-home') || flags.has('--no-allow-home')) {
     try { setAllowHome(flags.has('--allow-home')) } catch (err) { die(err.message, 2) }
@@ -2553,7 +2553,13 @@ async function main() {
   }
   if (cmd === 'enroll') {
     // Enrolled and left running as a service: nothing more to do here.
-    if (await enroll(rest[0], rest[1], { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service'), serverKey: serverKeyArg ?? null })) return
+    // (In a file, so it is in no program's arguments: read and gone at once.)
+    const codeFile = argv.find(a => a.startsWith('--code-file='))?.slice('--code-file='.length)
+    let code = rest[1]
+    if (codeFile) {
+      try { code = readFileSync(codeFile, 'utf8').trim(); rmSync(codeFile, { force: true }) } catch (err) { die(`--code-file: ${plain(err.message)}`, 2) }
+    }
+    if (await enroll(rest[0], code, { plugin: !flags.has('--no-plugin'), insecure: flags.has('--insecure'), service: !flags.has('--no-service'), serverKey: serverKeyArg ?? null })) return
   }
   else if (cmd !== 'run') die(`unknown command "${plain(cmd)}"\n\n${USAGE}`, 2)
   {

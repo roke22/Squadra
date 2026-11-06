@@ -190,7 +190,7 @@ Aprueba lo que no tiene efectos secundarios: leer ficheros, buscar, ejecutar tes
 Sí, con cualquier plan de claude.ai que incluya Claude Code (Pro, Max, Team, Enterprise) o con una clave de API de Anthropic Console. Cada agente es una sesión normal de Claude Code en su equipo, con la sesión de ese equipo, así que consume de esa cuenta como cualquier otra sesión.
 
 **¿Qué instala el comando de "añadir máquina"?**
-Lo que falte de tmux, Node.js 22 y Claude Code, y después `squadra-host`: un pequeño programa Node que conecta el equipo a tu servidor, instala el plugin `squadra` y se queda en marcha como servicio de usuario. El script es [install/linux.sh](install/linux.sh) (y [macos.sh](install/macos.sh), [windows.bat](install/windows.bat)); se lee entero antes de ejecutar nada.
+Lo que falte de tmux, Node.js 22 y Claude Code, y después `squadra-host`: un pequeño programa Node que conecta el equipo a tu servidor, instala el plugin `squadra` y se queda en marcha como servicio de usuario. El script es [install/linux.sh](install/linux.sh) (y [macos.sh](install/macos.sh), [windows.bat](install/windows.bat)); el comando lo comprueba contra la copia de tu servidor antes de ejecutarlo.
 
 **¿Qué sale de mis equipos?**
 Solo lo que va a **tu** servidor Squadra: los mensajes entre agentes, la presencia y lo que elijas mostrar en el panel (`--observe off|activity|full`). Los secretos reconocibles se enmascaran y los ficheros de carpetas de credenciales nunca se envían. Nada va a ningún otro servicio. Detalles en el [README del plugin](plugins/squadra/README.md).

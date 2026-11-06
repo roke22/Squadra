@@ -5,8 +5,8 @@
 
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { spawn, execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -716,7 +716,7 @@ test('a machine added but never connected shows as pending and can be removed', 
   assert.match(en.result.plugin_command, /^claude plugin marketplace add roke22\/Squadra#v\d+\.\d+\.\d+ && claude plugin install squadra@squadra$/)
   // One command per system, each running the installer the server serves (and nothing else under /install/).
   for (const os of ['linux', 'macos', 'windows']) assert.ok(en.result.install[os].includes(en.result.code), os)
-  assert.match(en.result.install.linux, /\/install\/linux\.sh' \| bash -s -- /)
+  assert.match(en.result.install.linux, /\/install\/linux\.sh' && echo '[0-9a-f]{64}  install\.sh' \| /)
   const sh = await fetch(`${URL_}/install/linux.sh`)
   assert.equal(sh.status, 200)
   assert.match(await sh.text(), /squadra-host\.mjs enroll/)
@@ -962,4 +962,68 @@ test('approval: an unapproved name reaches no follower through a group, nor thos
   assert.equal(back.parameters?.reason, 'approval_pending')
   assert.ok((await call('admin/approveSession', { name: 'gold' }, ADMIN)).ok)
   assert.ok((await call('sendMessage', { chat_id: 'gfollower', text: 'run this' }, squatter)).ok)
+})
+
+// The installer's command, run for real with programs that write down how they
+// were called: tmux, Claude Code and Node are stand-ins, so nothing is installed.
+function installerBench(extra = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-bench-'))
+  const log = join(dir, 'log')
+  const tool = (name, body) => { writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`); chmodSync(join(dir, name), 0o755) }
+  for (const name of ['curl', 'bash', 'sha256sum', 'cat', 'rm', 'mktemp', 'env', 'cp']) {
+    const real = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim()
+    tool(name, `echo "${name} $*" >> "$BENCH_LOG"\nexec ${real} "$@"`)
+  }
+  tool('tmux', 'exit 0')
+  tool('claude', 'exit 0')
+  tool('node', `[ "$1" = "-e" ] && exit 0
+echo "node $*" >> "$BENCH_LOG"
+for a in "$@"; do case "$a" in --code-file=*) ${execFileSync('sh', ['-c', 'command -v cat'], { encoding: 'utf8' }).trim()} "\${a#--code-file=}" > "$BENCH_LOG.code" ;; esac; done`)
+  for (const [name, body] of Object.entries(extra)) tool(name, body.replaceAll('$BENCH_DIR', dir))
+  const bash = execFileSync('sh', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim()
+  const run = command => execFileSync(bash, ['-c', command], { env: { PATH: `${dir}:${process.env.PATH}`, HOME: dir, BENCH_LOG: log }, stdio: 'pipe', cwd: dir })
+  return { dir, log, run, said: () => (existsSync(log) ? readFileSync(log, 'utf8') : ''), done: () => rmSync(dir, { recursive: true, force: true }) }
+}
+
+const onLinux = { skip: process.platform !== 'linux' }
+
+test('adding a machine: the installer is checked before it runs, and the code is in no program\'s arguments', onLinux, async () => {
+  const en = (await call('api/hosts/enroll', { name: 'bench' }, ADMIN)).result
+  const bench = installerBench()
+  try {
+    bench.run(en.install.linux)
+    const said = bench.said()
+    assert.match(said, /^bash install\.sh /m, 'the installer ran')
+    assert.match(said, /^node squadra-host\.mjs enroll .* --code-file=code/m, 'squadra-host ran')
+    assert.ok(!said.includes(en.code), `the code was in someone's arguments:\n${said}`)
+    assert.equal(readFileSync(`${bench.log}.code`, 'utf8'), en.code)
+  } finally { bench.done() }
+  // Its checksum not matching: nothing runs.
+  const wrong = installerBench()
+  try {
+    const sum = en.install.linux.match(/echo '([0-9a-f]{64})  install\.sh'/)[1]
+    assert.throws(() => wrong.run(en.install.linux.replace(sum, '0'.repeat(64))))
+    assert.doesNotMatch(wrong.said(), /^bash install\.sh|^node /m)
+  } finally { wrong.done() }
+})
+
+test('adding a machine: --os-user hands the checked script and the code over in a folder, not in arguments', onLinux, async () => {
+  const en = (await call('api/hosts/enroll', { name: 'bench-user' }, ADMIN)).result
+  const bench = installerBench({
+    // As root, until runuser: then that user.
+    id: 'case "$*" in -u) [ -n "$AS_OS_USER" ] && echo 1001 || echo 0 ;; "-u acme") echo 1001 ;; esac',
+    getent: 'echo "acme:x:1001:1001::$BENCH_DIR:/bin/bash"',
+    runuser: 'echo "runuser $*" >> "$BENCH_LOG"\nAS_OS_USER=1; export AS_OS_USER; shift 3\nexec "$@"',
+    chown: 'echo "chown $*" >> "$BENCH_LOG"',
+    loginctl: 'exit 0',
+  })
+  try {
+    bench.run(`${en.install.linux} --os-user=acme`)
+    const said = bench.said()
+    assert.match(said, /^chown -R acme /m)
+    assert.match(said, /^runuser -u acme -- env .* bash install\.sh .* --code-file code/m)
+    assert.doesNotMatch(said, /^curl .*install\/linux\.sh.*\n(.*\n)*curl .*install\/linux\.sh/m, 'it is not downloaded again')
+    assert.ok(!said.includes(en.code), `the code was in someone's arguments:\n${said}`)
+    assert.equal(readFileSync(`${bench.log}.code`, 'utf8'), en.code)
+  } finally { bench.done() }
 })

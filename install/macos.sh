@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Squadra: prepare this Mac and join it to a Squadra server. The dashboard
-# gives you the exact command, with your code:
+# gives you the exact command, with your code. It downloads this script, checks
+# it, and leaves the code in a file for it:
 #
-#   curl -fsSL https://your-server/install/macos.sh | bash -s -- https://your-server CODE [options]
+#   bash install.sh https://your-server --code-file code [options]
 #
 # It installs what is missing (tmux with Homebrew, Node.js 22, Claude Code),
 # then squadra-host, which joins the machine, installs the Squadra plugin, the
@@ -12,21 +13,30 @@ set -eu
 
 # (All in a function: piped into bash, the whole script is read before anything runs.)
 main() {
-  SERVER="${1:-}"; CODE="${2:-}"
-  if [ -z "$SERVER" ] || [ -z "$CODE" ]; then
-    echo "usage: macos.sh <server-url> <code> [--allow-home] [--insecure] [--no-service]" >&2
-    exit 2
-  fi
-  shift 2
+  SERVER="${1:-}"; [ $# -gt 0 ] && shift
+  # The code comes in a file, so it is in no program's arguments, which anyone
+  # on this machine can read (or after the URL, as older commands gave it).
+  CODE=""; CODE_FILE=""
+  case "${1:-}" in ""|-*) ;; *) CODE="$1"; shift ;; esac
   SHA=""
   ARGS=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
+      --code-file) [ $# -ge 2 ] || { echo "--code-file needs a path" >&2; exit 2; }; CODE_FILE="$2"; shift 2 ;;
       --os-user*) echo "--os-user is for Linux. On macOS: create the user, log in as it, and run this command there." >&2; exit 2 ;;
       *) ARGS+=("$1"); shift ;;
     esac
   done
+  if [ -n "$CODE_FILE" ]; then
+    [ -f "$CODE_FILE" ] || { echo "--code-file: $CODE_FILE is not there" >&2; exit 2; }
+    CODE="$(cat "$CODE_FILE")"
+    rm -f "$CODE_FILE"
+  fi
+  if [ -z "$SERVER" ] || [ -z "$CODE" ]; then
+    echo "usage: macos.sh <server-url> --code-file <file> [--allow-home] [--insecure] [--no-service]" >&2
+    exit 2
+  fi
 
   say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
@@ -83,7 +93,8 @@ main() {
   if [ -n "$SHA" ]; then
     echo "$SHA  squadra-host.mjs" | shasum -a 256 -c - >/dev/null || { echo "squadra-host.mjs does not match the dashboard's checksum: stopped." >&2; exit 1; }
   fi
-  node squadra-host.mjs enroll "$SERVER" "$CODE" ${ARGS[@]+"${ARGS[@]}"}
+  printf %s "$CODE" > code
+  node squadra-host.mjs enroll "$SERVER" --code-file=code ${ARGS[@]+"${ARGS[@]}"}
 
   say "Done"
   echo "If you haven't yet: run 'claude' once in a terminal and sign in, so the sessions can start."

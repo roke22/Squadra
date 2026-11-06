@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Squadra: prepare this machine (Linux, or Ubuntu on WSL) and join it to a
-# Squadra server. The dashboard gives you the exact command, with your code:
+# Squadra server. The dashboard gives you the exact command, with your code. It
+# downloads this script, checks it, and leaves the code in a file for it:
 #
-#   curl -fsSL https://your-server/install/linux.sh | bash -s -- https://your-server CODE [options]
+#   bash install.sh https://your-server --code-file code [options]
 #
 # It installs what is missing (tmux, Node.js 22, Claude Code), then
 # squadra-host, which joins the machine, installs the Squadra plugin, the
@@ -12,14 +13,15 @@
 # of this machine, to change the operating system).
 set -eu
 
+SELF="$0"
+
 # (All in a function: piped into bash, the whole script is read before anything runs.)
 main() {
-  SERVER="${1:-}"; CODE="${2:-}"
-  if [ -z "$SERVER" ] || [ -z "$CODE" ]; then
-    echo "usage: linux.sh <server-url> <code> [--allow-home] [--insecure] [--no-service] [--company <id>] [--os-user <name>]" >&2
-    exit 2
-  fi
-  shift 2
+  SERVER="${1:-}"; [ $# -gt 0 ] && shift
+  # The code comes in a file, so it is in no program's arguments, which anyone
+  # on this machine can read (or after the URL, as older commands gave it).
+  CODE=""; CODE_FILE=""
+  case "${1:-}" in ""|-*) ;; *) CODE="$1"; shift ;; esac
   SHA=""
   ROOT_OK=""
   OS_USER=""
@@ -27,6 +29,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --sha256) [ $# -ge 2 ] || { echo "--sha256 needs a value" >&2; exit 2; }; SHA="$2"; shift 2 ;;
+      --code-file) [ $# -ge 2 ] || { echo "--code-file needs a path" >&2; exit 2; }; CODE_FILE="$2"; shift 2 ;;
       --server-key) ARGS+=("--server-key=${2:-}"); shift 2 ;; # (from windows.bat: no "=" there)
       --company) ARGS+=("--company=${2:-}"); shift 2 ;;
       --os-user) [ $# -ge 2 ] || { echo "--os-user needs a name" >&2; exit 2; }; OS_USER="$2"; shift 2 ;;
@@ -35,6 +38,15 @@ main() {
       *) ARGS+=("$1"); shift ;;
     esac
   done
+  if [ -n "$CODE_FILE" ]; then
+    [ -f "$CODE_FILE" ] || { echo "--code-file: $CODE_FILE is not there" >&2; exit 2; }
+    CODE="$(cat "$CODE_FILE")"
+    rm -f "$CODE_FILE"
+  fi
+  if [ -z "$SERVER" ] || [ -z "$CODE" ]; then
+    echo "usage: linux.sh <server-url> --code-file <file> [--allow-home] [--insecure] [--no-service] [--company <id>] [--os-user <name>]" >&2
+    exit 2
+  fi
 
   say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
   as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi }
@@ -70,8 +82,17 @@ main() {
     AS_USER_ENV=("HOME=$(getent passwd "$OS_USER" | cut -d: -f6)" "XDG_RUNTIME_DIR=/run/user/$(id -u "$OS_USER")" "PATH=$PATH")
     SWITCH=(runuser -u "$OS_USER" --)
     command -v runuser >/dev/null 2>&1 || SWITCH=(sudo -H -u "$OS_USER")
-    curl -fsSL "${SERVER%/}/install/linux.sh" | "${SWITCH[@]}" env "${AS_USER_ENV[@]}" bash -s -- "$SERVER" "$CODE" ${SHA:+--sha256 "$SHA"} ${ARGS[@]+"${ARGS[@]}"}
-    exit $?
+    # This same script, already checked, and the code, in a folder of that user.
+    WORK="$(mktemp -d)"
+    if [ -f "$SELF" ] && [ "${BASH_SOURCE[0]:-}" = "$SELF" ]; then cp "$SELF" "$WORK/install.sh"
+    else curl -fsSLo "$WORK/install.sh" "${SERVER%/}/install/linux.sh" # (Piped in, as older commands did: there is no file to copy.)
+    fi
+    printf %s "$CODE" > "$WORK/code"
+    chown -R "$OS_USER" "$WORK"
+    RC=0
+    ( cd "$WORK" && "${SWITCH[@]}" env "${AS_USER_ENV[@]}" bash install.sh "$SERVER" --code-file code ${SHA:+--sha256 "$SHA"} ${ARGS[@]+"${ARGS[@]}"} ) || RC=$?
+    rm -rf "$WORK"
+    exit $RC
   fi
 
   if [ "$(id -u)" -eq 0 ] && [ -z "$ROOT_OK" ]; then
@@ -127,7 +148,8 @@ main() {
   if [ -n "$SHA" ]; then
     echo "$SHA  squadra-host.mjs" | sha256sum -c - >/dev/null || { echo "squadra-host.mjs does not match the dashboard's checksum: stopped." >&2; exit 1; }
   fi
-  node squadra-host.mjs enroll "$SERVER" "$CODE" ${ARGS[@]+"${ARGS[@]}"}
+  printf %s "$CODE" > code
+  node squadra-host.mjs enroll "$SERVER" --code-file=code ${ARGS[@]+"${ARGS[@]}"}
 
   say "Done"
   case " ${ARGS[*]-} " in

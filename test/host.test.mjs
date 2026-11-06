@@ -136,9 +136,11 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.ok(en.ok, en.description)
   assert.match(en.result.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
   assert.ok(en.result.command.includes(`'${URL_}/host/squadra-host.mjs'`))
-  assert.ok(en.result.command.includes(`enroll '${URL_}' ${en.result.code} --server-key=${en.result.server_key}`))
+  assert.ok(en.result.command.includes(`enroll '${URL_}' --code-file=code --server-key=${en.result.server_key}`))
   for (const system of ['linux', 'macos']) assert.ok(en.result.install[system].endsWith(`--server-key=${en.result.server_key}`))
-  assert.ok(en.result.install.windows.endsWith(`'${URL_}' ${en.result.code} --sha256 ${en.result.sha256} --server-key ${en.result.server_key}`))
+  assert.ok(en.result.install.windows.includes(`$env:SQUADRA_ENROLL_CODE = '${en.result.code}'`))
+  assert.match(en.result.install.windows, /Get-FileHash .* -Algorithm SHA256\)\.Hash -ne '[0-9a-f]{64}'/)
+  assert.ok(en.result.install.windows.endsWith(`'${URL_}' --linux-sha256 ${en.result.install.linux.match(/echo '([0-9a-f]{64})  install\.sh'/)[1]} --sha256 ${en.result.sha256} --server-key ${en.result.server_key}`))
 
   // The program is served by the server, as the command expects, and the
   // command checks its sha256 before running it (a tampered copy fails).
@@ -146,14 +148,17 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
   assert.equal(js.status, 200)
   const jsText = await js.text()
   assert.match(jsText, /squadra-host/)
-  const verify = en.result.command.match(/ && (echo .*?\)) && node /)[1]
+  const verify = en.result.command.match(/ && (echo .*?\)) && printf /)[1]
   const dl = mkdtempSync(join(tmpdir(), 'squadra-dl-'))
   writeFileSync(join(dl, 'squadra-host.mjs'), jsText)
   execFileSync('sh', ['-c', verify], { cwd: dl, stdio: 'ignore' })
   writeFileSync(join(dl, 'squadra-host.mjs'), jsText + '\n// tampered')
   assert.throws(() => execFileSync('sh', ['-c', verify], { cwd: dl, stdio: 'ignore' }))
 
-  hostProc = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', URL_, en.result.code.toLowerCase()], {
+  // (The code in a file, which is gone once read; lowercase is the same code.)
+  const codeFile = join(work, 'enroll-code')
+  writeFileSync(codeFile, en.result.code.toLowerCase())
+  hostProc = spawn(process.execPath, [join(ROOT, 'host/squadra-host.mjs'), 'enroll', URL_, `--code-file=${codeFile}`], {
     env: { ...process.env, SQUADRA_HOST_DIR: hostDir, SQUADRA_TMUX_SOCKET: SOCKET, CLAUDE_CONFIG_DIR: claudeDir, SQUADRA_HOST_TEST_ALLOW_TMP: '1', SQUADRA_HOST_TEST_SKIP_TAG_CHECK: '1' },
     stdio: ['ignore', 'ignore', 'pipe'],
     cwd: work,
@@ -163,6 +168,7 @@ test('a machine enrolls with a one-time code and connects', { skip: !hasTmux && 
 
   const h = await waitFor(async () => (await dash('hosts')).result.find(x => x.online && x.info?.plugin), { what: 'host online with its info' })
   hostId = h.id
+  assert.ok(!existsSync(codeFile))
   assert.equal(h.name, 'test box')
   assert.equal(h.info.claude, '9.9.9 (Claude Code)')
   assert.deepEqual(h.info.folders, [allowed])

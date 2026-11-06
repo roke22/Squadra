@@ -193,7 +193,7 @@ test('adding a machine for a company: its command says which, and it can have it
   await expect(cmd).not.toContainText('sudo')
   await page.locator('[data-osuser]').fill('empresa-1')
   await page.locator('[data-osuser]').blur()
-  await expect(cmd).toContainText('| sudo bash -s --')
+  await expect(cmd).toContainText('&& sudo bash install.sh')
   await expect(cmd).toContainText('--os-user=empresa-1')
   // A name that can't be one is not put in a command.
   await page.locator('[data-osuser]').fill('x; rm -rf /')

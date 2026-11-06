@@ -12,10 +12,11 @@ const HOST_SCRIPT = [new URL('../../host/squadra-host.mjs', import.meta.url), ne
 // The installers that prepare a machine and run squadra-host (install/ in
 // the repository, or next to this file in the Docker image).
 export const INSTALLERS = { 'linux.sh': 'text/x-shellscript; charset=utf-8', 'macos.sh': 'text/x-shellscript; charset=utf-8', 'windows.bat': 'text/plain; charset=utf-8' }
-export const installer = name => cachedFile(new URL(`../../install/${name}`, import.meta.url)) ?? cachedFile(new URL(`../install/${name}`, import.meta.url))
+const withSha = body => ({ sha: createHash('sha256').update(body).digest('hex') })
+export const installer = name => cachedFile(new URL(`../../install/${name}`, import.meta.url), withSha) ?? cachedFile(new URL(`../install/${name}`, import.meta.url), withSha)
 export const hostScript = () => {
   for (const f of HOST_SCRIPT) {
-    const c = cachedFile(f, body => ({ sha: createHash('sha256').update(body).digest('hex') }))
+    const c = cachedFile(f, withSha)
     if (c) return c
   }
   return null
@@ -172,7 +173,11 @@ export function createMachines(platform, { sessions, observation }) {
     const sha = hostScript()?.sha ?? null
     // (A company's machine gets its own copy of everything: see squadra-host.)
     const company = credentialPrefix ? ` --company=${companyId}` : ''
-    const verify = sha ? ` && echo ${q(`${sha}  squadra-host.mjs`)} | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -)` : ''
+    const check = (sum, file) => (sum ? ` && echo ${q(`${sum}  ${file}`)} | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -)` : '')
+    // Downloaded, checked and only then run; and the code in a file (printf is
+    // part of the shell): a program's arguments can be read by anyone on the machine.
+    const unix = file => `cd "$(mktemp -d)" && curl -fsSLo install.sh ${q(`${base}/install/${file}`)}${check(installer(file)?.sha, 'install.sh')} && printf %s ${q(code)} > code && bash install.sh ${q(base)} --code-file code${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}${company}`
+    const bat = '"$d\\squadra-install.bat"'
     return {
       code,
       enrollment: ticket,
@@ -185,14 +190,14 @@ export function createMachines(platform, { sessions, observation }) {
       // One command per system: the installer prepares the machine (tmux, Node,
       // Claude Code) and runs squadra-host with this code. (Windows: inside WSL.)
       install: {
-        linux: `curl -fsSL ${q(`${base}/install/linux.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}${company}`,
-        macos: `curl -fsSL ${q(`${base}/install/macos.sh`)} | bash -s -- ${q(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key=${SERVER_KEY.hash}${company}`,
+        linux: unix('linux.sh'),
+        macos: unix('macos.sh'),
         // (PowerShell's quotes. "--server-key x", not "=": a .bat splits its arguments at "=".)
-        windows: `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm ${ps(`${base}/install/windows.bat`)} -OutFile "$env:TEMP\\squadra-install.bat"; & "$env:TEMP\\squadra-install.bat" ${ps(base)} ${code}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}${credentialPrefix ? ` --company ${companyId}` : ''}`,
+        windows: `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; $d = Join-Path $env:TEMP ([guid]::NewGuid()); New-Item -ItemType Directory $d | Out-Null; irm ${ps(`${base}/install/windows.bat`)} -OutFile ${bat}; if ((Get-FileHash ${bat} -Algorithm SHA256).Hash -ne ${ps(installer('windows.bat')?.sha ?? '')}) { throw 'the installer does not match the checksum the dashboard gave' }; $env:SQUADRA_ENROLL_CODE = ${ps(code)}; & ${bat} ${ps(base)} --linux-sha256 ${installer('linux.sh')?.sha ?? ''}${sha ? ` --sha256 ${sha}` : ''} --server-key ${SERVER_KEY.hash}${credentialPrefix ? ` --company ${companyId}` : ''}`,
       },
       // Just squadra-host, on a machine that already has what it needs.
       // Downloaded into a new private folder: nobody can swap the file between the check and the run.
-      command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code} --server-key=${SERVER_KEY.hash}${company}`,
+      command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${check(sha, 'squadra-host.mjs')} && printf %s ${q(code)} > code && node squadra-host.mjs enroll ${q(base)} --code-file=code --server-key=${SERVER_KEY.hash}${company}`,
     }
   }
 

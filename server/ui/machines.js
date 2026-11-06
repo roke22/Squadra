@@ -226,7 +226,7 @@ export function addMachineDialog() {
         for (const b of d.el.querySelectorAll('[data-os]')) b.classList.toggle('on', b.dataset.os === os)
         const extra = (home ? ' --allow-home' : '') + (root && os !== 'macos' ? ' --allow-root' : '') + (insecure ? ' --insecure' : '')
         // (A new system user needs root: the installer does the rest as that user.)
-        const withUser = text => (os === 'linux' && osUser ? `${text.replace('| bash -s --', '| sudo bash -s --')} --os-user=${osUser}` : text)
+        const withUser = text => (os === 'linux' && osUser ? `${text.replace('&& bash install.sh', '&& sudo bash install.sh')} --os-user=${osUser}` : text)
         d.el.querySelector('.steps').innerHTML = `<p>${T.runOn(os)}</p>${cmd(withUser(String(r.install?.[os] ?? '') + extra))}
             ${os === 'linux' ? `<label class="field"><span>${T.osUser}</span><input type="text" data-osuser value="${esc(osUser)}" maxlength="32" autocomplete="off"><span class="hint">${T.osUserHint}</span></label>` : ''}
             <label class="check"><input type="checkbox" data-home ${home ? 'checked' : ''}> <span>${T.allowHome}</span></label>
