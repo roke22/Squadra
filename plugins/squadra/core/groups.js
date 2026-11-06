@@ -61,11 +61,30 @@ export function syncGroups(s) {
       }).catch(err => { s.groupInvites.delete(key); failed(key); log(`failed to invite ${who} to ${g}: ${err.message}`) })
     }
   }
+  // A group belongs to whoever created it first, and an empty allowFrom means any
+  // member: one owned by someone this session doesn't trust is left at once, or
+  // its owner would reach this session's model, and read what it writes there.
+  // (Tried again only when access.json changes: the user may allow that owner.)
+  const accessStamp = JSON.stringify([access.allowFrom, access.groups])
+  if (s.refusedGroupsFor !== accessStamp) { s.refusedGroups = new Set(); s.refusedGroupsFor = accessStamp }
+  const trustedOwner = (g, owner) => owner === s.name || owner === s.coordinator || access.allowFrom.includes(owner) || (access.groups[g]?.allowFrom ?? []).includes(owner)
   for (const g of Object.keys(access.groups)) {
+    if (s.refusedGroups.has(g)) continue
     if (s.joinedGroups.has(g)) { inviteAll(g); continue }
     if (waiting(g)) continue
     void call('joinGroup', { chat_id: g }, { s }).then(
       r => {
+        if (r && r.created === false && !trustedOwner(g, String(r.owner))) {
+          s.refusedGroups.add(g)
+          void call('leaveChat', { chat_id: g }, { s }).catch(err => log(`failed to leave group ${g}: ${err.message}`))
+          if (active(s)) {
+            agent.deliver({
+              content: `Squadra warning: ${g} belongs to "${NAME_RE.test(String(r.owner)) ? r.owner : 'unknown'}", who is not allowed here: not joined. Tell the user: to join it, they can allow that session, or choose another name for the group.`,
+              meta: { kind: 'squadra_notice', user: 'squadra' },
+            })
+          }
+          return
+        }
         s.joinedGroups.add(g); s.groupErrors.delete(g); s.groupRetry.delete(g); inviteAll(g)
         s.groupInfo ??= new Map()
         s.groupInfo.set(g, r && typeof r === 'object' ? r : null)

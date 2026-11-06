@@ -2457,3 +2457,45 @@ test('a real plugin in a company: its join token, its names, and notices signed 
   await boss.waitChannel(p => p.meta.kind === 'squadra_notice' && p.content.includes('worker9 left Squadra (logout)'), 'logout notice')
   boss.close(); wk.close()
 })
+
+test('a plugin leaves a group someone it does not trust created first', async () => {
+  const company = (await api('admin/createCompany', { name: 'Group company' }, SERVER_TOKEN)).result
+  const eavesdropper = (await api('register', { name: 'lurker', company: company.id }, SERVER_TOKEN)).result.secret
+  assert.ok((await api('joinGroup', { chat_id: '#planning' }, eavesdropper)).ok)
+  const p = new Plugin('planner', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator' }, { noServer: true, envFile: `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${company.join_token}\n` })
+  mkdirSync(p.stateDir, { recursive: true })
+  writeFileSync(join(p.stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: [], groups: { '#planning': { allowFrom: [], requireMention: false } }, pending: {} }))
+  // (It joins only if invited: the eavesdropper invites it, as anyone can do with a name.)
+  await p.init()
+  await p.waitConnected()
+  assert.ok((await api('admin/approveSession', { name: 'planner', company: company.id }, SERVER_TOKEN)).ok)
+  assert.ok((await api('inviteToGroup', { chat_id: '#planning', name: 'planner' }, eavesdropper)).ok)
+  await p.waitChannel(m => m.meta.kind === 'squadra_notice' && m.content.includes('belongs to "lurker"'), 'the warning', 90_000)
+  await waitFor(async () => !JSON.stringify(await api('admin/listGroups', { company: company.id }, SERVER_TOKEN)).includes('planner'), { what: 'it left', timeout: 8000 })
+  p.close()
+})
+
+test('a plugin does not take its identity to another company of the same server', async () => {
+  const a = (await api('admin/createCompany', { name: 'Identity A' }, SERVER_TOKEN)).result
+  const b = (await api('admin/createCompany', { name: 'Identity B' }, SERVER_TOKEN)).result
+  const first = new Plugin('moved', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'solo' }, { noServer: true, envFile: `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${a.join_token}\n` })
+  await first.init()
+  await first.waitConnected()
+  const configDir = first.configDir
+  first.close()
+  await sleep(200)
+  // The same folder, now configured for the other company: refused, and the secret isn't sent.
+  writeFileSync(join(configDir, 'channels', 'squadra', '.env'), `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${b.join_token}\n`)
+  const second = new Plugin('moved', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'solo' }, { noServer: true, configDir, envFile: `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${b.join_token}\n` })
+  await second.init()
+  let said = ''
+  second.proc.stderr.on('data', d => { said += d })
+  await waitFor(() => /belongs to another company/.test(said), { what: 'the refusal', timeout: 15_000 })
+  assert.ok(!(await api('admin/listIdentities', { company: b.id }, SERVER_TOKEN)).result.some(i => i.name === 'moved'))
+  second.close()
+  // The same company as before still logs in.
+  const third = new Plugin('moved', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'solo' }, { noServer: true, configDir, envFile: `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${a.join_token}\n` })
+  await third.init()
+  await third.waitConnected()
+  third.close()
+})

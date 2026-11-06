@@ -157,6 +157,13 @@ export async function loadIdentity(s) {
     if (saved.server && saved.server !== SERVER_URL) {
       throw new Error(`the identity "${s.name}" belongs to ${saved.server}, but this machine is now configured for ${SERVER_URL}. Its secret will not be sent elsewhere: log in with another name, or delete ${s.identityFile} if you really moved servers`)
     }
+    // Nor to another company of that server: a secret only opens the company it
+    // was issued for, so the session would stay in the old one without a word.
+    // (The server token, or a join token chosen by hand, says no company.)
+    const companyOf = t => /^s[qj]_([a-z0-9]{8})_/.exec(t ?? '')?.[1] ?? null
+    if (/^sj_/.test(SERVER_TOKEN ?? '') && companyOf(saved.secret) !== companyOf(SERVER_TOKEN)) {
+      throw new Error(`the identity "${s.name}" belongs to another company than the join token in this machine's .env: its secret will not be used. Log in with another name, or delete ${s.identityFile} if you really moved it`)
+    }
     if (!saved.server) {
       try { writePrivateFile(s.identityFile, JSON.stringify({ ...saved, server: SERVER_URL }, null, 2) + '\n') } catch {}
     }

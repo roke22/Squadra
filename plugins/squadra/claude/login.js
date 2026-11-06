@@ -201,6 +201,7 @@ export async function status() {
     if (launch.ok === false) lines.push(LAUNCH_HINT)
     return lines.join('\n')
   }
+  if (S.claimed?.company) lines.push(`Company: ${S.claimed.company}`)
   const st = S.status === 'online' ? 'connected' : S.status === 'connecting' ? 'connecting…' : `ERROR: ${S.error}`
   lines.push(`Session: "${S.name}", role ${S.role === 'coordinator' ? 'coordinator' : `worker (coordinator: ${S.coordinator})`} — ${st}`)
   if (S.persona) lines.push(`Persona: ${personaLabel(S.persona)}`)
