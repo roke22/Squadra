@@ -153,6 +153,46 @@ test('the session cookie can\'t be read by the page, sent by other sites, or kep
   assert.ok(!readFileSync(join(dataDir, 'control.db')).includes(ownerCodes.secret))
 })
 
+test('the second factor gives a new token: one known from before it is worth nothing', async () => {
+  const withCookie = (path, cookie) => fetch(`${URL_}/${path}`, { headers: { Cookie: cookie } }).then(r => r.status)
+  // Setting the codes up for the first time.
+  const { link } = ok(await owner.post('api/c/default/members/invite', { email: 'rotate@example.com', role: 'manager' }))
+  const n = browser()
+  assert.equal(ok(await n.post('auth/invite/accept', { token: link.split('/#/invite/')[1], name: 'rotate', password: PASSWORD })).stage, 'totp_setup')
+  const before = n.cookie
+  const { secret } = await setUpCodes(n)
+  assert.notEqual(n.cookie, before)
+  assert.equal(await withCookie('api/c/default/state', before), 401)
+  assert.equal(await withCookie('api/c/default/state', n.cookie), 200)
+  // Signing in: what the password alone got, kept by someone, stays at the door.
+  const b = browser()
+  ok(await b.post('auth/login', { email: 'rotate@example.com', password: PASSWORD }))
+  const known = b.cookie
+  assert.equal(await withCookie('api/c/default/state', known), 401)
+  assert.equal(ok(await b.post('auth/totp', { code: nextCode(secret) })).stage, 'ok')
+  assert.notEqual(b.cookie, known)
+  assert.equal(await withCookie('api/c/default/state', known), 401)
+  assert.equal(await withCookie('api/c/default/state', b.cookie), 200)
+  // With a recovery code too.
+  const r = browser()
+  ok(await r.post('auth/login', { email: 'owner@example.com', password: PASSWORD }))
+  const knownToo = r.cookie
+  ok(await r.post('auth/totp', { recovery: ownerCodes.recovery.pop() }))
+  assert.notEqual(r.cookie, knownToo)
+  assert.equal(await withCookie('api/c/default/state', knownToo), 401)
+})
+
+test('over https the cookie has a name only this host can set, and the plain name means nothing', async () => {
+  const https = { 'X-Forwarded-Proto': 'https' }
+  const answer = await fetch(`${URL_}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Forwarded-For': '10.9.9.9', ...https }, body: JSON.stringify({ email: 'owner@example.com', password: PASSWORD }) })
+  const set = answer.headers.get('set-cookie')
+  assert.match(set, /^__Host-squadra_session=[^;]+; HttpOnly; SameSite=Strict; Path=\/; Max-Age=\d+; Secure$/)
+  const token = set.split(';')[0].split('=')[1]
+  const stage = cookie => fetch(`${URL_}/api/me`, { headers: { Cookie: cookie, ...https } }).then(r => r.json()).then(j => j.result?.stage ?? j.error_code)
+  assert.equal(await stage(`__Host-squadra_session=${token}`), 'totp')
+  assert.equal(await stage(`squadra_session=${token}`), 401)
+})
+
 test('signing in takes the password and the code, and neither can be tried for ever', async () => {
   const b = browser()
   assert.equal((await b.post('auth/login', { email: 'owner@example.com', password: 'wrong password' })).error_code, 401)

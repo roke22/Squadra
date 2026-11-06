@@ -65,12 +65,16 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
   function isHttps(req) {
     return TLS || PUBLIC_URL.startsWith('https://') || (TRUST_PROXY && String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() === 'https')
   }
-  const cookieLine = (req, value, maxAge) => `${COOKIE}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`
+  // Over https, a name browsers keep to this very host: a neighbour under the
+  // same domain can't set it.
+  const cookieName = req => (isHttps(req) ? `__Host-${COOKIE}` : COOKIE)
+  const cookieLine = (req, value, maxAge) => `${cookieName(req)}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`
 
   function cookieOf(req) {
+    const name = cookieName(req)
     for (const part of String(req.headers.cookie ?? '').split(';')) {
       const [k, v] = part.trim().split('=')
-      if (k === COOKIE) return v ?? ''
+      if (k === name) return v ?? ''
     }
     return ''
   }
@@ -83,6 +87,15 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
     q('UPDATE users SET last_login_at = ? WHERE id = ?').run(t, user.id)
     res.setHeader('Set-Cookie', cookieLine(req, token, Math.floor(SESSION_MS / 1000)))
     return { token_hash: sha256(token), user_id: user.id, mfa_ok: mfaOk ? 1 : 0 }
+  }
+
+  // The second factor done: the session goes on under a new token, so one known
+  // from before (planted in this browser for the victim to finish) is worth nothing.
+  function finishSession(req, res, session) {
+    const token = randomBytes(32).toString('base64url')
+    q('UPDATE login_sessions SET token_hash = ?, mfa_ok = 1 WHERE token_hash = ?').run(sha256(token), session.token_hash)
+    res.setHeader('Set-Cookie', cookieLine(req, token, Math.floor(SESSION_MS / 1000)))
+    return { ...session, token_hash: sha256(token), mfa_ok: 1 }
   }
 
   // The session a request comes with, if it is still good.
@@ -354,9 +367,9 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
         audit(user, 'totp-failed', user.email, req)
         throw new ApiError(401, 'Unauthorized: wrong code')
       }
-      q('UPDATE login_sessions SET mfa_ok = 1 WHERE token_hash = ?').run(session.token_hash)
+      const finished = finishSession(req, res, session)
       audit(user, params.recovery != null ? 'recovery-code-used' : 'totp-ok', user.email, req)
-      return answer(me(userById(user.id), { ...session, mfa_ok: 1 }))
+      return answer(me(userById(user.id), finished))
     }
 
     if (path === '/auth/totp/setup') {
@@ -369,10 +382,10 @@ export function createAccounts(server, { control, companyName, companyStatus, dr
       checkCodeBudget(user)
       if (!codeIsGood(user, params.code)) { codeFailed(user); throw new ApiError(401, 'Unauthorized: wrong code') }
       q('UPDATE users SET totp_enabled_at = ? WHERE id = ?').run(now(), user.id)
-      q('UPDATE login_sessions SET mfa_ok = 1 WHERE token_hash = ?').run(session.token_hash)
+      const finished = finishSession(req, res, session)
       audit(user, 'totp-enabled', user.email, req)
       const codes = newRecoveryCodes(user)
-      return answer({ recovery_codes: codes, ...me(userById(user.id), { ...session, mfa_ok: 1 }) })
+      return answer({ recovery_codes: codes, ...me(userById(user.id), finished) })
     }
 
     if (path === '/auth/password') {
