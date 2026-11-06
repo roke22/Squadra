@@ -1,6 +1,6 @@
 import { now } from './basics.js'
 
-export function createStream() {
+export function createStream(every) {
   const sseClients = new Set()
 
   function broadcast(type, data) {
@@ -13,7 +13,7 @@ export function createStream() {
       res.write(chunk)
     }
   }
-  setInterval(() => broadcast('ping', { t: now() }), 20_000).unref()
+  every(20_000, () => broadcast('ping', { t: now() }))
 
   return { sseClients, broadcast }
 }

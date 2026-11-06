@@ -7,12 +7,13 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { serverNoticeIsGood } from '../plugins/squadra/signing.js'
+import { execFileSync } from 'node:child_process'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ADMIN = 'companies-admin-token-0123456789'
@@ -404,5 +405,116 @@ test('after a restart every company is back, with its sessions, machines and lim
     assert.equal(ok(await on('host/enroll', { code: company.code, company: company.id, info: { hostname: 'later' } })).name, 'later')
     assert.equal(ok(await on(`api/c/${company.id}/hosts`)).length, 2)
     assert.deepEqual(ok(await on('api/state')).sessions, [])
+  } finally { await stop(proc) }
+})
+
+test('what is done in a company is written down in it: who, what and about what, never its content', async () => {
+  const [a, b] = [await newCompany('Audit A'), await newCompany('Audit B')]
+  await register(a, 'x')
+  ok(await call('sendMessage', { chat_id: 'x', text: 'never in the audit' }, await register(a, 'y')))
+  ok(await act(a, 'archive', { session: 'x' }))
+  ok(await act(a, 'unarchive', { session: 'x' }))
+  ok(await call('claimSession', { instance: 'instance-audit-1', role: 'coordinator' }, await register(a, 'lead')))
+  ok(await act(a, 'org/positions', { positions: [{ coordinator: 'lead', x: 1, y: 1 }] }))
+  const log = await read(a, 'company/audit')
+  assert.deepEqual(log.map(e => e.action).slice(0, 2), ['unarchive', 'archive'])
+  assert.equal(log[0].target, 'x')
+  assert.equal(log[0].who, 'server token')
+  assert.ok(!log.some(e => e.action === 'org/positions'))
+  assert.doesNotMatch(JSON.stringify(log), /never in the audit/)
+  assert.deepEqual(await read(b, 'company/audit'), [])
+  // A refusal isn't something done.
+  assert.equal((await act(a, 'archive', { session: 'nobody' })).ok, false)
+  assert.equal((await read(a, 'company/audit')).length, log.length)
+})
+
+test('retention: a company keeps messages and activity for as long as it says', async () => {
+  const [a, b] = [await newCompany('Keep A'), await newCompany('Keep B')]
+  assert.deepEqual(await read(a, 'company/retention'), { retention_days: 7, event_hours: 24 })
+  assert.deepEqual(ok(await act(a, 'company/retention/set', { retention_days: 30 })).retention_days, 30)
+  assert.equal((await read(a, 'company/retention')).retention_days, 30)
+  assert.equal((await read(b, 'company/retention')).retention_days, 7)
+  for (const bad of [{ retention_days: 0 }, { retention_days: 4000 }, { event_hours: 'x' }]) {
+    assert.equal((await act(a, 'company/retention/set', bad)).error_code, 400)
+  }
+})
+
+test('exporting a company: its database and attachments, in a file anyone can open, and nothing of another', async () => {
+  const [a, b] = [await newCompany('Export A'), await newCompany('Export B')]
+  const [x, y] = [await register(a, 'x'), await register(a, 'y')]
+  void y
+  ok(await call('sendMessage', { chat_id: 'y', text: 'kept in the export' }, x))
+  await register(b, 'z')
+  ok(await call('sendMessage', { chat_id: 'z', text: 'of the other company' }, await register(b, 'w')))
+  ok(await (await fetch(`${URL_}/sendDocument?chat_id=y&filename=note.txt`, { method: 'POST', headers: { Authorization: `Bearer ${x}`, 'Content-Type': 'text/plain' }, body: 'attached text' })).json())
+
+  const res = await fetch(`${URL_}/${api(a, 'company/export')}`, { headers: { Authorization: `Bearer ${ADMIN}` } })
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-disposition'), new RegExp(`squadra-${a.id}-`))
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-export-'))
+  writeFileSync(join(dir, 'out.tar.gz'), Buffer.from(await res.arrayBuffer()))
+  execFileSync('tar', ['-xzf', 'out.tar.gz'], { cwd: dir })
+  const about = JSON.parse(readFileSync(join(dir, 'company.json'), 'utf8'))
+  assert.equal(about.id, a.id)
+  const db = new DatabaseSync(join(dir, 'squadra.db'), { readOnly: true })
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE text = 'kept in the export'").get().n, 1)
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE text = 'of the other company'").get().n, 0)
+  db.close()
+  const files = readdirSync(join(dir, 'files'))
+  assert.equal(files.length, 1)
+  assert.equal(readFileSync(join(dir, 'files', files[0]), 'utf8'), 'attached text')
+  // Not its join token, nor anything of the server's; and nothing left behind.
+  assert.deepEqual(readdirSync(dir).sort(), ['company.json', 'files', 'out.tar.gz', 'squadra.db'])
+  assert.ok(!readdirSync(join(dataDir, 'companies', a.id)).some(f => f.startsWith('export-')))
+  assert.ok((await read(a, 'company/audit')).some(e => e.action === 'company/export'))
+})
+
+test('deleting a company: stopped at once, back if asked for, and gone when its time is up', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-companies-del-'))
+  const port = PORT + 3200
+  const start = async grace => {
+    const proc = spawn(process.execPath, [join(ROOT, 'server/server.js')], { env: { ...process.env, PORT: String(port), DATA_DIR: dir, SQUADRA_SERVER_TOKEN: ADMIN, SQUADRA_COMPANY_GRACE_MS: String(grace) }, stdio: 'ignore' })
+    await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/health`)).ok } catch { return false } }, { what: 'server' })
+    return proc
+  }
+  const stop = proc => new Promise(r => { proc.on('exit', r); proc.kill('SIGTERM') })
+  const on = (path, body, auth = ADMIN) => fetch(`http://127.0.0.1:${port}/${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then(r => r.json())
+
+  let proc = await start(3600_000)
+  try {
+    const a = ok(await on('admin/createCompany', { name: 'Goes away' }))
+    const secret = ok(await on('register', { name: 'x' }, a.join_token)).secret
+    const stayed = ok(await on('register', { name: 'x' }))
+    // Not by mistake, and never the first one.
+    assert.equal((await on(`api/c/${a.id}/company/delete`, { confirm: 'wrong name' })).error_code, 400)
+    assert.equal((await on('api/c/default/company/delete', { confirm: 'Default' })).error_code, 409)
+    const done = ok(await on(`api/c/${a.id}/company/delete`, { confirm: 'Goes away' }))
+    assert.ok(done.delete_after > Date.now())
+
+    // Stopped: its sessions and its dashboard are out; its data, still there.
+    assert.equal((await on('getMe', {}, secret)).error_code, 503)
+    assert.equal((await on(`api/c/${a.id}/state`)).error_code, 404)
+    assert.ok(existsSync(join(dir, 'companies', a.id, 'squadra.db')))
+    ok(await on('getMe', {}, stayed.secret))
+    assert.equal(ok(await on('api/companies')).find(c => c.id === a.id).status, 'deleting')
+
+    // Also after a restart; and it comes back whole.
+    await stop(proc)
+    proc = await start(3600_000)
+    assert.equal((await on('getMe', {}, secret)).error_code, 503)
+    assert.equal(ok(await on('api/companies/restore', { company: a.id })).status, 'active')
+    assert.equal(ok(await on('getMe', {}, secret)).id, 'x')
+    assert.equal((await on('api/companies/restore', { company: a.id })).error_code, 404)
+
+    // Its time up: gone, folder and all.
+    ok(await on(`api/c/${a.id}/company/delete`, { confirm: 'Goes away' }))
+    await stop(proc)
+    const control = new DatabaseSync(join(dir, 'control.db'))
+    control.prepare('UPDATE companies SET delete_after = 1 WHERE id = ?').run(a.id)
+    control.close()
+    proc = await start(0)
+    assert.ok(!existsSync(join(dir, 'companies', a.id)))
+    assert.ok(!ok(await on('api/companies')).some(c => c.id === a.id))
+    assert.equal((await on('getMe', {}, secret)).error_code, 401)
   } finally { await stop(proc) }
 })

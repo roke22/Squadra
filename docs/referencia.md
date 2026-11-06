@@ -261,9 +261,7 @@ La primera vez que entra un worker, el coordinador muestra una petición de empa
 
 ### 4. Abrir el panel
 
-Abre la dirección del servidor (`http://127.0.0.1:7787/`) y entra con el token del servidor (el de administración).
-
-<p align="center"><img src="screenshots/sign-in.jpg" width="560" alt="Pantalla de acceso al panel"></p>
+Abre la dirección del servidor (`http://127.0.0.1:7787/`). La primera vez, crea el primer propietario con el token del servidor; después, entra con tu email, tu contraseña y tu código. Mira [Empresas y personas](#empresas-y-personas).
 
 ### O bien: abrir las sesiones desde el panel
 
@@ -440,12 +438,46 @@ Así un worker se comporta bien en su repositorio sea quien sea su coordinador.
 | `ping(chat_id?)` | ¿Está viva una sesión? Responde el servidor, no la sesión (solo de sesiones con las que has intercambiado mensajes o compartes grupo) |
 | `login` · `logout` · `status` | Las usan los comandos `/squadra:*` |
 
+## Empresas y personas
+
+Un servidor puede tener varias empresas, cada una con sus sesiones, escuadras, mensajes, adjuntos y máquinas. El mismo nombre en dos empresas son dos sesiones distintas, y nada pasa de una a otra. Todas son del mismo dueño: en [SECURITY.md](../SECURITY.md) está de qué protege esto y de qué no. Lo que ya tenía un servidor pasa a ser la primera empresa, sin moverlo, y sus máquinas y sesiones no notan nada.
+
+**Entrar.** La primera vez, el token del servidor crea el primer propietario, que también administra el servidor. A partir de ahí todos usan email, contraseña y un código de 6 cifras de una app de autenticación, y el token ya no abre el panel. Sigue valiendo en `/admin/*` y `/register`, y lo que se hace en `/admin` queda registrado. `POST /admin/recoverAccess` con `{"email": …}` da un enlace para poner contraseña y códigos nuevos a quien se haya quedado fuera. Para mantenerlo en `/api` para tus propios scripts, arranca el servidor con `--allow-token-api`.
+
+**Roles,** por empresa:
+
+| | Observador | Operador | Gestor | Propietario |
+|---|---|---|---|---|
+| Ver organigrama, chats y actividad | ✓ | ✓ | ✓ | ✓ |
+| Abrir y parar sesiones, usar terminales | | ✓ | ✓ | ✓ |
+| Editar organigrama y plantillas, aprobar coordinadores, borrar sesiones | | | ✓ | ✓ |
+| Gestionar máquinas, miembros y join token, ver el registro de actividad | | | ✓ | ✓ |
+| Cambiar la retención, exportar o borrar la empresa, dar el rol de propietario | | | | ✓ |
+
+Los códigos son obligatorios para todos menos los observadores. Quien administra el servidor crea empresas y usuarios, y ve qué máquina sirve a qué empresa, pero tiene que unirse a una empresa para leerla, y eso queda registrado.
+
+**Personas**, en el panel, es donde está todo esto. Las invitaciones y los cambios de contraseña son enlaces de un solo uso que envías tú: el servidor no manda emails. Al quitar a alguien, o cambiarle el rol, se cierra al momento lo que tenga abierto, y dejan de valer las invitaciones o los tickets de terminal que creó antes. Si podía gestionar la empresa, sustituye su join token.
+
+**Máquinas.** Cada empresa tiene su propia copia de `squadra-host`, y el comando del panel dice cuál (`--company=<id>`): su carpeta, su servidor tmux, su login de Claude Code, su servicio y su comando `squadra-host-<id>`. La máquina de una empresa necesita su propio inicio de sesión en Claude: el alta te dice cómo. Una carpeta pertenece a una sola empresa en cada máquina. Dos empresas pueden compartir máquina:
+
+| Cómo | Hasta dónde están separadas |
+|---|---|
+| Una máquina cada una | De verdad |
+| Un usuario del sistema cada una (`--os-user=<nombre>`, en Linux, con sudo: lo ofrece el panel) | De verdad, hasta donde llega el sistema operativo |
+| Un solo usuario del sistema | Solo ante accidentes: un agente con terminal, o alguien en ella, puede leer los ficheros de la otra. El panel lo avisa |
+
+`max_sessions` es por copia, así que **Personas → Máquinas** muestra el total de cada máquina.
+
+**Actividad y datos.** **Personas → Actividad y datos** muestra quién hizo qué (nunca lo que dijo un mensaje o una terminal), y se guarda un año. Los propietarios eligen cuánto se guardan los mensajes, los adjuntos y la actividad de las sesiones, y pueden descargar la empresa en un `.tar.gz` con su base de datos y sus adjuntos. Al borrar una empresa se detiene al momento y se elimina, con sus datos, a los 30 días (`SQUADRA_COMPANY_GRACE_MS` lo cambia); hasta entonces, un propietario o quien administra el servidor puede recuperarla. La primera empresa no se puede borrar.
+
+**Desde la API,** con el token del servidor: `POST /admin/createCompany` (`{"name": …, "limits": {…}}`, responde con el join token de la empresa), `POST /admin/setCompanyLimits`, y `company` en las demás llamadas a `/admin/*` y en `/register`. Los límites son `max_sessions`, `max_messages`, `max_events`, `max_updates`, `max_files_gb`, `retention_days` y `event_hours`.
+
 ## Seguridad
 
 **Lo más importante: aísla las sesiones de las que no te fíes del todo.** Todas las sesiones de una máquina corren con el mismo usuario, así que una sesión comprometida (por ejemplo, por un repositorio malicioso) puede leer los ficheros de las demás sesiones de esa máquina, incluidos sus secretos de identidad y la credencial de squadra-host de la máquina, y todo lo que tú puedas leer. Si una sesión de una máquina puede estar comprometida, desconecta la máquina, dala de alta de nuevo y desconecta, y después elimina, todas las sesiones que corrieron en ella (una vez desconectada la propia máquina, sus nombres antiguos no se pueden volver a abrir hasta eliminarlos). Trata esa cuenta de usuario como comprometida: rehacerla es la única limpieza completa. Si la conservas, al menos reinstala el plugin de Squadra y revisa `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/` (CLAUDE.md, agentes, comandos, `channels/squadra/`), los ficheros de arranque de tu shell y tus servicios de usuario antes de dar de alta la máquina de nuevo. Si entraste al panel desde un navegador de esa cuenta, cambia el token del servidor. Si allí corría un coordinador, revisa también las máquinas de sus workers. Si el `.env` del plugin de esa máquina tiene el token de alta, rótalo. Si el servidor o su carpeta de datos están ahí con el mismo usuario, también quedan expuestos su base de datos y su clave TLS: cambia el token del servidor, rota el token de alta, sustituye el certificado y la clave TLS, da de alta de nuevo todas las máquinas y desconecta todas las sesiones. Mejor: ejecuta el servidor con su propio usuario o en su contenedor. Squadra limita lo que puede hacer con ellos (abajo), pero la única barrera real es el sistema operativo: pon el coordinador en su propia máquina, usuario o contenedor, y da a los workers que abren código no fiable un usuario, contenedor o VM propios.
 
 - **Credenciales:**
-  - el **token del servidor** (administración) entra en el panel, abre terminales web y ejecuta `/admin/*`. Su sitio es tu navegador y ningún otro;
+  - el **token del servidor** crea el primer propietario, recupera el acceso y ejecuta `/admin/*`, en cualquier empresa. Cuando ya hay personas deja de abrir el panel y las terminales. Mantenlo fuera de todo lo demás;
   - el **token de alta** (`sj_…`) solo registra nombres de sesión *nuevos*, con límite de frecuencia. No abre terminales, no lee el panel ni se queda con un nombre. Las máquinas añadidas desde el panel no lo reciben salvo que marques la opción (los nombres de sus sesiones los registra el servidor);
   - cada nombre de sesión tiene su propio **secreto**, ligado al servidor que lo emitió. Cuando una sesión ocupa su nombre, el servidor solo acepta peticiones en su nombre desde esa sesión (un identificador que el plugin solo guarda en memoria), también durante un par de minutos tras reiniciar el servidor mientras se reconecta: un secreto copiado no puede hablar por una sesión conectada. Sí puede quedarse un nombre cuya sesión ya no existe (o ha dejado de responder: unos 15 segundos, hasta unos 45 si se cayó su red); por eso importa el aislamiento (arriba);
   - **Desconectar sesión** (⋯ en el panel) anula el secreto de la sesión: quien tenga una copia se queda fuera para siempre, y se descarta lo que tenía en cola para otras sesiones. Una sesión abierta desde el panel puede abrirse de nuevo desde su máquina (tras cerrar su terminal) mientras esa máquina siga dada de alta; si no, elimina el nombre para volver a usarlo. **Eliminar** una sesión también borra sus mensajes (lo que escribió y lo que le escribieron directamente, incluso de los chats de las otras sesiones) y adjuntos, sobrescritos en disco en vez de esperar a que caduquen, descarta sus mensajes en cola, y las sesiones que hablaban con ella no aceptan mensajes de una nueva sesión con ese nombre hasta que ejecutes allí `/squadra:access unpin <nombre>`. Un worker cuyo coordinador se eliminó y se registró de nuevo a propósito necesita además borrar `coordinator-pin.json` de su carpeta de estado y volver a hacer login; los aprobadores de un coordinador se comprueban con los mismos pins;

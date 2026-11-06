@@ -6,6 +6,7 @@ import { createMachines } from './machines/index.js'
 import { createOrganization } from './organization/index.js'
 import { createDashboard } from './dashboard/index.js'
 import { upgradeStoredData } from './data-upgrade.js'
+import { cleanExports } from './company-export.js'
 
 // One company: its data and every module working on it, with nothing shared
 // with any other but what is the whole server's (see server/server.js).
@@ -38,11 +39,12 @@ export function createCompany(server, options) {
     sessions.cleanupUpdates()
     observation.cleanupEvents()
     platform.cleanupLimits()
+    platform.cleanupAudit()
     platform.truncateLogHourly()
   }
-  const cleaning = setInterval(guarded(cleanup), 60 * 1000)
-  cleaning.unref()
+  platform.every(60 * 1000, guarded(cleanup))
   cleanup()
+  cleanExports(options.dir)
 
   upgradeStoredData(platform, { messaging, observation, machines })
   observation.restoreActivity()
@@ -56,7 +58,7 @@ export function createCompany(server, options) {
 
   // The server is stopping: everything open ends right away.
   function close() {
-    clearInterval(cleaning)
+    platform.stopTimers()
     for (const w of [...sessions.waiters.values()]) sessions.finishPoll(w, null, [])
     for (const res of platform.sseClients) { try { res.end() } catch {} }
     platform.sseClients.clear()

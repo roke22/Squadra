@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { unix, now, guarded, bad, ApiError, VERSION, ROLES } from '../platform/index.js'
 
 export function createDashboard(platform, { sessions, observation, machines, messaging, organization }) {
-  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir, log } = platform
+  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir, log, every } = platform
   const {
     register, approveSession, presenceOf, personaView, identityCreatedAt, identityExists, isOnline, linksOf,
     forgetSession, leases, kickHolder, announceDown, dropLease,
@@ -70,7 +70,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
 
   // Presence and role changes don't come with events: watch them.
   const lastSessionKey = new Map()
-  setInterval(guarded(() => {
+  every(2000, guarded(() => {
     if (sseClients.size === 0) return
     for (const { name } of db.prepare('SELECT name FROM identities').all()) {
       const v = sessionView(name)
@@ -80,7 +80,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
         broadcast('session', v)
       }
     }
-  }), 2000).unref()
+  }))
 
   const dashboardReads = {
     // One session's history for the chat view: its events and Squadra

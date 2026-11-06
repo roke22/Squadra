@@ -70,7 +70,7 @@ docker logs squadra-server      # para ver el token
 ```
 
 **Los dos tokens:**
-- **Token del servidor** (administración): entra en el panel, abre terminales web, ejecuta `/admin/*` y puede rotar identidades (`register` con `reset`). Solo vive en el navegador. Se guarda en `data/server-token` (600).
+- **Token del servidor** (administración): crea el primer propietario, recupera el acceso, ejecuta `/admin/*` y puede rotar identidades (`register` con `reset`). Mientras no haya usuarios también abre el panel; después, solo con `--allow-token-api`. Solo vive en el navegador. Se guarda en `data/server-token` (600).
 - **Token de alta** (`sj_…`): el que guardan las máquinas. Solo registra nombres de sesión nuevos (`register` sin `reset`). Se guarda en `data/join-token` (600) y es el que aparece en el comando `/squadra:configure` que se muestra al arrancar, y el que reciben las máquinas que se dan de alta desde el panel, solo si se marca «Dar también a esa máquina el token de alta».
 - Los dos se generan la primera vez, se reutilizan después y se muestran al arrancar.
 - Rotar el de alta: `POST /admin/rotateJoinToken` con el de administración (las identidades existentes siguen valiendo; las máquinas necesitarán el nuevo para registrar nombres nuevos). Cambiar el de administración: `SQUADRA_SERVER_TOKEN`, o borrar `data/server-token` y reiniciar.

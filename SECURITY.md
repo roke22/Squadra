@@ -12,7 +12,7 @@ Only the latest release gets fixes. Update the dashboard (`git pull`) and run `s
 
 ## What is in scope
 
-- `squadra-server`: authentication with the server token, the dashboard, the web terminal, the message relay and ACME/HTTPS handling.
+- `squadra-server`: authentication with accounts, codes and the server token, the dashboard, the web terminal, the message relay and ACME/HTTPS handling.
 - The `squadra` plugin: pairing, allowlists, access policy and what it sends to the server.
 - `squadra-host` and the install scripts.
 
@@ -27,6 +27,8 @@ Within that:
 - Each company has its own database and attachments, in its own folder. Sessions, groups, messages, events, squads, links, templates and machines exist only inside their company, and the same name in two companies is two different sessions.
 - A session, a join token or a machine's secret acts only on the company it belongs to. It can't reach, or find out about, a name in another company.
 - A user sees only the companies they are a member of, with the permissions of their role. A terminal ticket reaches only the machines of the company it was asked for.
+- What is done in a company is written down in it, by whom, without the content of any message or terminal. The server's own audit covers sign-ins and companies.
+- A company being deleted stops at once and keeps its data for 30 days, so it can come back; after that its folder is deleted. An export holds everything the company has said: keep it as safe as the server.
 - A report that any of the above can be broken is in scope.
 
 What it does not cover:

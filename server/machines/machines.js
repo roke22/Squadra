@@ -46,7 +46,7 @@ export const offeredCredential = req => offeredProtocols(req).find(x => x.starts
 export function createMachines(platform, { sessions, observation }) {
   const {
     bus, db, broadcast, SERVER_KEY, joinToken, signAsServer, allow, takeChallenge, proofIsGood, credentialPrefix,
-    routeEnrollment, log, companyId,
+    routeEnrollment, log, companyId, audit,
   } = platform
   const {
     NAME_RE, roleOf, checkApproval, isOnline, keyRefused, holdsName, leases, linksOf, register, dropLease,
@@ -459,6 +459,7 @@ export function createMachines(platform, { sessions, observation }) {
         link.viewers.get(term).add(viewer)
         viewer.attached.add(key)
         log(`${who} is viewing "${term}" on host ${host}`)
+        audit(actor, 'terminal-view', `${host}/${term}`, clientIp(req))
         return link.ws.send(JSON.stringify({ t: 'attach', term, ...size(m.cols, m.rows) }))
       }
       if (!viewer.attached.has(key) || !link) return
@@ -469,6 +470,7 @@ export function createMachines(platform, { sessions, observation }) {
         if (!viewer.typed.has(key)) {
           viewer.typed.add(key)
           log(`${who} is typing in "${term}" on host ${host}`)
+          audit(actor ?? { token: true }, 'terminal-type', `${host}/${term}`, clientIp(req))
         }
         return link.ws.send(JSON.stringify({ t: 'in', term, data: m.data }))
       }

@@ -455,3 +455,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .host-warn { margin: 4px 0; font-size: 12.5px; color: var(--warn); }
 .warn-text { color: var(--warn); }
 table.people .warn-text { color: var(--warn); }
+table.people.audit td { font-size: 12.5px; padding: 4px; }
+table.people.audit td:last-child { text-align: left; white-space: normal; word-break: break-word; }
+.modal [data-body] .field input[type=password] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); width: 100%; }

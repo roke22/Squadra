@@ -2,9 +2,9 @@ import { cutText, cleanText, now, ApiError, bad } from '../platform/index.js'
 
 export function createObservation(platform) {
   const { db, inTx, bus, broadcast, spendStorage, quota } = platform
+  const eventKeptMs = () => quota('event_hours', Number(process.env.OBSERVE_TTL_HOURS ?? 24)) * 60 * 60 * 1000
 
   const MAX_EVENTS = Number(process.env.SQUADRA_MAX_EVENTS ?? 1_000_000)       // observation events kept, in all
-  const EVENT_TTL_MS = Number(process.env.OBSERVE_TTL_HOURS ?? 24) * 60 * 60 * 1000 // live-observation events
 
   // Each session's plugin posts what it's doing (hook events + transcript). The
   // server keeps 24h of events, derives a current state per session, and pushes
@@ -143,7 +143,7 @@ export function createObservation(platform) {
     for (const ev of events) {
       if (!ev || typeof ev !== 'object' || !EVENT_KINDS.has(ev.kind)) continue
       // Whole milliseconds within the events' lifetime: the history cursor relies on it.
-      const ts = Number.isSafeInteger(ev.ts) ? Math.max(now() - EVENT_TTL_MS, Math.min(ev.ts, now() + 5000)) : now()
+      const ts = Number.isSafeInteger(ev.ts) ? Math.max(now() - eventKeptMs(), Math.min(ev.ts, now() + 5000)) : now()
       const kind = ev.kind
       const rest = cleanEvent(kind, ev)
       const data = JSON.stringify(rest)
@@ -197,7 +197,7 @@ export function createObservation(platform) {
 
   function cleanupEvents() {
     const t = now()
-    db.prepare('DELETE FROM events WHERE ts < ?').run(t - EVENT_TTL_MS)
+    db.prepare('DELETE FROM events WHERE ts < ?').run(t - eventKeptMs())
     // Over the cap: the oldest go first.
     db.prepare('DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)').run(quota('max_events', MAX_EVENTS))
     for (const [k, v] of observeLog) if (!v.some(x => t - x.t < 60_000)) observeLog.delete(k)

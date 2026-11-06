@@ -53,7 +53,8 @@ function enter(me) {
   if (!here) {
     const first = me.companies[0]
     if (!first) {
-      if (!me.user.is_platform_admin) { show('login'); return noCompany() }
+      // (An owner whose only company is waiting to be deleted can still bring it back.)
+      if (!me.user.is_platform_admin && !me.deleting?.length) { show('login'); return noCompany() }
       state.me = me
       show('app')
       return openPeople()

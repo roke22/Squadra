@@ -29,14 +29,18 @@ export const FIRST_COMPANY = 'default'
 //   notice (worker, text)    its coordinator should hear this
 //   context-cleared (name)   /clear took effect in that session
 export function createPlatform(server, { id, dir, quotas, routeEnrollment }) {
+  // What repeats while this company runs, and stops with it.
+  const timers = new Set()
+  const every = (ms, fn) => { const t = setInterval(fn, ms); t.unref(); timers.add(t) }
+  const stopTimers = () => { for (const t of timers) clearInterval(t); timers.clear() }
   // The first company's credentials have no prefix, as they always were.
   const credentialPrefix = id === FIRST_COMPANY ? '' : `${id}_`
   return {
-    ...server, companyId: id, dataDir: dir, credentialPrefix, routeEnrollment,
+    ...server, companyId: id, dataDir: dir, credentialPrefix, routeEnrollment, every, stopTimers,
     quota: (what, otherwise) => quotas[what] ?? otherwise,
     setQuotas: limits => { quotas = limits },
     log: text => process.stderr.write(`squadra-server: ${credentialPrefix && `[${id}] `}${text}\n`),
-    ...openCompanyCredentials(dir, server, { id, credentialPrefix }), ...openDatabase(dir), ...createStream(),
+    ...openCompanyCredentials(dir, server, { id, credentialPrefix }), ...openDatabase(dir), ...createStream(every),
     ...createLimits(), bus: new EventEmitter(),
   }
 }

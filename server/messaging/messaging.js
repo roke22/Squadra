@@ -22,8 +22,8 @@ export function createMessaging(platform, { sessions }) {
   const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // an invitation to a group nobody used
   const MAX_REACTIONS = 1_000_000 // kept, in all: the oldest go first
   const MAX_MESSAGES = Number(process.env.SQUADRA_MAX_MESSAGES ?? 2_000_000)   // messages kept, in all
-  const FILE_TTL_MS = 7 * 24 * 60 * 60 * 1000
-  const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+  // How long messages and attachments are kept (a company can say otherwise).
+  const retainedMs = () => quota('retention_days', 7) * 24 * 60 * 60 * 1000
   const GROUP_RE = /^#[A-Za-z0-9_-]{1,32}$/
   const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
 
@@ -477,6 +477,7 @@ export function createMessaging(platform, { sessions }) {
 
   function cleanupMessages() {
     const t = now()
+    const MESSAGE_TTL_MS = retainedMs(), FILE_TTL_MS = retainedMs()
     // Groups nobody is in (left behind by older versions) are closed.
     for (const g of db.prepare('SELECT id FROM groups WHERE NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = groups.id)').all()) closeGroup(g.id)
     db.prepare('DELETE FROM group_invites WHERE created_at < ?').run(t - INVITE_TTL_MS)

@@ -261,9 +261,7 @@ The first time a worker joins, the coordinator shows a pairing request; approve 
 
 ### 4. Open the dashboard
 
-Browse to the server address (`http://127.0.0.1:7787/`) and sign in with the server token (the admin one).
-
-<p align="center"><img src="screenshots/sign-in.jpg" width="560" alt="Dashboard sign-in"></p>
+Browse to the server address (`http://127.0.0.1:7787/`). The first time, create the first owner with the server token; after that, sign in with your email, password and code. See [Companies and people](#companies-and-people).
 
 ### Or: open sessions from the dashboard
 
@@ -440,12 +438,46 @@ That way a worker behaves correctly in its repository whoever coordinates it.
 | `ping(chat_id?)` | Is a session alive? Answered by the server, not by the session (only for sessions you have exchanged messages with, or share a group with) |
 | `login` · `logout` · `status` | Used by the `/squadra:*` commands |
 
+## Companies and people
+
+One server can hold several companies, each with its own sessions, squads, messages, attachments and machines. The same name in two companies is two different sessions, and nothing crosses between them. All of them belong to the same owner: see [SECURITY.md](../SECURITY.md) for what this does and doesn't protect against. What a server already had becomes the first company, in place, and its machines and sessions don't notice.
+
+**Signing in.** The first time, the server token creates the first owner, who is also administrator of the server. After that everyone uses email, password and a 6-digit code from an authenticator app, and the token no longer opens the dashboard. It keeps working on `/admin/*` and `/register`, and what is done on `/admin` is recorded. `POST /admin/recoverAccess` with `{"email": …}` gives a link to set a new password and new codes, for someone locked out. To keep it on `/api` for your own scripts, start the server with `--allow-token-api`.
+
+**Roles,** per company:
+
+| | Observer | Operator | Manager | Owner |
+|---|---|---|---|---|
+| See the org chart, chats and activity | ✓ | ✓ | ✓ | ✓ |
+| Open and stop sessions, use terminals | | ✓ | ✓ | ✓ |
+| Edit the org chart and templates, approve coordinators, delete sessions | | | ✓ | ✓ |
+| Manage machines, members and the join token, see the activity log | | | ✓ | ✓ |
+| Change retention, export or delete the company, give the owner role | | | | ✓ |
+
+Codes are required for everyone except observers. An administrator of the server creates companies and users, and sees which machine serves which company, but has to join a company to read it, and joining is recorded.
+
+**People** in the dashboard is where all this lives. Invitations and password resets are links of one use that you send yourself: the server sends no email. Removing someone, or changing their role, closes what they have open at once, and invitations or terminal tickets they made before that stop working. If they could manage the company, replace its join token.
+
+**Machines.** Each company gets its own copy of `squadra-host`, and the dashboard's command says which (`--company=<id>`): its own folder, tmux server, Claude Code login, service and `squadra-host-<id>` command. A company's machine needs its own sign-in to Claude: the enrollment tells you how. A folder belongs to one company per machine. Two companies can share a machine:
+
+| How | How far apart |
+|---|---|
+| A machine each | Really |
+| A system user each (`--os-user=<name>`, Linux, with sudo: the dashboard offers it) | Really, as far as the operating system does |
+| One system user | Against accidents only: an agent with a shell, or someone at a terminal, can read the other's files. The dashboard warns about it |
+
+`max_sessions` is per copy, so **People → Machines** shows the total on each machine.
+
+**Activity and data.** **People → Activity & data** shows who did what (never what a message or a terminal said), kept for a year. Owners choose how long messages, attachments and session activity are kept, and can download the company as a `.tar.gz` with its database and attachments. Deleting a company stops it at once and removes it, data included, 30 days later (`SQUADRA_COMPANY_GRACE_MS` changes that); until then an owner or an administrator can bring it back. The first company can't be deleted.
+
+**From the API,** with the server token: `POST /admin/createCompany` (`{"name": …, "limits": {…}}`, it answers with the company's join token), `POST /admin/setCompanyLimits`, and `company` in the other `/admin/*` calls and in `/register`. Limits are `max_sessions`, `max_messages`, `max_events`, `max_updates`, `max_files_gb`, `retention_days` and `event_hours`.
+
 ## Security notes
 
 **The most important one: isolate sessions you don't fully trust.** All the sessions on one machine run as the same user, so a session that gets compromised (for example by a malicious repository) can read the other sessions' files on that machine, including their identity secrets and the machine's squadra-host credential, and anything else you can read. If a session on a machine may be compromised, Disconnect the machine, enroll it again, and Disconnect, then delete, every session that ran there (once the machine itself was disconnected, its old names can't be opened again until deleted). Treat that user account as compromised: rebuilding it is the only complete clean-up. If you keep it, at least reinstall the Squadra plugin and check `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/` (CLAUDE.md, agents, commands, `channels/squadra/`), your shell startup files and your user services before enrolling it again. If you signed in to the dashboard from a browser on that account, change the server token. If a coordinator ran there, check its workers' machines too. If that machine's plugin `.env` holds the join token, rotate it. If the server or its data folder is there under the same user, its database and TLS key are exposed too: change the server token, rotate the join token, replace the TLS certificate and key, enroll every machine again and Disconnect every session. Better: run the server as its own user or in its container. Squadra limits what it can do with them (below), but the only real wall is the operating system: put the coordinator on its own machine, user or container, and give workers that open untrusted code a dedicated user, container or VM.
 
 - **Credentials:**
-  - the **server token** (admin) signs in to the dashboard, opens web terminals and runs `/admin/*`. It belongs in your browser and nowhere else;
+  - the **server token** creates the first owner, recovers access and runs `/admin/*`, on any company. Once there are people it no longer opens the dashboard or terminals. Keep it out of everything else;
   - the **join token** (`sj_…`) only registers *new* session names, rate limited. It can't open terminals, read the dashboard or take over a name. Machines added from the dashboard don't get it unless you tick the option (their sessions' names are registered by the server);
   - each session name has its own **secret**, bound to the server that issued it. Once a session holds its name, the server only takes requests for that name from that session (an id the plugin keeps only in memory), also for a couple of minutes after a server restart while it reconnects: a copied secret can't speak for a connected session. It can take a name whose session is gone (or has stopped responding: about 15 seconds, up to about 45 if its network dropped), which is why isolation (above) matters;
   - **Disconnect session** (⋯ in the dashboard) cancels the session's secret: whoever has a copy of it is out for good, and what it had queued for other sessions is dropped. A session opened from the dashboard can be opened again from its machine (after closing its terminal) while that machine stays enrolled; otherwise delete the name to use it again. **Deleting** a session also deletes its messages (what it wrote, and what was written to it directly, also from the other sessions' chats) and attachments, overwritten on disk rather than left to expire, drops its queued messages, and sessions that talked to it won't take messages from a new session with that name until you run `/squadra:access unpin <name>` there. A worker whose coordinator was deleted and registered again on purpose also needs `coordinator-pin.json` deleted from its state folder and a new login; a coordinator's approvers are checked against the same pins;

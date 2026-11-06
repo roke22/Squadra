@@ -26,7 +26,7 @@ const cleanName = v => (typeof v === 'string' ? cleanText(v.slice(0, 200)).repla
 // A session goes through stages: 'totp' (password right, code missing),
 // 'totp_setup' (password right, and this user must set codes up first) and 'ok'.
 // Only the last one reaches anything beyond the screens to get there.
-export function createAccounts(server, { control, companyName, dropClients }) {
+export function createAccounts(server, { control, companyName, companyStatus, dropClients }) {
   const { isServerToken } = server
 
   // The key for TOTP secrets: in the data folder, not in the database.
@@ -124,9 +124,12 @@ export function createAccounts(server, { control, companyName, dropClients }) {
   function me(user, session) {
     const stage = stageOf(user, session)
     // (Which companies, only once the sign-in is finished.)
-    const companies = stage === 'ok' ? membershipsOf(user.id).map(m => ({ id: m.company_id, name: companyName(m.company_id), role: m.role })).filter(c => c.name) : []
+    const mine = stage === 'ok' ? membershipsOf(user.id).map(m => ({ id: m.company_id, name: companyName(m.company_id), role: m.role, ...companyStatus(m.company_id) })).filter(c => c.name) : []
+    const companies = mine.filter(c => c.status !== 'deleting').map(({ id, name, role }) => ({ id, name, role }))
     return {
       stage,
+      // (Those of theirs waiting to be deleted: an owner can bring them back.)
+      deleting: mine.filter(c => c.status === 'deleting' && c.role === 'owner').map(({ id, name, delete_after }) => ({ id, name, delete_after })),
       user: { id: user.id, email: user.email, name: user.name, is_platform_admin: !!user.is_platform_admin, totp_enabled: !!user.totp_enabled_at },
       companies,
     }

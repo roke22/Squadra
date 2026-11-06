@@ -110,6 +110,16 @@ export function openDatabase(dir) {
     y REAL,
     updated_at INTEGER NOT NULL
   );
+  -- Who did what in this company: never what a message or a terminal said.
+  CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    who TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    ip TEXT
+  );
+  CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
   -- Two coordinators (of two squads) that work with each other: a < b.
   CREATE TABLE IF NOT EXISTS squad_links (
     a TEXT NOT NULL,
@@ -203,5 +213,17 @@ export function openDatabase(dir) {
     if (now() - lastTruncate >= 3600_000) truncateLog()
   }
 
-  return { db, inTx, truncateLog, truncateLogHourly }
+  const AUDIT_KEPT_MS = 365 * 24 * 3600_000
+  const AUDIT_MAX = 200_000
+  const audit = (actor, action, target, ip) => db.prepare('INSERT INTO audit (at, who, action, target, ip) VALUES (?, ?, ?, ?, ?)')
+    .run(now(), actor?.email ?? (actor?.token ? 'server token' : null), String(action).slice(0, 60), target == null ? null : String(target).slice(0, 200), ip == null ? null : String(ip).slice(0, 64))
+  function auditLog({ before = Number.MAX_SAFE_INTEGER, limit = 100 } = {}) {
+    return db.prepare('SELECT id, at, who, action, target, ip FROM audit WHERE id < ? ORDER BY id DESC LIMIT ?').all(before, limit)
+  }
+  function cleanupAudit() {
+    db.prepare('DELETE FROM audit WHERE at < ?').run(now() - AUDIT_KEPT_MS)
+    db.prepare('DELETE FROM audit WHERE id <= (SELECT id FROM audit ORDER BY id DESC LIMIT 1 OFFSET ?)').run(AUDIT_MAX)
+  }
+
+  return { db, inTx, truncateLog, truncateLogHourly, audit, auditLog, cleanupAudit }
 }

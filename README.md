@@ -31,7 +31,7 @@ git checkout "$(git tag --sort=-v:refname | head -1)"   # the latest release
 node server/server.js          # dashboard at http://127.0.0.1:7787
 ```
 
-Sign in with the server token it prints, open **Machines → + Add machine** and run the one command it shows on each computer where agents should work. That's it: the details, Docker and HTTPS are in [steps 1 and 2](#1-install-the-dashboard) below.
+Create the first owner with the server token it prints (you will need an authenticator app for the codes), open **Machines → + Add machine** and run the one command it shows on each computer where agents should work. That's it: the details, Docker and HTTPS are in [steps 1 and 2](#1-install-the-dashboard) below.
 
 ### Just want to try it? Docker
 
@@ -44,7 +44,7 @@ cd deploy/demo
 docker-compose up -d        # or: docker compose up -d
 ```
 
-**2. Read the sign-in token**, once it has started (some 20 seconds):
+**2. Read the server token**, once it has started (some 20 seconds):
 
 ```bash
 cat squadra/data/server-token
@@ -52,7 +52,7 @@ cat squadra/data/server-token
 
 It is also in the logs, in the *Squadra demo* box: `docker-compose logs`. It stays the same when the container restarts.
 
-**3. Sign in:** open **http://localhost:7787** and paste the token. Then **+ New session** (or 🏢 **Org chart → + Squad**) with the folder `/squadra/projects/demo`, an example project with three personas. The first time, Claude Code asks in the session's terminal for its theme, your Claude login (`/login`) and whether you trust the folder; the login is kept for every later session.
+**3. Create the first owner:** open **http://localhost:7787** and give the token, your name, email and a password; then add the code to your authenticator app. Then **+ New session** (or 🏢 **Org chart → + Squad**) with the folder `/squadra/projects/demo`, an example project with three personas. The first time, Claude Code asks in the session's terminal for its theme, your Claude login (`/login`) and whether you trust the folder; the login is kept for every later session.
 
 To stop it, `docker-compose down` (the folder stays). To update it, `git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"` and then `docker-compose up -d --build`. Only this computer can reach it. More in [the demo's README](deploy/demo/README.md).
 
@@ -120,7 +120,7 @@ git checkout "$(git tag --sort=-v:refname | head -1)"   # the latest release
 node server/server.js
 ```
 
-Open **http://127.0.0.1:7787** and sign in with the **server token** it prints the first time it starts (it stays in `data/server-token`).
+Open **http://127.0.0.1:7787** and create the first owner with the **server token** it prints the first time it starts (it stays in `data/server-token`). From then on you sign in with your email, password and a code. From **People** you can invite others and add companies: see [Companies and people](docs/reference.md#companies-and-people).
 
 **With Docker** instead:
 
@@ -169,7 +169,7 @@ The **[examples](https://roke22.github.io/Squadra/examples.html)** show whole or
 
 ## Good tips
 
-- **Use HTTPS** (a domain, step 1) when other computers connect to your dashboard, and keep the server token to yourself: it's the key to the dashboard.
+- **Use HTTPS** (a domain, step 1) when other computers connect to your dashboard, and keep the server token to yourself: it creates the first owner, recovers access and always works on `/admin`: it's the key to the dashboard.
 - **Give your coordinator its own repository** with a `CLAUDE.md` describing your team: which worker handles which repository, what counts as done, and what it must always ask you first. Every coordinator you open from it then works the same way.
 - **Name workers after what they do** (`api`, `web`, `docs`): the coordinator uses the names to decide who gets each task.
 - **Give each worker a persona:** in **+ New session**, pick one of the skills (`.claude/skills/<name>/SKILL.md`) or agents (`.claude/agents/<name>.md`) the machine finds in that folder or in `~/.claude`. It goes into the agent's system prompt, so it holds through compactions, and its coordinator is told which persona each worker follows.

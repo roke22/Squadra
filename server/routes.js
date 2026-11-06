@@ -3,7 +3,7 @@ import { statSync, createReadStream } from 'node:fs'
 import {
   guardRequest, sendJson, clientIp, readParams, bearer, own, sendError, VERSION, UI_FILE, VENDOR_FILES,
   MAX_JSON_BODY, cachedFile, pageHeaders, ApiError, allowServerWide, ipKey, sha256, refuseSocket, logError,
-  ALLOW_TOKEN_API, atLeast,
+  ALLOW_TOKEN_API, atLeast, cleanText,
 } from './platform/index.js'
 import {
   INSTALLERS, installer, hostScript, hostSignature, checkEnrollRate, enrollmentKey, offeredCredential,
@@ -49,14 +49,28 @@ export function createRoutes(server, companies, accounts) {
       return params
     }
 
-    const people = own(accounts.companyMethods, what)
+    // What is written down: every change, by whom, with what it was about and
+    // never its content. (Not what only moves things around on the screen.)
+    const written = (action, params) => {
+      if (action === 'org/positions' || action === 'terminal/ticket' || action === 'hosts/personas') return
+      const target = params.session ?? params.term ?? params.name ?? params.host ?? params.coordinator ?? params.email ?? params.user ?? null
+      company.platform.audit(actor, action, target == null ? null : cleanText(String(target).slice(0, 400)).slice(0, 200), clientIp(req))
+    }
+
+    const people = own(accounts.companyMethods, what) ?? own(companies.companyMethods, what)
     if (people) {
       if (req.method !== people.method) throw new ApiError(405, 'Method Not Allowed')
       allow(people.role)
       const params = req.method === 'POST' ? await bodyOf(people.role) : {}
       // (The role as it is now, for what it may give.)
       const actorRole = actor.token ? 'owner' : accounts.roleIn(actor, company.id)
-      return sendJson(res, 200, { ok: true, result: people.run({ company, actor, actorRole, params, req }) })
+      if (req.method === 'POST') written(what, params)
+      if (people.streams) {
+        written(what, params)
+        // (Once it has started answering, an error can only cut it short.)
+        return await people.run({ company, actor, actorRole, params, req, res, url }).catch(err => { if (res.headersSent) res.destroy(); else throw err })
+      }
+      return sendJson(res, 200, { ok: true, result: await people.run({ company, actor, actorRole, params, req, url }) })
     }
 
     const { dashboardActions, dashboardRoles, openStream, dashboardReads } = company.dashboard
@@ -65,7 +79,10 @@ export function createRoutes(server, companies, accounts) {
       if (!act) throw new ApiError(404, 'Not Found')
       const needed = own(dashboardRoles.actions, what)
       allow(needed)
-      return sendJson(res, 200, { ok: true, result: await act(await bodyOf(needed), req) })
+      const params = await bodyOf(needed)
+      const result = await act(params, req)
+      written(what, params)
+      return sendJson(res, 200, { ok: true, result })
     }
     if (req.method !== 'GET') throw new ApiError(405, 'Method Not Allowed')
     if (what === 'stream') { allow(dashboardRoles.reads.stream); return openStream(req, res) }
@@ -82,6 +99,15 @@ export function createRoutes(server, companies, accounts) {
       if (actor.token || actor.is_platform_admin) return sendJson(res, 200, { ok: true, result: companies.list() })
       const mine = companies.list().filter(c => accounts.roleIn(actor, c.id))
       return sendJson(res, 200, { ok: true, result: mine.map(c => ({ id: c.id, name: c.name, status: c.status })) })
+    }
+    // A company waiting to be deleted: its owners and administrators can bring it back.
+    if (what === 'companies/restore') {
+      if (req.method !== 'POST') throw new ApiError(405, 'Method Not Allowed')
+      const id = String((await readParams(req, url)).company ?? '')
+      if (!actor.token && !actor.is_platform_admin && accounts.roleIn(actor, id) !== 'owner') throw new ApiError(404, 'Not Found: no company waiting to be deleted with that id')
+      const restored = companies.restore(id)
+      accounts.audit(actor, 'company-restored', id, req)
+      return sendJson(res, 200, { ok: true, result: restored })
     }
     if (!actor.token && !actor.is_platform_admin) throw new ApiError(403, 'Forbidden: this is for administrators of the server')
     if (what === 'machines') {

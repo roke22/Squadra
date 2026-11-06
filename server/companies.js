@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import {
-  ApiError, DATA_DIR, FIRST_COMPANY, bad, cleanText, guarded, logError, now, openControl,
+  ApiError, DATA_DIR, FIRST_COMPANY, VERSION, bad, cleanText, guarded, logError, now, openControl,
 } from './platform/index.js'
 import { createCompany } from './company.js'
+import { streamExport } from './company-export.js'
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const COMPANY_NAME = /^[\p{L}\p{N} ._&-]{1,80}$/u
@@ -14,7 +15,11 @@ const COMPANY_NAME = /^[\p{L}\p{N} ._&-]{1,80}$/u
 const CREDENTIAL_COMPANY = /^s[qjh]_([a-z0-9]{8})_/
 
 // What a company may keep, when it isn't what the server starts with.
-const QUOTAS = ['max_sessions', 'max_messages', 'max_events', 'max_updates', 'max_files_gb']
+const QUOTAS = ['max_sessions', 'max_messages', 'max_events', 'max_updates', 'max_files_gb', 'retention_days', 'event_hours']
+const RETENTION = ['retention_days', 'event_hours']
+
+// How long a company waits after being deleted, in case it was a mistake.
+const GRACE_MS = Number(process.env.SQUADRA_COMPANY_GRACE_MS ?? 30 * 24 * 3600_000)
 
 // The copy of the data taken before a server first has companies: for going back
 // if something goes wrong. It holds what sessions have deleted since, so it goes.
@@ -28,6 +33,7 @@ export function createCompanies(server) {
 
   const open = new Map() // id -> a company running
   const failed = new Set() // ids of those that could not start: the others go on
+  const deleting = new Set() // ids of those waiting to be deleted: stopped, their data kept
   let serving = false
 
   const row = id => control.prepare('SELECT * FROM companies WHERE id = ?').get(id)
@@ -50,6 +56,7 @@ export function createCompanies(server) {
   if (!row(FIRST_COMPANY)) control.prepare('INSERT INTO companies (id, name, created_at) VALUES (?, ?, ?)').run(FIRST_COMPANY, 'Default', now())
   start(row(FIRST_COMPANY))
   for (const r of control.prepare('SELECT * FROM companies WHERE id != ?').all(FIRST_COMPANY)) {
+    if (r.status === 'deleting') { deleting.add(r.id); continue }
     try { start(r) } catch (err) {
       failed.add(r.id)
       logError(`company ${r.id} could not start: ${err.stack ?? err}`)
@@ -59,13 +66,25 @@ export function createCompanies(server) {
   function cleanup() {
     control.prepare('DELETE FROM enrollment_routes WHERE expires_at < ?').run(now())
     try { if (now() - statSync(BEFORE_COMPANIES).mtimeMs > COPY_KEPT_MS) rmSync(BEFORE_COMPANIES, { force: true }) } catch {}
+    // Their time is up: gone, with all that was theirs.
+    for (const r of control.prepare("SELECT id, name FROM companies WHERE status = 'deleting' AND delete_after < ?").all(now())) {
+      rmSync(folderOf(r.id), { recursive: true, force: true })
+      control.prepare('DELETE FROM companies WHERE id = ?').run(r.id)
+      deleting.delete(r.id)
+      control.prepare('INSERT INTO platform_audit (at, action, target, detail) VALUES (?, ?, ?, ?)').run(now(), 'company-deleted', r.id, r.name)
+      process.stderr.write(`squadra-server: company "${r.name}" (${r.id}) deleted, with its data\n`)
+    }
   }
   setInterval(guarded(cleanup), 3600_000).unref()
   cleanup()
 
   const nameOf = id => row(id)?.name ?? null
+  const statusOf = id => { const r = row(id); return r ? { status: r.status, delete_after: r.delete_after } : {} }
   // Across every company: someone lost a session, or all their access.
   const dropClients = match => { for (const c of open.values()) c.dropClients(match) }
+
+  const stopped = id => (failed.has(id) ? 'could not start; see the server log' : deleting.has(id) ? 'is being deleted' : null)
+  const refuseIfStopped = id => { if (id && stopped(id)) throw new ApiError(503, `Service Unavailable: this company ${stopped(id)}`) }
 
   const first = () => open.get(FIRST_COMPANY)
   const get = id => open.get(id) ?? null
@@ -74,13 +93,13 @@ export function createCompanies(server) {
   // no company is an old secret that looks like one by chance.
   function of(credential) {
     const id = CREDENTIAL_COMPANY.exec(String(credential ?? ''))?.[1]
-    if (id && failed.has(id)) throw new ApiError(503, 'Service Unavailable: this company could not start; see the server log')
+    refuseIfStopped(id)
     return (id && open.get(id)) || first()
   }
 
   function forEnrollment(key) {
     const id = control.prepare('SELECT company_id FROM enrollment_routes WHERE code_hash = ?').get(key)?.company_id
-    if (id && failed.has(id)) throw new ApiError(503, 'Service Unavailable: this company could not start; see the server log')
+    refuseIfStopped(id)
     return (id && open.get(id)) || first()
   }
   const enrolled = key => control.prepare('DELETE FROM enrollment_routes WHERE code_hash = ?').run(key)
@@ -95,7 +114,7 @@ export function createCompanies(server) {
     return out
   }
 
-  const view = r => ({ id: r.id, name: r.name, status: failed.has(r.id) ? 'unavailable' : r.status, limits: quotasOf(r), created_at: r.created_at })
+  const view = r => ({ id: r.id, name: r.name, status: failed.has(r.id) ? 'unavailable' : r.status, limits: quotasOf(r), created_at: r.created_at, delete_after: r.delete_after ?? undefined })
   const list = () => control.prepare('SELECT * FROM companies ORDER BY created_at, id').all().map(view)
 
   // Which machines serve which companies, by what each machine says it is:
@@ -158,6 +177,72 @@ export function createCompanies(server) {
     return view(row(id))
   }
 
+  // Stopped now, and deleted when its time is up. Until then it can come back whole.
+  function scheduleDelete(company, confirm) {
+    const r = row(company.id)
+    if (company.id === FIRST_COMPANY) throw new ApiError(409, 'Conflict: the first company can\'t be deleted')
+    if (confirm !== r.name) throw bad('write the name of the company, exactly, to confirm')
+    const at = now() + GRACE_MS
+    control.prepare("UPDATE companies SET status = 'deleting', delete_after = ? WHERE id = ?").run(at, company.id)
+    control.prepare('DELETE FROM enrollment_routes WHERE company_id = ?').run(company.id)
+    deleting.add(company.id)
+    open.delete(company.id)
+    company.close()
+    process.stderr.write(`squadra-server: company "${r.name}" (${company.id}) stopped: it will be deleted on ${new Date(at).toISOString()}\n`)
+    return { id: company.id, status: 'deleting', delete_after: at }
+  }
+  function restore(id) {
+    const r = row(id)
+    if (!r || !deleting.has(id)) throw new ApiError(404, 'Not Found: no company waiting to be deleted with that id')
+    control.prepare("UPDATE companies SET status = 'active', delete_after = NULL WHERE id = ?").run(id)
+    deleting.delete(id)
+    start(row(id))
+    process.stderr.write(`squadra-server: company "${r.name}" (${id}) restored\n`)
+    return view(row(id))
+  }
+
+  // What is about the company itself, for those in it. (See routes.js for who.)
+  const exporting = new Set()
+  const companyMethods = {
+    'company/audit': {
+      role: 'manager', method: 'GET',
+      run({ company, url }) {
+        const before = Number(url.searchParams.get('before')) || undefined
+        const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit')) || 100, 500))
+        return company.platform.auditLog({ before, limit })
+      },
+    },
+    'company/retention': {
+      role: 'manager', method: 'GET',
+      run: ({ company }) => ({ retention_days: company.platform.quota('retention_days', 7), event_hours: company.platform.quota('event_hours', Number(process.env.OBSERVE_TTL_HOURS ?? 24)) }),
+    },
+    'company/retention/set': {
+      role: 'owner', method: 'POST',
+      run({ company, params }) {
+        const wanted = Object.fromEntries(RETENTION.filter(k => params[k] != null).map(k => [k, params[k]]))
+        const limits = { ...quotasOf(row(company.id)), ...cleanQuotas(wanted) }
+        if ((limits.retention_days ?? 0) > 3650 || (limits.event_hours ?? 0) > 8760) throw bad('at most 3650 days of messages and 8760 hours of activity')
+        control.prepare('UPDATE companies SET limits_json = ? WHERE id = ?').run(JSON.stringify(limits), company.id)
+        company.platform.setQuotas(limits)
+        return { retention_days: limits.retention_days ?? 7, event_hours: limits.event_hours ?? null }
+      },
+    },
+    // (It answers by itself: a whole company goes down the response as it is read.)
+    'company/export': {
+      role: 'owner', method: 'GET', streams: true,
+      async run({ company, res }) {
+        if (exporting.has(company.id)) throw new ApiError(409, 'Conflict: an export of this company is under way')
+        if (!company.platform.allow('export', 'all', 5, 3600_000)) throw new ApiError(429, 'Too Many Requests: at most 5 exports an hour')
+        exporting.add(company.id)
+        try { await streamExport(company, { id: company.id, name: row(company.id).name, squadra: VERSION }, res) } finally { exporting.delete(company.id) }
+      },
+    },
+    'company/delete': {
+      role: 'owner', method: 'POST',
+      run: ({ company, params }) => scheduleDelete(company, params.confirm),
+    },
+  }
+
   const adminMethods = {
     createCompany: add,
     listCompanies: list,
@@ -175,7 +260,7 @@ export function createCompanies(server) {
   }
 
   return {
-    control, machines, first, get, of, nameOf, dropClients, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
+    control, companyMethods, restore, machines, first, get, of, nameOf, statusOf, dropClients, all: () => [...open.values()], list, adminMethods, forEnrollment, enrolled, nowServing, close,
   }
 }
 

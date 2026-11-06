@@ -4,7 +4,7 @@ import {
 } from '../platform/index.js'
 
 export function createSessions(platform) {
-  const { db, bus, readLimit, allow, takeChallenge, proofIsGood, quota, companyId, credentialPrefix } = platform
+  const { db, bus, readLimit, allow, takeChallenge, proofIsGood, quota, companyId, credentialPrefix, every } = platform
 
   const MAX_UPDATES = Number(process.env.SQUADRA_MAX_UPDATES ?? 500_000)       // undelivered updates kept, in all
   const MAX_UPDATES_PER_SESSION = 10_000                                        // undelivered updates kept, per recipient
@@ -415,7 +415,7 @@ export function createSessions(platform) {
       }
     }
   }
-  setInterval(guarded(sweepLeases), 3000).unref()
+  every(3000, guarded(sweepLeases))
 
   function markPolled(name) {
     const p = presence.get(name)

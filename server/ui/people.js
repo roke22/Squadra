@@ -1,4 +1,4 @@
-import { T } from './i18n.js'
+import { T, LOCALE } from './i18n.js'
 import { state, can } from './state.js'
 import { call, inCompany } from './api.js'
 import { esc } from './format.js'
@@ -8,6 +8,7 @@ const ROLES = ['observer', 'operator', 'manager', 'owner']
 // Only owners give or take the role of owner.
 const grantable = () => ROLES.filter(r => r !== 'owner' || can('owner'))
 const roleSelect = (value, attrs = '') => `<select ${attrs}>${grantable().map(r => `<option value="${r}" ${r === value ? 'selected' : ''}>${esc(T.roles[r])}</option>`).join('')}</select>`
+const fmtTime = ms => new Date(ms).toLocaleString(LOCALE, { dateStyle: 'medium', timeStyle: 'short' })
 const linkBox = l => `<div class="cmdrow"><pre class="cmd">${esc(l.link)}</pre><button class="btn" data-copy>${esc(T.copy)}</button></div><p class="note">${esc(T.linkOnce)}</p>`
 
 // The dashboard's people: who is in this company, and (for an administrator of
@@ -16,7 +17,7 @@ export function openPeople() {
   const admin = state.me?.user.is_platform_admin
   const manager = can('manager')
   const tabs = [
-    ...(manager ? [['members', T.tabMembers]] : []),
+    ...(manager ? [['members', T.tabMembers], ['company', T.tabCompany]] : []),
     ...(admin ? [['companies', T.tabCompanies], ['users', T.tabUsers], ['machines', T.tabMachines]] : []),
     ['account', T.tabAccount],
   ]
@@ -37,7 +38,7 @@ export function openPeople() {
     current = tab
     ok()
     for (const b of d.el.querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === tab)
-    try { await ({ members, companies, users, machines, account })[tab]() } catch (err) { fail(err) }
+    try { await ({ members, company, companies, users, machines, account })[tab]() } catch (err) { fail(err) }
   }
 
   async function members() {
@@ -73,13 +74,57 @@ export function openPeople() {
     }
   }
 
+  // Who did what here; and, for its owners, how long things are kept, and the
+  // company as a file, or deleted.
+  async function company() {
+    const turn = ++drawing
+    const [log, kept] = await Promise.all([call(inCompany('/api/company/audit?limit=50')), call(inCompany('/api/company/retention'))])
+    if (turn !== drawing) return
+    const here = state.me.companies.find(c => c.id === state.company)
+    const rows = log.map(e => `<tr><td><span class="note">${esc(fmtTime(e.at))}</span></td><td>${esc(e.who ?? '—')}</td><td>${esc(e.action)}${e.target ? ` · ${esc(e.target)}` : ''}</td></tr>`).join('')
+    body.innerHTML = `<h4>${esc(T.auditTitle)}</h4>${rows ? `<table class="people audit"><tbody>${rows}</tbody></table>` : `<p class="note">${esc(T.auditEmpty)}</p>`}
+      ${can('owner') ? `<h4>${esc(T.retentionTitle)}</h4>
+      <form data-retention class="people-form"><label class="field"><span>${esc(T.retentionDays)}</span><input type="text" inputmode="numeric" name="retention_days" value="${esc(kept.retention_days)}"></label>
+        <label class="field"><span>${esc(T.eventHours)}</span><input type="text" inputmode="numeric" name="event_hours" value="${esc(kept.event_hours)}"></label>
+        <button class="btn primary">${esc(T.save)}</button></form><p class="note" data-saved></p>
+      <h4>${esc(T.exportTitle)}</h4><p class="note">${esc(T.exportHint)}</p>
+      <a class="btn" href="${esc(inCompany('/api/company/export'))}" download>${esc(T.exportBtn)}</a>
+      ${state.company === 'default' ? '' : `<h4>${esc(T.deleteCompanyTitle)}</h4><p class="note">${esc(T.deleteCompanyHint)}</p>
+      <form data-delete-company class="people-form"><label class="field"><span>${esc(T.deleteCompanyConfirm(here?.name ?? ''))}</span><input type="text" name="confirm" autocomplete="off" required></label>
+        <button class="btn danger">${esc(T.deleteCompanyBtn)}</button></form>`}` : ''}`
+    const retention = body.querySelector('[data-retention]')
+    if (retention) {
+      retention.onsubmit = async e => {
+        e.preventDefault()
+        ok()
+        const v = Object.fromEntries(new FormData(e.target))
+        try {
+          await call(inCompany('/api/company/retention/set'), { retention_days: Number(v.retention_days), event_hours: Number(v.event_hours) })
+          body.querySelector('[data-saved]').textContent = T.saved
+        } catch (err) { fail(err) }
+      }
+    }
+    const del = body.querySelector('[data-delete-company]')
+    if (del) {
+      del.onsubmit = async e => {
+        e.preventDefault()
+        ok()
+        if (new FormData(e.target).get('confirm') !== here?.name) { d.el.querySelector('.err').textContent = T.deleteCompanyWrong; return }
+        try {
+          await call(inCompany('/api/company/delete'), Object.fromEntries(new FormData(e.target)))
+          location.href = location.pathname
+        } catch (err) { fail(err) }
+      }
+    }
+  }
+
   async function companies() {
     const turn = ++drawing
     const list = await call('/api/companies')
     if (turn !== drawing) return
     const mine = new Set(state.me.companies.map(c => c.id))
     body.innerHTML = `<table class="people"><tbody>${list.map(c => `<tr><td><b>${esc(c.name)}</b><br><span class="note">${esc(c.id)}${c.status === 'unavailable' ? ` · ${esc(T.unavailable)}` : ''}</span></td>
-        <td>${mine.has(c.id) ? `<a class="btn" href="?company=${encodeURIComponent(c.id)}">${esc(T.openCompany)}</a>` : `<button class="btn" data-join="${esc(c.id)}">${esc(T.joinCompany)}</button>`}</td></tr>`).join('')}</tbody></table>
+        <td>${c.status === 'deleting' ? `<span class="note">${esc(T.deletesOn(fmtTime(c.delete_after)))}</span> <button class="btn" data-restore="${esc(c.id)}">${esc(T.restore)}</button>` : mine.has(c.id) ? `<a class="btn" href="?company=${encodeURIComponent(c.id)}">${esc(T.openCompany)}</a>` : `<button class="btn" data-join="${esc(c.id)}">${esc(T.joinCompany)}</button>`}</td></tr>`).join('')}</tbody></table>
       <form data-create class="people-form"><label class="field"><span>${esc(T.companyName)}</span><input type="text" name="name" required maxlength="80"></label>
         <button class="btn primary">${esc(T.createCompany)}</button></form><div data-link></div>`
     body.querySelector('[data-create]').onsubmit = async e => {
@@ -116,7 +161,9 @@ export function openPeople() {
   function account() {
     drawing++
     const me = state.me.user
+    const waiting = state.me.deleting ?? []
     body.innerHTML = `<p><b>${esc(me.name)}</b> · ${esc(me.email)}</p>
+      ${waiting.length ? `<table class="people"><tbody>${waiting.map(c => `<tr><td><b>${esc(c.name)}</b><br><span class="note">${esc(T.deletesOn(fmtTime(c.delete_after)))}</span></td><td><button class="btn" data-restore="${esc(c.id)}">${esc(T.restore)}</button></td></tr>`).join('')}</tbody></table>` : ''}
       <form data-password class="people-stack"><label class="field"><span>${esc(T.currentPassword)}</span><input type="password" name="current" autocomplete="current-password" required></label>
       <label class="field"><span>${esc(T.newPassword)}</span><input type="password" name="password" autocomplete="new-password" minlength="12" required></label>
       <button class="btn primary">${esc(T.setPassword)}</button></form><p class="note" data-done></p>`
@@ -145,6 +192,7 @@ export function openPeople() {
       if (b.dataset.cancelInvite) { await call(inCompany('/api/invitations/cancel'), { id: b.dataset.cancelInvite }); await members() }
       if (b.dataset.rotate !== undefined) { await call(inCompany('/api/join-token/rotate'), {}); await members() }
       if (b.dataset.join) { await call('/api/companies/join', { company: b.dataset.join }); state.me.companies.push({ id: b.dataset.join, role: 'owner' }); await companies() }
+      if (b.dataset.restore) { await call('/api/companies/restore', { company: b.dataset.restore }); location.href = `${location.pathname}?company=${encodeURIComponent(b.dataset.restore)}` }
       if (b.dataset.reset) body.querySelector('[data-link]').innerHTML = linkBox(await call('/api/users/reset', { user: b.dataset.reset }))
       if (b.dataset.disable) { await call('/api/users/disable', { user: b.dataset.disable }); await users() }
       if (b.dataset.enable) { await call('/api/users/enable', { user: b.dataset.enable }); await users() }

@@ -31,7 +31,7 @@ git checkout "$(git tag --sort=-v:refname | head -1)"   # la última versión
 node server/server.js          # panel en http://127.0.0.1:7787
 ```
 
-Entra con el token del servidor que muestra, abre **Máquinas → + Añadir máquina** y ejecuta el comando que te enseña en cada equipo donde quieras agentes. Eso es todo: los detalles, Docker y HTTPS están en los [pasos 1 y 2](#1-instala-el-panel).
+Crea el primer propietario con el token del servidor que muestra (necesitarás una app de autenticación para los códigos), abre **Máquinas → + Añadir máquina** y ejecuta el comando que te enseña en cada equipo donde quieras agentes. Eso es todo: los detalles, Docker y HTTPS están en los [pasos 1 y 2](#1-instala-el-panel).
 
 ### ¿Solo quieres probarlo? Docker
 
@@ -52,7 +52,7 @@ cat squadra/data/server-token
 
 También aparece en los logs, en el recuadro *Squadra demo*: `docker-compose logs`. Es siempre el mismo aunque reinicies el contenedor.
 
-**3. Entra:** abre **http://localhost:7787** y pega el token. Después, **+ Nueva sesión** (o 🏢 **Organigrama → + Escuadra**) con la carpeta `/squadra/projects/demo`, un proyecto de ejemplo con tres personas. La primera vez, Claude Code pide en el terminal de la sesión el tema, tu login de Claude (`/login`) y si confías en la carpeta; el login se guarda para todas las sesiones siguientes.
+**3. Crea el primer propietario:** abre **http://localhost:7787** y escribe el token, tu nombre, tu email y una contraseña; luego añade el código a tu app de autenticación. Después, **+ Nueva sesión** (o 🏢 **Organigrama → + Escuadra**) con la carpeta `/squadra/projects/demo`, un proyecto de ejemplo con tres personas. La primera vez, Claude Code pide en el terminal de la sesión el tema, tu login de Claude (`/login`) y si confías en la carpeta; el login se guarda para todas las sesiones siguientes.
 
 Para pararlo, `docker-compose down` (la carpeta se queda). Para actualizarlo, `git fetch --tags && git checkout "$(git tag --sort=-v:refname | head -1)"` y después `docker-compose up -d --build`. Solo este equipo puede acceder. Más en [el README de la demo](deploy/demo/README-es.md).
 
@@ -120,7 +120,7 @@ git checkout "$(git tag --sort=-v:refname | head -1)"   # la última versión
 node server/server.js
 ```
 
-Abre **http://127.0.0.1:7787** y entra con el **token del servidor** que muestra la primera vez que arranca (queda en `data/server-token`).
+Abre **http://127.0.0.1:7787** y crea el primer propietario con el **token del servidor** que muestra la primera vez que arranca (queda en `data/server-token`). A partir de ahí entras con tu email, tu contraseña y un código. Desde **Personas** puedes invitar a otros y añadir empresas: mira [Empresas y personas](docs/referencia.md#empresas-y-personas).
 
 **Con Docker**, en su lugar:
 
@@ -169,7 +169,7 @@ Los **[ejemplos](https://roke22.github.io/Squadra/es/ejemplos.html)** muestran o
 
 ## Buenos consejos
 
-- **Usa HTTPS** (un dominio, paso 1) cuando otros equipos se conecten a tu panel, y guarda el token del servidor solo para ti: es la llave del panel.
+- **Usa HTTPS** (un dominio, paso 1) cuando otros equipos se conecten a tu panel, y guarda el token del servidor solo para ti: crea el primer propietario, recupera el acceso y siempre vale en `/admin`.
 - **Dale al coordinador su propio repositorio** con un `CLAUDE.md` que describa tu equipo: qué worker lleva cada repositorio, cuándo una tarea está terminada y qué debe consultarte siempre. Así cada coordinador que abras desde él trabaja igual.
 - **Pon a los workers nombres de lo que hacen** (`api`, `web`, `docs`): el coordinador los usa para decidir a quién da cada tarea.
 - **Dale una persona a cada worker:** en **+ Nueva sesión**, elige una de las skills (`.claude/skills/<nombre>/SKILL.md`) o agentes (`.claude/agents/<nombre>.md`) que la máquina encuentra en esa carpeta o en `~/.claude`. Va en el system prompt del agente, así que se mantiene tras las compactaciones, y su coordinador sabe qué persona sigue cada worker.
