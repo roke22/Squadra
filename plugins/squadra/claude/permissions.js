@@ -283,6 +283,9 @@ export function takePermissionReply(msg, match) {
     if (fails.length === 5) log(`ignoring permission answers from "${sender}" for 10 minutes: too many that matched no request sent to it`)
     return null
   }
+  // Allowing a tool call is never taken on the server's word: where it proved
+  // its key, an unsigned answer could have been written by it.
+  if (S?.serverKey && !msg.squadra_sig) { log(`unsigned permission answer from "${sender}" ignored: the prompt stays open`); return null }
   pendingPermissions.delete(id)
   return { request_id: id, behavior: match[1].toLowerCase().startsWith('y') ? 'allow' : 'deny' }
 }

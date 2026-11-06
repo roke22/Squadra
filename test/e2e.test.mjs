@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { spawn, execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, readdirSync, mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, appendFileSync, realpathSync, statSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -2642,4 +2642,88 @@ test('a CLAUDE_CONFIG_DIR that is set and ignored stops the login: the default f
     p.close()
   }
   rmSync(open, { recursive: true, force: true })
+})
+
+test('signatures: each sender has its own list and floor, and nothing evicted can be handed over again', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'squadra-cfg-sig-'))
+  const script = `
+    import { signatureReplayed } from ${JSON.stringify(join(ROOT, 'plugins/squadra/core/signed.js'))}
+    import { writeFileSync } from 'node:fs'
+    const file = ${JSON.stringify(join(dir, 'seen.json'))}
+    const now = Date.now()
+    const out = {}
+    // Filling one sender's list: what is evicted stays refused, the last one too, in order.
+    const a = { sigSeenFile: file }
+    for (let i = 0; i < 2001; i++) signatureReplayed(a, 'a', { nonce: 'n' + i, ts: now - 100000 + i })
+    out.evictedAgain = signatureReplayed(a, 'a', { nonce: 'n0', ts: now - 100000 })
+    out.nextStillListed = signatureReplayed(a, 'a', { nonce: 'n1', ts: now - 99999 })
+    // Another sender is not affected by those, nor by a date as far ahead as is taken.
+    out.otherSender = signatureReplayed(a, 'b', { nonce: 'x', ts: now - 200000 })
+    out.aheadInSkew = signatureReplayed(a, 'c', { nonce: 'y', ts: now + 5 * 60000 })
+    out.tooFarAhead = signatureReplayed(a, 'c', { nonce: 'z', ts: now + 3600000 })
+    // Saved: the same again after a restart.
+    const again = { sigSeenFile: file }
+    out.afterRestart = signatureReplayed(again, 'a', { nonce: 'n0', ts: now - 100000 })
+    out.sameNonceSaved = signatureReplayed(again, 'b', { nonce: 'x', ts: now - 200000 })
+    // A file of before, poisoned with a floor a day ahead: it recovers, and its list counts.
+    const old = ${JSON.stringify(join(dir, 'old.json'))}
+    writeFileSync(old, JSON.stringify({ floor: now + 86400000, seen: [['a:old1', now - 1000]] }))
+    const poisoned = { sigSeenFile: old }
+    out.recovered = signatureReplayed(poisoned, 'b', { nonce: 'fresh', ts: now + 1000 })
+    out.oldListKept = signatureReplayed(poisoned, 'a', { nonce: 'old1', ts: now - 1000 })
+    process.stdout.write(JSON.stringify(out))`
+  const out = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { PATH: process.env.PATH, CLAUDE_CONFIG_DIR: dir }, cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
+  assert.deepEqual(out, {
+    evictedAgain: true, nextStillListed: true, otherSender: false, aheadInSkew: false, tooFarAhead: true,
+    afterRestart: true, sameNonceSaved: true, recovered: false, oldListKept: true,
+  })
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('allowing a tool call is not taken from an unsigned message, where the server proved its key', async () => {
+  const c = (await api('register', { name: 'usc1' }, SERVER_TOKEN)).result.secret
+  await api('claimSession', { instance: 'inst-usc1-001', role: 'coordinator' }, c, 'inst-usc1-001')
+  const w = new Plugin('usw1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'usc1', SQUADRA_ALLOW_FROM: 'usc1' })
+  await w.init()
+  await w.waitConnected()
+  const said = async text => JSON.stringify((await api('getUpdates', { timeout: 0, instance: 'inst-usc1-001' }, c, 'inst-usc1-001')).result ?? []).includes(text)
+  await waitFor(() => said('usw1 connected'), { what: 'its greeting' })
+  w.notify('notifications/claude/channel/permission_request', { request_id: 'kmnpq', tool_name: 'Bash', description: 'List', input_preview: '{"command":"ls"}' })
+  await waitFor(() => said('yes kmnpq'), { what: 'the prompt' })
+  assert.ok((await api('sendMessage', { chat_id: 'usw1', text: 'yes kmnpq' }, c, 'inst-usc1-001')).ok)
+  await sleep(1000)
+  assert.equal(w.notifications.filter(n => n.method === 'notifications/claude/channel/permission').length, 0)
+  w.close()
+})
+
+test('a name that moves to another company starts its list of who may write again, and one that stays keeps it', async () => {
+  const a = (await api('admin/createCompany', { name: 'Scope A' }, SERVER_TOKEN)).result
+  const b = (await api('admin/createCompany', { name: 'Scope B' }, SERVER_TOKEN)).result
+  const start = async (join_token, configDir) => {
+    const envFile = `SQUADRA_URL=${URL_}\nSQUADRA_SERVER_TOKEN=${join_token}\n`
+    const p = new Plugin('scope1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator' }, { noServer: true, envFile, configDir })
+    await p.init()
+    await p.waitConnected()
+    return p
+  }
+  const first = await start(a.join_token)
+  const { configDir, stateDir } = first
+  const access = join(stateDir, 'access.json')
+  await first.tool('status', {})
+  const list = existsSync(access) ? JSON.parse(readFileSync(access, 'utf8')) : { dmPolicy: 'pairing', allowFrom: [], groups: {}, pending: {} }
+  list.allowFrom.push('reviewer')
+  writeFileSync(access, JSON.stringify(list))
+  first.close()
+  await sleep(300)
+  // Back in the same one: as it was.
+  const same = await start(a.join_token, configDir)
+  assert.ok(JSON.parse(readFileSync(access, 'utf8')).allowFrom.includes('reviewer'))
+  same.close()
+  await sleep(300)
+  // The identity removed, as the plugin suggests, and now in the other one.
+  rmSync(join(stateDir, 'identity.json'))
+  const moved = await start(b.join_token, configDir)
+  assert.ok(!existsSync(access) || !JSON.parse(readFileSync(access, 'utf8')).allowFrom.includes('reviewer'))
+  assert.ok(readdirSync(stateDir).some(f => f.startsWith('access.json.other-')))
+  moved.close()
 })

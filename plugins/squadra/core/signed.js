@@ -89,27 +89,42 @@ function pinPeerKey(name, key) {
 // A signature is good once: nobody can hand a session an old message again.
 const SIG_MAX_AGE_MS = 8 * 24 * 3600_000 // (messages are kept for 7 days)
 const SIG_SEEN_MAX = 2000
-function signatureReplayed(s, sender, opened) {
+const SIG_MAX_AHEAD_MS = 10 * 60_000 // (machines' clocks differ, by minutes)
+// Each sender has its own list and its own floor: nobody's timestamps, which are
+// their word, can make a session drop what anybody else sends.
+export function signatureReplayed(s, sender, opened) {
+  const t = Date.now()
   if (!s.sigSeen) {
-    s.sigSeen = { floor: 0, map: new Map() }
+    s.sigSeen = { senders: new Map(), before: 0 }
     try {
       const saved = JSON.parse(readFileSync(s.sigSeenFile, 'utf8'))
-      s.sigSeen.floor = Number(saved.floor) || 0
-      s.sigSeen.map = new Map(saved.seen)
+      // (A floor ahead of now was never a good one.)
+      s.sigSeen.before = Math.min(Number(saved.before ?? saved.floor) || 0, t)
+      if (saved.senders) {
+        for (const [name, { floor, seen }] of Object.entries(saved.senders)) s.sigSeen.senders.set(name, { floor: Math.min(Number(floor) || 0, t), map: new Map(seen) })
+      } else {
+        // As they were, in one list for all.
+        for (const [id, ts] of saved.seen ?? []) {
+          const name = id.slice(0, id.indexOf(':'))
+          if (!s.sigSeen.senders.has(name)) s.sigSeen.senders.set(name, { floor: s.sigSeen.before, map: new Map() })
+          s.sigSeen.senders.get(name).map.set(id.slice(name.length + 1), ts)
+        }
+      }
     } catch {}
   }
-  const seen = s.sigSeen
-  const t = Date.now()
-  if (opened.ts > t + 24 * 3600_000 || opened.ts < t - SIG_MAX_AGE_MS || opened.ts < seen.floor) return true
-  const id = `${sender}:${opened.nonce}`
-  if (seen.map.has(id)) return true
-  seen.map.set(id, opened.ts)
+  if (!s.sigSeen.senders.has(sender)) s.sigSeen.senders.set(sender, { floor: s.sigSeen.before, map: new Map() })
+  const seen = s.sigSeen.senders.get(sender)
+  // (The floor itself is refused too: the entry that set it is no longer listed.)
+  if (opened.ts > t + SIG_MAX_AHEAD_MS || opened.ts < t - SIG_MAX_AGE_MS || opened.ts <= seen.floor) return true
+  if (seen.map.has(opened.nonce)) return true
+  seen.map.set(opened.nonce, opened.ts)
   for (const [k, ts] of seen.map) {
     if (ts >= t - SIG_MAX_AGE_MS && seen.map.size <= SIG_SEEN_MAX) break
     seen.map.delete(k)
     seen.floor = Math.max(seen.floor, ts)
   }
-  try { writePrivateFile(s.sigSeenFile, JSON.stringify({ floor: seen.floor, seen: [...seen.map] }) + '\n') } catch (err) { log(`could not save the signatures seen: ${err.message}`) }
+  const senders = Object.fromEntries([...s.sigSeen.senders].map(([name, { floor, map }]) => [name, { floor, seen: [...map] }]))
+  try { writePrivateFile(s.sigSeenFile, JSON.stringify({ before: s.sigSeen.before, senders }) + '\n') } catch (err) { log(`could not save the signatures seen: ${err.message}`) }
   return false
 }
 

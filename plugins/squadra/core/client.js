@@ -149,6 +149,8 @@ export async function downloadFile(file_id, s = S, signal = null) {
 }
 
 // Identity: the secret is issued once by the server and stored locally.
+export const companyOf = t => /^s[qj]_([a-z0-9]{8})_/.exec(t ?? '')?.[1] ?? null
+
 export async function loadIdentity(s) {
   let saved = null
   try { saved = JSON.parse(readFileSync(s.identityFile, 'utf8')) } catch {}
@@ -160,7 +162,6 @@ export async function loadIdentity(s) {
     // Nor to another company of that server: a secret only opens the company it
     // was issued for, so the session would stay in the old one without a word.
     // (The server token, or a join token chosen by hand, says no company.)
-    const companyOf = t => /^s[qj]_([a-z0-9]{8})_/.exec(t ?? '')?.[1] ?? null
     if (/^sj_/.test(SERVER_TOKEN ?? '') && companyOf(saved.secret) !== companyOf(SERVER_TOKEN)) {
       throw new Error(`the identity "${s.name}" belongs to another company than the join token in this machine's .env: its secret will not be used. Log in with another name, or delete ${s.identityFile} if you really moved it`)
     }

@@ -1,18 +1,34 @@
 // Joining the server and staying there.
 
-import { rmSync } from 'node:fs'
+import { readFileSync, renameSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { proveKey } from '../signing.js'
 import { agent } from './agent.js'
-import { SERVER_TOKEN, log } from './settings.js'
+import { SERVER_TOKEN, SERVER_URL, log } from './settings.js'
 import { newSession, setSession, S, active } from './session.js'
-import { forgetCoordinatorPin, checkLinks } from './access.js'
-import { loadIdentity, call, ApiError, releasePidFile } from './client.js'
+import { forgetCoordinatorPin, checkLinks, writePrivateFile } from './access.js'
+import { loadIdentity, companyOf, call, ApiError, releasePidFile } from './client.js'
 import { syncGroups, checkApprovals } from './groups.js'
 import { serverIdentity, loadSigningKey, ServerKeyError } from './signed.js'
 import { checkCoordinator, handleInbound, RetryLater } from './inbound.js'
 
 // Joins the server under this name (refused if another active session holds it).
 // By the time it returns the session may have been logged out: the caller checks.
+// Who may write to this name was approved where it was then. In another server
+// or company, those names can be anyone's: the list starts again, kept aside.
+function setAsideIfMoved(s) {
+  const file = join(s.stateDir, 'scope.json')
+  const scope = { server: SERVER_URL, company: companyOf(s.secret) }
+  let was = null
+  try { was = JSON.parse(readFileSync(file, 'utf8')) } catch {}
+  if (was && (was.server !== scope.server || was.company !== scope.company)) {
+    const stamp = Date.now()
+    for (const f of [s.accessFile, s.allowPinsFile, s.coordinatorPinFile]) { try { renameSync(f, `${f}.other-${stamp}`) } catch {} }
+    log(`"${s.name}" is now in another server or company: who may write to it starts again (the old lists are kept next to them, as .other-${stamp})`)
+  }
+  writePrivateFile(file, JSON.stringify(scope) + '\n')
+}
+
 export async function connect({ name, role, coordinator, staticAccess, seedAllow, approved, confirmedApprovers, relayOff, persona }) {
   const seeds = [...seedAllow]
   if (coordinator && !seeds.includes(coordinator)) seeds.push(coordinator)
@@ -35,6 +51,7 @@ export async function connect({ name, role, coordinator, staticAccess, seedAllow
     // Before any secret goes anywhere: is this our server?
     await serverIdentity()
     s.secret = await loadIdentity(s)
+    setAsideIfMoved(s)
     s.signingKey = loadSigningKey(s)
     // First come, first served: refused if another active session holds the name.
     const claim = async () => {
@@ -54,6 +71,7 @@ export async function connect({ name, role, coordinator, staticAccess, seedAllow
       log(`identity "${name}" unknown to the server, registering it again`)
       rmSync(s.identityFile, { force: true })
       s.secret = await loadIdentity(s)
+      setAsideIfMoved(s)
       await claim()
     }
     // The server just accepted us: we're connected, no need to wait for the
