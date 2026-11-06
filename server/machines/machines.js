@@ -4,7 +4,7 @@ import {
 } from 'node:crypto'
 import {
   bad, ApiError, allowServerWide, ipKey, cachedFile, now, sha256, serverBaseUrl, clientIp, refuseSocket, logError,
-  VERSION, cleanText, cutText, acceptWebSocket, sameOrigin,
+  VERSION, cleanText, pathTooLong, cutText, acceptWebSocket, sameOrigin, trimSlashes,
 } from '../platform/index.js'
 
 const HOST_SCRIPT = [new URL('../../host/squadra-host.mjs', import.meta.url), new URL('../squadra-host.mjs', import.meta.url)]
@@ -498,7 +498,8 @@ export function createMachines(platform, { sessions, observation }) {
     }
   }
   function upgrade(req, socket, head) {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '')
+    if (pathTooLong(req.url)) { refuseSocket(socket, '414 URI Too Long'); return }
+    const path = trimSlashes(new URL(req.url ?? '/', 'http://localhost').pathname)
     // squadra-host never sends an Origin: a browser page can't hold machine slots.
     if (path === '/host/connect' && req.headers.origin) { refuseSocket(socket, '403 Forbidden'); return }
     if (path !== '/host/connect' && path !== '/api/terminal') {

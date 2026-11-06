@@ -3,7 +3,7 @@ import { statSync, createReadStream } from 'node:fs'
 import {
   guardRequest, sendJson, clientIp, readParams, bearer, own, sendError, VERSION, UI_FILE, VENDOR_FILES,
   MAX_JSON_BODY, cachedFile, pageHeaders, ApiError, allowServerWide, ipKey, sha256, refuseSocket, logError,
-  ALLOW_TOKEN_API, atLeast, cleanText,
+  ALLOW_TOKEN_API, atLeast, pathTooLong, cleanText, trimSlashes,
 } from './platform/index.js'
 import {
   INSTALLERS, installer, hostScript, hostSignature, checkEnrollRate, enrollmentKey, offeredCredential,
@@ -133,8 +133,9 @@ export function createRoutes(server, companies, accounts) {
   async function handle(req, res) {
     if (!guardRequest(req, res)) return
     try {
+      if (pathTooLong(req.url)) throw new ApiError(414, 'URI Too Long')
       const url = new URL(req.url ?? '/', 'http://localhost')
-      const path = url.pathname.replace(/\/+$/, '') || '/'
+      const path = trimSlashes(url.pathname) || '/'
 
       if (path === '/health') return sendJson(res, 200, { ok: true, result: 'ok', version: VERSION })
 
@@ -228,7 +229,7 @@ export function createRoutes(server, companies, accounts) {
           if (!m) throw new ApiError(404, 'Not Found')
           return await companyCall(named(m[1]), m[2], req, res, url, actor)
         }
-        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/') || what === 'machines') return await platformCall(what, req, res, url, actor)
+        if (what === 'companies' || what.startsWith('companies/') || what === 'users' || what.startsWith('users/') || what === 'machines' || what === 'links' || what.startsWith('links/')) return await platformCall(what, req, res, url, actor)
         // Without a company: scripts with the server token, on the first one.
         if (!actor.token) throw new ApiError(404, 'Not Found')
         return await companyCall(companies.first(), what, req, res, url, actor)
