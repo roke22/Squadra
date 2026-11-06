@@ -1,7 +1,7 @@
-import { readLimit, bad, unix, now, cleanText, oneLine } from '../platform/index.js'
+import { bad, unix, now, cleanText, oneLine } from '../platform/index.js'
 
 export function createOrganization(platform, { sessions, messaging, observation, machines }) {
-  const { db, broadcast, inTx, bus } = platform
+  const { db, broadcast, inTx, bus, readLimit } = platform
   const {
     roleOf, isOnline, presenceOf, personaView, NAME_RE, linkKey, linked, linksOf, identityExists,
   } = sessions

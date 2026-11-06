@@ -1,7 +1,7 @@
-import { cutText, cleanText, now, ApiError, bad, spendStorage } from '../platform/index.js'
+import { cutText, cleanText, now, ApiError, bad } from '../platform/index.js'
 
 export function createObservation(platform) {
-  const { db, inTx, bus, broadcast } = platform
+  const { db, inTx, bus, broadcast, spendStorage } = platform
 
   const MAX_EVENTS = Number(process.env.SQUADRA_MAX_EVENTS ?? 1_000_000)       // observation events kept, in all
   const EVENT_TTL_MS = Number(process.env.OBSERVE_TTL_HOURS ?? 24) * 60 * 60 * 1000 // live-observation events

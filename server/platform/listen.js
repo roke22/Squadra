@@ -8,10 +8,10 @@ import {
   ACME_EMAIL, ACME_DIRECTORY, HTTP_PORT,
 } from './config.js'
 import { refuseSocket, guardRequest } from './http.js'
-import { ipKey, allow } from './limits.js'
+import { ipKey, allowServerWide } from './limits.js'
 
-export async function startListening(platform, { nowServing, handle, onUpgrade }) {
-  const { TOKEN_SOURCE, SERVER_TOKEN, joinToken, SERVER_KEY, SERVER_KEY_FILE } = platform
+export async function startListening(server, { nowServing, joinToken, handle, onUpgrade }) {
+  const { TOKEN_SOURCE, SERVER_TOKEN, SERVER_KEY, SERVER_KEY_FILE } = server
 
   const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost'])
   const servers = []
@@ -73,7 +73,7 @@ export async function startListening(platform, { nowServing, handle, onUpgrade }
       if (n > 256) {
         // (Said in the log, at most once a minute: behind a tunnel or proxy
         // without --trust-proxy every client shares one address.)
-        if (allow('conn-cap-log', 'all', 1)) process.stderr.write(`squadra-server: ${ip} has 256 connections open: refusing more (behind a reverse proxy or tunnel? start with --trust-proxy)\n`)
+        if (allowServerWide('conn-cap-log', 'all', 1)) process.stderr.write(`squadra-server: ${ip} has 256 connections open: refusing more (behind a reverse proxy or tunnel? start with --trust-proxy)\n`)
         socket.destroy()
       }
     })

@@ -3,15 +3,44 @@ import {
   createDecipheriv,
 } from 'node:crypto'
 import {
-  bad, ApiError, allow, ipKey, cachedFile, now, sha256, serverBaseUrl, clientIp, refuseSocket, logError,
+  bad, ApiError, allowServerWide, ipKey, cachedFile, now, sha256, serverBaseUrl, clientIp, refuseSocket, logError,
   VERSION, PUBLIC_URL, cleanText, cutText, acceptWebSocket,
 } from '../platform/index.js'
 
+const HOST_SCRIPT = [new URL('../../host/squadra-host.mjs', import.meta.url), new URL('../squadra-host.mjs', import.meta.url)]
+
+// The installers that prepare a machine and run squadra-host (install/ in
+// the repository, or next to this file in the Docker image).
+export const INSTALLERS = { 'linux.sh': 'text/x-shellscript; charset=utf-8', 'macos.sh': 'text/x-shellscript; charset=utf-8', 'windows.bat': 'text/plain; charset=utf-8' }
+export const installer = name => cachedFile(new URL(`../../install/${name}`, import.meta.url)) ?? cachedFile(new URL(`../install/${name}`, import.meta.url))
+export const hostScript = () => {
+  for (const f of HOST_SCRIPT) {
+    const c = cachedFile(f, body => ({ sha: createHash('sha256').update(body).digest('hex') }))
+    if (c) return c
+  }
+  return null
+}
+
+export const hostSignature = () => {
+  for (const f of HOST_SCRIPT) {
+    const c = cachedFile(new URL(`${f.href}.sig`))
+    if (c) return c
+  }
+  return null
+}
+
+// Enrollment attempts: 10 a minute per address (IPv6 per /64). There is no
+// overall cap on purpose: anyone could use it to block real enrollments, and
+// codes are 40 bits, single use and valid 15 minutes, so guessing one is out
+// of reach even from many addresses.
+export function checkEnrollRate(req) {
+  if (!allowServerWide('enroll', ipKey(clientIp(req)), 10)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+}
+
 export function createMachines(platform, { sessions, observation }) {
-  const { bus, db, broadcast, SERVER_KEY, joinToken, signAsServer } = platform
+  const { bus, db, broadcast, SERVER_KEY, joinToken, signAsServer, allow, takeChallenge, proofIsGood } = platform
   const {
-    NAME_RE, roleOf, checkApproval, isOnline, keyRefused, takeChallenge, proofIsGood, holdsName, leases,
-    linksOf, register, dropLease,
+    NAME_RE, roleOf, checkApproval, isOnline, keyRefused, holdsName, leases, linksOf, register, dropLease,
   } = sessions
   const { activityOf } = observation
 
@@ -75,28 +104,6 @@ export function createMachines(platform, { sessions, observation }) {
   const ENROLL_TTL_MS = 15 * 60 * 1000
   const HOST_REPLY_TIMEOUT_MS = 20_000
   const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O, 1/I
-  const HOST_SCRIPT = [new URL('../../host/squadra-host.mjs', import.meta.url), new URL('../squadra-host.mjs', import.meta.url)]
-
-  // The installers that prepare a machine and run squadra-host (install/ in
-  // the repository, or next to this file in the Docker image).
-  const INSTALLERS = { 'linux.sh': 'text/x-shellscript; charset=utf-8', 'macos.sh': 'text/x-shellscript; charset=utf-8', 'windows.bat': 'text/plain; charset=utf-8' }
-  const installer = name => cachedFile(new URL(`../../install/${name}`, import.meta.url)) ?? cachedFile(new URL(`../install/${name}`, import.meta.url))
-  const hostScript = () => {
-    for (const f of HOST_SCRIPT) {
-      const c = cachedFile(f, body => ({ sha: createHash('sha256').update(body).digest('hex') }))
-      if (c) return c
-    }
-    return null
-  }
-
-  const hostSignature = () => {
-    for (const f of HOST_SCRIPT) {
-      const c = cachedFile(new URL(`${f.href}.sig`))
-      if (c) return c
-    }
-    return null
-  }
-
   const hostLinks = new Map() // host id -> { ws, info, connectedAt, pending: Map(req -> {resolve, reject, timer}), viewers: Map(term -> Set(viewer)) }
   let hostReqSeq = 0
 
@@ -176,25 +183,6 @@ export function createMachines(platform, { sessions, observation }) {
       command: `cd "$(mktemp -d)" && curl -fsSLo squadra-host.mjs ${q(`${base}/host/squadra-host.mjs`)}${verify} && node squadra-host.mjs enroll ${q(base)} ${code} --server-key=${SERVER_KEY.hash}`,
     }
   }
-
-  // Enrollment attempts: 10 a minute per address (IPv6 per /64). There is no
-  // overall cap on purpose: anyone could use it to block real enrollments, and
-  // codes are 40 bits, single use and valid 15 minutes, so guessing one is out
-  // of reach even from many addresses.
-  const enrollAttempts = new Map() // ip -> timestamps
-  function checkEnrollRate(req) {
-    const ip = ipKey(clientIp(req))
-    const t = now()
-    const recent = (enrollAttempts.get(ip) ?? []).filter(x => t - x < 60_000)
-    if (recent.length >= 10) throw new ApiError(429, 'Too Many Requests: retry in a minute')
-    recent.push(t)
-    enrollAttempts.set(ip, recent)
-  }
-
-  setInterval(() => {
-    const t = now()
-    for (const [k, v] of enrollAttempts) if (!v.some(x => t - x < 60_000)) enrollAttempts.delete(k)
-  }, 60_000).unref()
 
   function enrollHost(p, req) {
     const ip = clientIp(req)
@@ -514,7 +502,7 @@ export function createMachines(platform, { sessions, observation }) {
       // told why, in the close reason it prints, and the log says so (once a
       // minute at most). The socket is closed at once.
       if (path === '/host/connect' && req.headers.upgrade?.toLowerCase() === 'websocket') {
-        if (allow('old-host-log', 'all', 1)) process.stderr.write(`squadra-server: a squadra-host older than 0.0.2 tried to connect from ${req.socket.remoteAddress}: update it (see the README)\n`)
+        if (allowServerWide('old-host-log', 'all', 1)) process.stderr.write(`squadra-server: a squadra-host older than 0.0.2 tried to connect from ${req.socket.remoteAddress}: update it (see the README)\n`)
         const old = acceptWebSocket(req, socket, head, { log: logError, maxMessage: 1024 })
         old?.close(4426, 'this squadra-host is older than the server (0.0.2): update it: add the machine again from the dashboard (+ Add machine)')
         return
@@ -778,7 +766,6 @@ export function createMachines(platform, { sessions, observation }) {
   return {
     machineMethods, onUpgrade, wsClients, sanitizeHostInfo, ownTerminals, PERSONA_ID_RE, listHosts,
     createEnrollment, renameHost, removeHost, changeHostFolders, hostPersonas, openTerminalOn,
-    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, hostScript, hostSignature, INSTALLERS,
-    installer, checkEnrollRate, enrollHost, hostTicketAnswer,
+    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer,
   }
 }

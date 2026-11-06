@@ -1,11 +1,10 @@
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
-import { DATA_DIR } from './config.js'
 import { now } from './basics.js'
 import { logError } from './http.js'
 
-export function openDatabase() {
-  const db = new DatabaseSync(join(DATA_DIR, 'squadra.db'))
+export function openDatabase(dir) {
+  const db = new DatabaseSync(join(dir, 'squadra.db'))
   db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;

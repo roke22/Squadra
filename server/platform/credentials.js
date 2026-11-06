@@ -2,19 +2,22 @@ import { mkdirSync, chmodSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   randomBytes, generateKeyPairSync, createPrivateKey, createPublicKey, createHash, sign as signBytes,
-  timingSafeEqual,
+  timingSafeEqual, verify as verifyBytes,
 } from 'node:crypto'
 import { DATA_DIR } from './config.js'
 import { sha256 } from './basics.js'
-import { ApiError } from './errors.js'
+import { ApiError, bad } from './errors.js'
 
-export function openCredentials() {
+const sameSecret = (token, secret) => typeof token === 'string' && token !== '' &&
+  timingSafeEqual(Buffer.from(sha256(token)), Buffer.from(sha256(secret)))
+
+// What is the server's, whichever company a request is for.
+export function openServerCredentials() {
   // Messages, attachments and observation are private: only this user can read
   // the data folder and what the server creates in it.
   process.umask(0o077)
-  mkdirSync(join(DATA_DIR, 'files'), { recursive: true, mode: 0o700 })
-  for (const p of [DATA_DIR, join(DATA_DIR, 'files')]) { try { chmodSync(p, 0o700) } catch {} }
-  for (const f of ['squadra.db', 'squadra.db-wal', 'squadra.db-shm']) { try { chmodSync(join(DATA_DIR, f), 0o600) } catch {} }
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
+  try { chmodSync(DATA_DIR, 0o700) } catch {}
 
   // Server token: SQUADRA_SERVER_TOKEN if set; otherwise the one saved in
   // DATA_DIR/server-token; otherwise a new one, generated and saved there so
@@ -36,29 +39,6 @@ export function openCredentials() {
     const generated = randomBytes(24).toString('hex')
     writeFileSync(TOKEN_FILE, generated + '\n', { mode: 0o600 })
     return { token: generated, source: `${TOKEN_FILE} (new)` }
-  })()
-
-  // Join token: lets a machine register NEW session names (POST /register
-  // without reset) and nothing else. It is what plugins and enrolled machines
-  // keep on disk; the server token above is the admin credential (dashboard,
-  // web terminals, /admin, rotating identities) and never leaves the browser.
-  const JOIN_TOKEN_FILE = join(DATA_DIR, 'join-token')
-  let { token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE } = (() => {
-    const fromEnv = process.env.SQUADRA_JOIN_TOKEN
-    if (fromEnv) {
-      if (fromEnv.length < 16 || fromEnv === SERVER_TOKEN) {
-        process.stderr.write('squadra-server: SQUADRA_JOIN_TOKEN must be at least 16 chars and differ from the server token\n')
-        process.exit(1)
-      }
-      return { token: fromEnv, source: 'env SQUADRA_JOIN_TOKEN' }
-    }
-    try {
-      const saved = readFileSync(JOIN_TOKEN_FILE, 'utf8').trim()
-      if (saved.length >= 16 && saved !== SERVER_TOKEN) return { token: saved, source: JOIN_TOKEN_FILE }
-    } catch {}
-    const generated = `sj_${randomBytes(24).toString('hex')}`
-    writeFileSync(JOIN_TOKEN_FILE, generated + '\n', { mode: 0o600 })
-    return { token: generated, source: `${JOIN_TOKEN_FILE} (new)` }
   })()
 
   // This server's own key: made the first time it starts, and kept. Machines and
@@ -87,9 +67,70 @@ export function openCredentials() {
   })()
   const signAsServer = fields => signBytes(null, Buffer.from(JSON.stringify(fields)), SERVER_KEY.privateKey).toString('base64url')
 
-  const sameSecret = (token, secret) => typeof token === 'string' && token !== '' &&
-    timingSafeEqual(Buffer.from(sha256(token)), Buffer.from(sha256(secret)))
   const isServerToken = token => sameSecret(token, SERVER_TOKEN)
+
+  // Anyone can ask this server to prove it holds its key, on a nonce of their own.
+  // The answer also brings a challenge of one use, for them to do the same.
+  const serverChallenges = new Map() // challenge -> expires (ms)
+  function serverIdentity(nonce) {
+    if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) throw bad('nonce must be 16 to 128 URL-safe characters')
+    for (const [c, exp] of serverChallenges) { if (exp >= Date.now() && serverChallenges.size < 5000) break; serverChallenges.delete(c) }
+    const challenge = randomBytes(24).toString('base64url')
+    serverChallenges.set(challenge, Date.now() + 60_000)
+    return { key: SERVER_KEY.public, challenge, sig: signAsServer(['squadra-server-identity-1', nonce, challenge]) }
+  }
+  function takeChallenge(challenge) {
+    const exp = serverChallenges.get(challenge)
+    serverChallenges.delete(challenge)
+    return exp !== undefined && exp >= Date.now()
+  }
+
+  // Signed for this server and this purpose only: useless anywhere else.
+  function proofIsGood(publicKey, purpose, subject, challenge, extra, proof) {
+    try {
+      const key = createPublicKey({ key: Buffer.from(String(publicKey), 'base64url'), format: 'der', type: 'spki' })
+      if (key.asymmetricKeyType !== 'ed25519') return false
+      return verifyBytes(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', SERVER_KEY.public, purpose, subject, String(challenge), String(extra)])), key, Buffer.from(String(proof), 'base64url'))
+    } catch {
+      return false
+    }
+  }
+
+  return {
+    SERVER_TOKEN, TOKEN_SOURCE, SERVER_KEY_FILE, SERVER_KEY, signAsServer, isServerToken, serverIdentity,
+    takeChallenge, proofIsGood,
+  }
+}
+
+// What is a company's: its folder, and the token its machines join with.
+export function openCompanyCredentials(dir, { SERVER_TOKEN }) {
+  mkdirSync(join(dir, 'files'), { recursive: true, mode: 0o700 })
+  for (const p of [dir, join(dir, 'files')]) { try { chmodSync(p, 0o700) } catch {} }
+  for (const f of ['squadra.db', 'squadra.db-wal', 'squadra.db-shm']) { try { chmodSync(join(dir, f), 0o600) } catch {} }
+
+  // Join token: lets a machine register NEW session names (POST /register
+  // without reset) and nothing else. It is what plugins and enrolled machines
+  // keep on disk; the server token above is the admin credential (dashboard,
+  // web terminals, /admin, rotating identities) and never leaves the browser.
+  const JOIN_TOKEN_FILE = join(dir, 'join-token')
+  let { token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE } = (() => {
+    const fromEnv = process.env.SQUADRA_JOIN_TOKEN
+    if (fromEnv) {
+      if (fromEnv.length < 16 || fromEnv === SERVER_TOKEN) {
+        process.stderr.write('squadra-server: SQUADRA_JOIN_TOKEN must be at least 16 chars and differ from the server token\n')
+        process.exit(1)
+      }
+      return { token: fromEnv, source: 'env SQUADRA_JOIN_TOKEN' }
+    }
+    try {
+      const saved = readFileSync(JOIN_TOKEN_FILE, 'utf8').trim()
+      if (saved.length >= 16 && saved !== SERVER_TOKEN) return { token: saved, source: JOIN_TOKEN_FILE }
+    } catch {}
+    const generated = `sj_${randomBytes(24).toString('hex')}`
+    writeFileSync(JOIN_TOKEN_FILE, generated + '\n', { mode: 0o600 })
+    return { token: generated, source: `${JOIN_TOKEN_FILE} (new)` }
+  })()
+
   const isJoinToken = token => sameSecret(token, JOIN_TOKEN)
   const joinToken = () => ({ token: JOIN_TOKEN, source: JOIN_TOKEN_SOURCE })
 
@@ -104,8 +145,5 @@ export function openCredentials() {
     return { join_token: JOIN_TOKEN }
   }
 
-  return {
-    SERVER_TOKEN, TOKEN_SOURCE, SERVER_KEY_FILE, SERVER_KEY, signAsServer, isServerToken, isJoinToken,
-    joinToken, rotateJoinToken,
-  }
+  return { isJoinToken, joinToken, rotateJoinToken }
 }

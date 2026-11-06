@@ -1,9 +1,9 @@
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { unix, now, guarded, bad, ApiError, VERSION, DATA_DIR } from '../platform/index.js'
+import { unix, now, guarded, bad, ApiError, VERSION } from '../platform/index.js'
 
 export function createDashboard(platform, { sessions, observation, machines, messaging, organization }) {
-  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog } = platform
+  const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir } = platform
   const {
     register, approveSession, presenceOf, personaView, identityCreatedAt, identityExists, isOnline, linksOf,
     forgetSession, leases, kickHolder, announceDown, dropLease,
@@ -219,12 +219,12 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     for (const id of sentToIt) {
       const f = fileRow(id)
       if (!f) continue
-      try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
+      try { rmSync(join(dataDir, f.path), { force: true }) } catch {}
       db.prepare('DELETE FROM files WHERE file_id = ?').run(id)
     }
     // Its attachments go too (they count against the server's total).
     for (const f of db.prepare('SELECT file_id, path FROM files WHERE owner = ?').all(name)) {
-      try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
+      try { rmSync(join(dataDir, f.path), { force: true }) } catch {}
       db.prepare('DELETE FROM files WHERE file_id = ?').run(f.file_id)
     }
     forgetSession(name)

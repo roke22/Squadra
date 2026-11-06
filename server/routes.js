@@ -2,19 +2,19 @@ import { join } from 'node:path'
 import { statSync, createReadStream } from 'node:fs'
 import {
   guardRequest, sendJson, clientIp, readParams, bearer, own, sendError, VERSION, UI_FILE, VENDOR_FILES,
-  MAX_JSON_BODY, DATA_DIR, cachedFile, pageHeaders, ApiError, allow, ipKey, readLimit, spendStorage, sha256,
+  MAX_JSON_BODY, cachedFile, pageHeaders, ApiError, allowServerWide, ipKey, sha256,
 } from './platform/index.js'
+import { INSTALLERS, installer, hostScript, hostSignature, checkEnrollRate } from './machines/index.js'
 
-export function createRoutes(platform, { observation, machines, organization, sessions, messaging, dashboard }) {
-  const { db, isServerToken, isJoinToken } = platform
+export function createRoutes(server, company) {
+  const { platform, observation, machines, organization, sessions, messaging, dashboard } = company
+  const { isServerToken, serverIdentity } = server
+  const { db, isJoinToken, dataDir, allow, readLimit, spendStorage } = platform
   const { observationMethods } = observation
-  const {
-    machineMethods, hostScript, hostSignature, INSTALLERS, installer, checkEnrollRate, enrollHost,
-    hostTicketAnswer,
-  } = machines
+  const { machineMethods, enrollHost, hostTicketAnswer } = machines
   const { organizationMethods } = organization
   const {
-    sessionMethods, serverIdentity, register, identityFromSecret, leases, notHolder, touch, readParamsAs,
+    sessionMethods, register, identityFromSecret, leases, notHolder, touch, readParamsAs,
     getUpdates,
   } = sessions
   const { messagingMethods, canSeeFile, upload } = messaging
@@ -82,7 +82,7 @@ export function createRoutes(platform, { observation, machines, organization, se
       }
       // Proof that this is the server they remember (public, like the two above).
       if (req.method === 'GET' && path === '/server-identity') {
-        if (!allow('server-identity', ipKey(clientIp(req)), 300)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
+        if (!allowServerWide('server-identity', ipKey(clientIp(req)), 300)) throw new ApiError(429, 'Too Many Requests: retry in a minute')
         return sendJson(res, 200, { ok: true, result: serverIdentity(url.searchParams.get('nonce')) })
       }
       if (path === '/host/enroll') {
@@ -126,7 +126,7 @@ export function createRoutes(platform, { observation, machines, organization, se
         if (!admin && !isJoinToken(token)) throw new ApiError(401, 'Unauthorized')
         // New names: 10 a minute per address and 60 overall, and a cap in all,
         // so per-session budgets can't be multiplied by registering more names.
-        if (!admin && (!allow('register-ip', ipKey(clientIp(req)), 10) || !allow('register', 'all', 60))) {
+        if (!admin && (!allowServerWide('register-ip', ipKey(clientIp(req)), 10) || !allow('register', 'all', 60))) {
           throw new ApiError(429, 'Too Many Requests: retry in a minute')
         }
         const roomForOne = () => {
@@ -180,7 +180,7 @@ export function createRoutes(platform, { observation, machines, organization, se
         const f = db.prepare('SELECT * FROM files WHERE path = ?').get(rel)
         if (!f || !canSeeFile(name, f.file_id)) throw new ApiError(404, 'Not Found')
         spendStorage('download', name, f.size, 2 * 1024 ** 3) // at most 2 GB of downloads an hour
-        const full = join(DATA_DIR, f.path)
+        const full = join(dataDir, f.path)
         const st = statSync(full)
         res.writeHead(200, {
           'Content-Type': f.mime ?? 'application/octet-stream',

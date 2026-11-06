@@ -1,11 +1,10 @@
-import { randomBytes, createPublicKey, verify as verifyBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import {
-  cleanText, cutText, bad, ApiError, guarded, sha256, now, unix, sendError, sendJson, bodiesInFlight, readParams,
-  readLimit, allow,
+  cleanText, cutText, bad, ApiError, guarded, sha256, now, unix, sendError, sendJson, readParams,
 } from '../platform/index.js'
 
 export function createSessions(platform) {
-  const { db, bus, SERVER_KEY, signAsServer } = platform
+  const { db, bus, readLimit, allow, takeChallenge, proofIsGood } = platform
 
   const MAX_UPDATES = Number(process.env.SQUADRA_MAX_UPDATES ?? 500_000)       // undelivered updates kept, in all
   const MAX_UPDATES_PER_SESSION = 10_000                                        // undelivered updates kept, per recipient
@@ -471,32 +470,6 @@ export function createSessions(platform) {
     db.prepare('DELETE FROM updates WHERE update_id <= (SELECT update_id FROM updates ORDER BY update_id DESC LIMIT 1 OFFSET ?)').run(MAX_UPDATES)
   }
 
-  // Anyone can ask this server to prove it holds its key, on a nonce of their own.
-  // The answer also brings a challenge of one use, for them to do the same.
-  const serverChallenges = new Map() // challenge -> expires (ms)
-  function serverIdentity(nonce) {
-    if (typeof nonce !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) throw bad('nonce must be 16 to 128 URL-safe characters')
-    for (const [c, exp] of serverChallenges) { if (exp >= Date.now() && serverChallenges.size < 5000) break; serverChallenges.delete(c) }
-    const challenge = randomBytes(24).toString('base64url')
-    serverChallenges.set(challenge, Date.now() + 60_000)
-    return { key: SERVER_KEY.public, challenge, sig: signAsServer(['squadra-server-identity-1', nonce, challenge]) }
-  }
-  function takeChallenge(challenge) {
-    const exp = serverChallenges.get(challenge)
-    serverChallenges.delete(challenge)
-    return exp !== undefined && exp >= Date.now()
-  }
-
-  // Signed for this server and this purpose only: useless anywhere else.
-  function proofIsGood(publicKey, purpose, subject, challenge, extra, proof) {
-    try {
-      const key = createPublicKey({ key: Buffer.from(String(publicKey), 'base64url'), format: 'der', type: 'spki' })
-      if (key.asymmetricKeyType !== 'ed25519') return false
-      return verifyBytes(null, Buffer.from(JSON.stringify(['squadra-client-proof-1', SERVER_KEY.public, purpose, subject, String(challenge), String(extra)])), key, Buffer.from(String(proof), 'base64url'))
-    } catch {
-      return false
-    }
-  }
   const keyRefused = text => new ApiError(403, `Forbidden: ${text}`, { parameters: { reason: 'key_refused' } })
 
   // A session's key, for a claim: remembered the first time, required after that.
@@ -519,6 +492,10 @@ export function createSessions(platform) {
   const notHolder = (name, inst) => inst
     ? new ApiError(409, `Conflict: "${name}" is connected from another session`, { parameters: { reason: 'name_in_use' } })
     : new ApiError(409, `Conflict: "${name}" is connected, and this request has no session id: update the Squadra plugin (0.0.2 or later) on that machine`, { parameters: { reason: 'plugin_outdated' } })
+  // A session's requests still sending their body: at most 8 at a time. While
+  // a session holds the name, requests without its session id (a copy of the
+  // secret) have their own 2, so they can never use up the holder's.
+  const bodiesInFlight = new Map()
   async function readParamsAs(name, req, url) {
     const lease = leases.get(name)
     const other = lease && String(req.headers['x-squadra-instance'] ?? '') !== lease.instance
@@ -536,7 +513,6 @@ export function createSessions(platform) {
     sessionMethods, cleanupUpdates, nowServing, waiters, finishPoll, userObj, identityCreatedAt, linked,
     NAME_RE, identityExists, roleOf, checkApproval, linkKey, isOnline, downIn, presence, pushUpdate,
     presenceOf, personaView, register, approveSession, linksOf, forgetSession, leases, kickHolder,
-    announceDown, dropLease, keyRefused, takeChallenge, proofIsGood, holdsName, serverIdentity,
-    identityFromSecret, notHolder, touch, readParamsAs, getUpdates,
+    announceDown, dropLease, keyRefused, holdsName, identityFromSecret, notHolder, touch, readParamsAs, getUpdates,
   }
 }

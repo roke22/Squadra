@@ -18,47 +18,18 @@
  * Only Node built-ins: node:http, node:sqlite (Node >= 22.13).
  */
 
-// This file only joins the parts. Each one gets what is below it, so what
-// depends on what can be read here (test/modules.test.mjs checks it stays so):
-//   platform       configuration, HTTP, database, keys, limits
-//   sessions       identities, their queues, who holds a name and who is online
-//   messaging      messages, groups, attachments
-//   observation    what each session is doing
-//   machines       squadra-host: joining, its link, terminals
-//   organization   squads, links between them, templates
-//   dashboard      what the dashboard reads and does
+// This file only starts what is the whole server's and the first company;
+// server/company.js joins the parts of a company.
 
-import { cleanupLimits, createPlatform, guarded, logError, startListening } from './platform/index.js'
-import { createSessions } from './sessions/index.js'
-import { createMessaging } from './messaging/index.js'
-import { createObservation } from './observation/index.js'
-import { createMachines } from './machines/index.js'
-import { createOrganization } from './organization/index.js'
-import { createDashboard } from './dashboard/index.js'
+import { DATA_DIR, cleanupServerLimits, guarded, logError, openServerCredentials, startListening } from './platform/index.js'
+import { createCompany } from './company.js'
 import { createRoutes } from './routes.js'
-import { upgradeStoredData } from './data-upgrade.js'
 
-const platform = createPlatform()
-const sessions = createSessions(platform)
-const messaging = createMessaging(platform, { sessions })
-const observation = createObservation(platform)
-const machines = createMachines(platform, { sessions, observation })
-const organization = createOrganization(platform, { sessions, messaging, observation, machines })
-const dashboard = createDashboard(platform, { sessions, messaging, observation, machines, organization })
-const { handle } = createRoutes(platform, { sessions, messaging, observation, machines, organization, dashboard })
+const credentials = openServerCredentials()
+const company = createCompany(credentials, { dir: DATA_DIR })
+const { handle } = createRoutes(credentials, company)
 
-function cleanup() {
-  messaging.cleanupMessages()
-  sessions.cleanupUpdates()
-  observation.cleanupEvents()
-  cleanupLimits()
-  platform.truncateLogHourly()
-}
-setInterval(guarded(cleanup), 60 * 1000).unref()
-cleanup()
-
-upgradeStoredData(platform, { messaging, observation, machines })
-observation.restoreActivity()
+setInterval(guarded(cleanupServerLimits), 60 * 1000).unref()
 
 // A bug reached by some request must not take the whole server down: logged.
 // (Rate limited like every error line: nothing a client causes fills the disk.
@@ -70,7 +41,7 @@ const failed = what => err => { logError(`${what}: ${err?.stack ?? err}`); if (!
 process.on('uncaughtException', failed('uncaught'))
 process.on('unhandledRejection', failed('unhandled rejection'))
 
-const { servers } = await startListening(platform, { handle, onUpgrade: machines.onUpgrade, nowServing: sessions.nowServing })
+const { servers } = await startListening(credentials, { handle, onUpgrade: company.machines.onUpgrade, nowServing: company.sessions.nowServing, joinToken: company.platform.joinToken })
 serving = true
 
 // Ctrl+C / SIGTERM: close right away. Dashboards keep a stream open (and
@@ -84,12 +55,8 @@ function shutdown(signal) {
   }
   stopping = true
   process.stderr.write(`\nsquadra-server: ${signal} received, shutting down…\n`)
-  for (const w of [...sessions.waiters.values()]) sessions.finishPoll(w, null, [])
-  for (const res of platform.sseClients) { try { res.end() } catch {} }
-  platform.sseClients.clear()
-  for (const ws of machines.wsClients) ws.close(1001, 'server shutting down')
+  company.close()
   for (const srv of servers) { srv.close(); srv.closeAllConnections?.() }
-  try { platform.db.close() } catch {}
   process.exit(0)
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'))

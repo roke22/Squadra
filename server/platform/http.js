@@ -1,6 +1,6 @@
 import { openSync, closeSync, rmSync, writeSync } from 'node:fs'
 import { PUBLIC_URL, TRUST_PROXY, TLS, PORT, MAX_JSON_BODY } from './config.js'
-import { allow } from './limits.js'
+import { allowServerWide } from './limits.js'
 import { ApiError, bad } from './errors.js'
 
 // The address hosts and plugins use: PUBLIC_URL, or what the browser used.
@@ -45,7 +45,7 @@ export function sendJson(res, status, body) {
 // causing them can't fill the disk), and how many were left out.
 let errorsDropped = 0
 export function logError(text) {
-  if (!allow('error-log', 'all', 60)) { errorsDropped++; return }
+  if (!allowServerWide('error-log', 'all', 60)) { errorsDropped++; return }
   if (errorsDropped) { process.stderr.write(`squadra-server: (${errorsDropped} more errors not logged)\n`); errorsDropped = 0 }
   process.stderr.write(`squadra-server: ${text}\n`)
 }
@@ -151,11 +151,6 @@ function readBody(req, max, { pool: poolName = 'main' } = {}) {
     req.on('close', () => { if (finish()) reject(new ApiError(400, 'Bad Request: connection closed')) })
   })
 }
-
-// A session's requests still sending their body: at most 8 at a time. While
-// a session holds the name, requests without its session id (a copy of the
-// secret) have their own 2, so they can never use up the holder's.
-export const bodiesInFlight = new Map()
 
 // Request parameters: query string plus a JSON object body. A plain object
 // with no prototype, and only the body's own keys: "__proto__" and friends

@@ -2,12 +2,11 @@ import { extname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import {
-  unix, now, cutText, cleanText, bad, ApiError, allow, rateLimit, spendStorage, readLimit, groupLimit,
-  readBodyToFile, DATA_DIR,
+  unix, now, cutText, cleanText, bad, ApiError, readBodyToFile,
 } from '../platform/index.js'
 
 export function createMessaging(platform, { sessions }) {
-  const { db, signAsServer, broadcast, inTx, bus } = platform
+  const { db, signAsServer, broadcast, inTx, bus, dataDir, allow, rateLimit, spendStorage, readLimit, groupLimit } = platform
   const {
     userObj, identityCreatedAt, linked, NAME_RE, identityExists, roleOf, checkApproval, linkKey, isOnline,
     downIn, presence, pushUpdate,
@@ -439,7 +438,7 @@ export function createMessaging(platform, { sessions }) {
     // anything below fails.
     let size
     try {
-      size = await readBodyToFile(req, Math.min(declared, MAX_FILE_BYTES), join(DATA_DIR, rel))
+      size = await readBodyToFile(req, Math.min(declared, MAX_FILE_BYTES), join(dataDir, rel))
     } finally {
       flight.n--; flight.bytes -= declared
       uploadBytesInFlight -= declared
@@ -450,7 +449,7 @@ export function createMessaging(platform, { sessions }) {
       stillValid()
       // (The recipient again too: it may have been deleted while the file arrived.)
       resolveTarget(query.get('chat_id'), name)
-    } catch (err) { rmSync(join(DATA_DIR, rel), { force: true }); throw err }
+    } catch (err) { rmSync(join(dataDir, rel), { force: true }); throw err }
     const realKind = kind === 'photo' && PHOTO_EXTS.has(ext) ? 'photo' : 'document'
     db.prepare('INSERT INTO files (file_id, file_unique_id, path, name, mime, size, owner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(fileId, uniqueId, rel, fileName, uploadMime(req.headers['content-type']), size, name, now())
@@ -465,7 +464,7 @@ export function createMessaging(platform, { sessions }) {
     } catch (err) {
       // (Not sent: the file goes too.)
       db.prepare('DELETE FROM files WHERE file_id = ?').run(fileId)
-      rmSync(join(DATA_DIR, rel), { force: true })
+      rmSync(join(dataDir, rel), { force: true })
       throw err
     }
   }
@@ -476,7 +475,7 @@ export function createMessaging(platform, { sessions }) {
     for (const g of db.prepare('SELECT id FROM groups WHERE NOT EXISTS (SELECT 1 FROM group_members WHERE group_id = groups.id)').all()) closeGroup(g.id)
     db.prepare('DELETE FROM group_invites WHERE created_at < ?').run(t - INVITE_TTL_MS)
     for (const f of db.prepare('SELECT file_id, path FROM files WHERE created_at < ?').all(t - FILE_TTL_MS)) {
-      try { rmSync(join(DATA_DIR, f.path), { force: true }) } catch {}
+      try { rmSync(join(dataDir, f.path), { force: true }) } catch {}
       db.prepare('DELETE FROM files WHERE file_id = ?').run(f.file_id)
     }
     db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE created_at < ?)').run(t - MESSAGE_TTL_MS)
