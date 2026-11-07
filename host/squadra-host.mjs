@@ -125,6 +125,16 @@ function withinById(path, dir) {
     if (dirname(x) === x) return false
   }
 }
+// Only by identity: for what is allowed, where a spelling that looks alike must
+// not count. A Mac's volume can tell case apart: Proj and PROJ, two folders.
+function insideByIdentity(path, dir) {
+  let root
+  try { root = statSync(dir) } catch { return false }
+  for (let x = path; ; x = dirname(x)) {
+    try { const st = statSync(x); if (st.dev === root.dev && st.ino === root.ino && st.ino !== 0) return true } catch {}
+    if (dirname(x) === x) return false
+  }
+}
 // The home folder itself (not a folder inside it).
 const isHome = real => [HOME, realOr(HOME)].some(h => withinById(real, h) && withinById(h, real))
 // allowHome: the home folder itself is fine (started with --allow-home);
@@ -623,7 +633,7 @@ function insideAllowed(real, folders) {
   for (const f of folders) {
     let root
     try { root = realpathSync.native(f) } catch { continue }
-    if (within(real, root)) return true
+    if (insideByIdentity(real, root)) return true
   }
   return false
 }

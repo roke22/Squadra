@@ -1546,36 +1546,35 @@ test('one machine, two companies, the same session name: two separate copies of 
   }
 })
 
-// For now it only says what it finds, in the log: see "MAC-CASE".
-test('a case-sensitive volume on a Mac: which folders count as allowed', { skip: process.platform !== 'darwin' }, t => {
-  const volume = `sqcase${process.pid}`
-  const image = join(work, `${volume}.dmg`)
-  const mount = `/Volumes/${volume}`
+test('on a Mac, what is allowed goes by which folder it is, not by how it is spelled', { skip: process.platform !== 'darwin' }, () => {
   const dir = join(work, 'mac-case-host')
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const script = `
-    import { validateSpec } from ${JSON.stringify(join(ROOT, 'host/squadra-host.mjs'))}
-    import { mkdirSync, realpathSync, statSync } from 'node:fs'
-    const mount = ${JSON.stringify(mount)}
-    for (const d of ['Proj', 'PROJ', 'Other']) mkdirSync(mount + '/' + d)
-    const settings = { folders: [mount + '/Proj'], coordinators: [], max_sessions: 5, allow_resume: false, allow_home: false }
-    const opens = d => { try { return 'accepted ' + validateSpec({ name: 'x', role: 'solo', folder: mount + '/' + d }, settings, []).folder } catch (err) { return 'refused' } }
-    process.stdout.write(JSON.stringify({
-      distinct: statSync(mount + '/Proj').ino !== statSync(mount + '/PROJ').ino,
-      realPROJ: realpathSync.native(mount + '/PROJ'),
-      Proj: opens('Proj'), PROJ: opens('PROJ'), Other: opens('Other'),
-    }))`
-  let attached = false
-  try {
-    execFileSync('hdiutil', ['create', '-size', '30m', '-fs', 'Case-sensitive APFS', '-volname', volume, image], { stdio: 'pipe' })
+  // Each kind of volume: what it says about the same three spellings.
+  const check = fs => {
+    const volume = `sqcase${process.pid}${fs.includes('sensitive') ? 's' : 'i'}`
+    const image = join(work, `${volume}.dmg`)
+    const mount = `/Volumes/${volume}`
+    const script = `
+      import { validateSpec } from ${JSON.stringify(join(ROOT, 'host/squadra-host.mjs'))}
+      import { mkdirSync } from 'node:fs'
+      const mount = ${JSON.stringify(mount)}
+      mkdirSync(mount + '/Proj/sub', { recursive: true })
+      mkdirSync(mount + '/Other')
+      try { mkdirSync(mount + '/PROJ/sub', { recursive: true }) } catch {}
+      const settings = { folders: [mount + '/Proj'], coordinators: [], max_sessions: 5, allow_resume: false, allow_home: false }
+      const opens = d => { try { return validateSpec({ name: 'x', role: 'solo', folder: mount + '/' + d }, settings, []).folder.slice(mount.length + 1) } catch { return null } }
+      process.stdout.write(JSON.stringify(['Proj', 'Proj/sub', 'PROJ', 'PROJ/sub', 'proj', 'Other'].map(opens)))`
+    execFileSync('hdiutil', ['create', '-size', '30m', '-fs', fs, '-volname', volume, image], { stdio: 'pipe' })
     execFileSync('hdiutil', ['attach', '-nobrowse', image], { stdio: 'pipe' })
-    attached = true
-    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-    t.diagnostic(`MAC-CASE ${out}`)
-  } catch (err) {
-    t.diagnostic(`MAC-CASE could not check: ${String(err.stderr ?? err.message).slice(0, 400)}`)
-  } finally {
-    if (attached) { try { execFileSync('hdiutil', ['detach', mount, '-force'], { stdio: 'pipe' }) } catch {} }
-    rmSync(image, { force: true })
+    try {
+      return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, SQUADRA_HOST_DIR: dir }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
+    } finally {
+      try { execFileSync('hdiutil', ['detach', mount, '-force'], { stdio: 'pipe' }) } catch {}
+      rmSync(image, { force: true })
+    }
   }
+  // Two folders: only the one allowed, and what is inside it.
+  assert.deepEqual(check('Case-sensitive APFS'), ['Proj', 'Proj/sub', null, null, null, null])
+  // One folder, however it is written, as ever on an ordinary volume.
+  assert.deepEqual(check('APFS'), ['Proj', 'Proj/sub', 'Proj', 'Proj/sub', 'Proj', null])
 })
