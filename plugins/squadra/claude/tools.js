@@ -76,7 +76,7 @@ export const TOOLS = [
         chat_id: { type: 'string', description: 'Session name (e.g. "coord", "worker1") or group id ("#backend").' },
         text: { type: 'string' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block.' },
-        report: { type: 'string', enum: REPORTS, description: 'Worker, to your coordinator: this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. With reply_to, it covers that message and the earlier ones, not later ones: to report on several at once, reply_to the latest. Not for progress: send that without report, or not at all.' },
+        report: { type: 'string', enum: REPORTS, description: 'Only a worker, to its coordinator (a coordinator never sets it: its messages to a worker are tasks): this is your FINAL report on its task(s): done, blocked, failed or question (in up to 3 lines: what you did or what stopped you, and the decisions that matter). Every task from your coordinator ends with one; you can\'t finish your turn without it. With reply_to, it covers that message and the earlier ones, not later ones: to report on several at once, reply_to the latest. Not for progress: send that without report, or not at all.' },
         fyi: { type: 'boolean', description: 'Coordinator, to a worker: true when the message only informs and needs no report back. Leave it out for anything it must do: every other message from you is a task it must report on when it ends.' },
         fresh: { type: 'boolean', description: 'Coordinator, to one of your workers: true clears the worker\'s context (/clear) before it gets this message, so a NEW task unrelated to what it did before starts light (cheaper turns, nothing stale). Leave it out for follow-ups, corrections or anything that builds on its last task. Only for workers opened from the dashboard and idle; the answer says whether it was cleared.' },
         files: {
@@ -268,6 +268,8 @@ export async function callTool(name, args) {
       const fyi = args.fyi === true
       if (report && fyi) throw new Error('a message is either a report or fyi, not both')
       if (report && !text) throw new Error('a report needs its text')
+      // A coordinator's message to its worker is a task, never a report.
+      if (report && (S.role !== 'worker' || chat_id !== S.coordinator)) throw new Error(`NOT SENT: report is only for a worker's final report to its coordinator. Send it again without report${S.role === 'coordinator' ? ': your messages to a worker are already tasks it must report on' : ''}.`)
       assertAllowedChat(chat_id)
       await assertPeerIsPinned(chat_id)
 

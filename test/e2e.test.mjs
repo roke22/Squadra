@@ -1697,6 +1697,7 @@ test('task reports: a worker can\'t end a task without its final report, and its
   assert.doesNotMatch(await wk.tool('reply', { chat_id: 'trc', text: 'Halfway there' }), /NOT taken/)
   await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'finished' }), /report must be one of: done, blocked, failed, question/)
   await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'done', fyi: true }), /either a report or fyi/)
+  await assert.rejects(coord.tool('reply', { chat_id: 'trw', text: 'Task: the footer', report: 'question' }), /NOT SENT: report is only for a worker's final report to its coordinator\. Send it again without report: your messages to a worker are already tasks/)
   await wk.tool('reply', { chat_id: 'trc', text: 'Invoices page done: src/invoices.js', report: 'done' })
   const done = await coord.waitChannel(p => p.content === 'Invoices page done: src/invoices.js', 'report')
   assert.equal(done.meta.report, 'done')
