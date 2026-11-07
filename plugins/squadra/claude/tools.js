@@ -91,7 +91,7 @@ export const TOOLS = [
   {
     name: 'ask_user',
     _meta: ALWAYS_LOAD,
-    description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. Once per decision, related ones together, with the choices and what you recommend. Then go on with whatever doesn\'t depend on it: they answer here, in this session, when they can.',
+    description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. Once per decision, related ones together, with the choices and what you recommend. Ask before handing that part to a worker, and until the answer nobody does it, not even left ready and unapplied (a migration that deletes data, a changed password). Go on with whatever doesn\'t depend on it: they answer here, in this session, when they can.',
     inputSchema: {
       type: 'object',
       properties: {
