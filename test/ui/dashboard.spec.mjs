@@ -207,7 +207,7 @@ test('the inbox: a question opened from the dashboard is answered there, and one
   const one = box.locator(`[data-inbox="${id}"]`)
   await one.locator('input[name=answer]').fill('cap it at 25 %')
   await one.locator('[data-option="0"]').click()
-  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id} ("Stack the discounts?"), the user answers: Stack. cap it at 25 %`)
+  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id} ("Stack the discounts?"), the user answers from their inbox: Stack. cap it at 25 %`)
   await expect(box.locator(`[data-inbox="${id}"]`)).toContainText('answered: Stack. cap it at 25 %')
   await expect(box.locator('.squad-row')).toContainText('1 open')
   // Changed by its coordinator while open here: refused once, and it says so.
@@ -223,7 +223,7 @@ test('the inbox: a question opened from the dashboard is answered there, and one
   expect(machine.answers.some(a => a.text.includes(`#${id2}`))).toBe(false)
   await expect(two.locator('input[name=answer]')).toHaveValue('Keep it')
   await two.locator('button.primary').click()
-  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id2} ("Drop the column? It holds data in all 1240 rows"), the user answers: Keep it`)
+  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id2} ("Drop the column? It holds data in all 1240 rows"), the user answers from their inbox: Keep it`)
 })
 
 test('disconnecting a machine: it offers to end the sessions opened there, ticked', async ({ page }) => {

@@ -805,7 +805,7 @@ test('an answer from the inbox is typed in its coordinator\'s terminal, as the u
   const id = await ask('Stack the discounts?')
   const r = await dash('inbox/answer', { id, version: 1, answer: 'Stack, with a 25 % cap\nand tell support' })
   assert.ok(r.ok, r.description)
-  await waitFor(() => screen('ia1').includes(`GOT:Inbox #${id} ("Stack the discounts?"), the user answers: Stack, with a 25 % cap and tell support`), { what: 'the answer typed, on one line' })
+  await waitFor(() => screen('ia1').includes(`GOT:Inbox #${id} ("Stack the discounts?"), the user answers from their inbox: Stack, with a 25 % cap and tell support`), { what: 'the answer typed, on one line' })
   const item = (await dash('inbox')).result.find(i => i.id === id)
   assert.deepEqual([!!item.resolved_at, item.answer, item.answered_by], [true, 'Stack, with a 25 % cap\nand tell support', 'server token'])
   // Answered already: not again.
