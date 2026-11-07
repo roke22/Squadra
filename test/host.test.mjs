@@ -787,6 +787,53 @@ test('fresh start: a coordinator has its idle worker\'s context cleared before a
   }
 })
 
+test('an answer from the inbox is typed in its coordinator\'s terminal, as the user would', { skip: !hasTmux && 'tmux not installed' }, async () => {
+  const api = async (method, params, auth, inst) => (await fetch(`${URL_}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth}`, ...(inst ? { 'X-Squadra-Instance': inst } : {}) },
+    body: JSON.stringify(params),
+  })).json()
+  const screen = name => execFileSync('tmux', ['-L', SOCKET, 'capture-pane', '-p', '-J', '-t', `=sq-${name}:`], { encoding: 'utf8' })
+  const secretOf = name => JSON.parse(readFileSync(join(claudeDir, 'channels', 'squadra', name, 'identity.json'), 'utf8')).secret
+  const opened = await dash('terminals/open', { host: hostId, spec: { name: 'ia1', role: 'coordinator', folder: allowed } })
+  assert.ok(opened.ok, opened.description)
+  await waitFor(() => screen('ia1').includes('TMUX='), { what: 'it started' })
+  const C = (m, p) => api(m, p, secretOf('ia1'), 'inst-ia1-000001')
+  await C('claimSession', { instance: 'inst-ia1-000001', role: 'coordinator' })
+  const ask = async text => (await C('askUser', { text, options: ['Stack', 'Biggest'] })).result.id
+
+  const id = await ask('Stack the discounts?')
+  const r = await dash('inbox/answer', { id, version: 1, answer: 'Stack, with a 25 % cap\nand tell support' })
+  assert.ok(r.ok, r.description)
+  await waitFor(() => screen('ia1').includes(`GOT:Inbox #${id} ("Stack the discounts?"), the user answers: Stack, with a 25 % cap and tell support`), { what: 'the answer typed, on one line' })
+  const item = (await dash('inbox')).result.find(i => i.id === id)
+  assert.deepEqual([!!item.resolved_at, item.answer, item.answered_by], [true, 'Stack, with a 25 % cap\nand tell support', 'server token'])
+  // Answered already: not again.
+  assert.equal((await dash('inbox/answer', { id, version: 1, answer: 'Biggest' })).parameters?.reason, 'closed')
+
+  // On a question on its screen, Enter would answer that: not typed, and the
+  // question stays open for the user.
+  execFileSync('tmux', ['-L', SOCKET, 'send-keys', '-t', '=sq-ia1:', '-l', 'DIALOG'])
+  execFileSync('tmux', ['-L', SOCKET, 'send-keys', '-t', '=sq-ia1:', 'Enter'])
+  await sleep(300)
+  const id2 = await ask('Drop the column?')
+  let refused = await dash('inbox/answer', { id: id2, version: 1, answer: 'Keep' })
+  assert.equal(refused.parameters?.reason, 'machine_refused', JSON.stringify(refused))
+  assert.match(refused.description, /waiting for an answer on its screen/)
+  assert.equal((await dash('inbox')).result.find(i => i.id === id2).resolved_at, null)
+  // Nor on a machine that doesn't let the dashboard type.
+  execFileSync('tmux', ['-L', SOCKET, 'send-keys', '-t', '=sq-ia1:', 'C-l'])
+  const settings = JSON.parse(readFileSync(join(hostDir, 'settings.json'), 'utf8'))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify({ ...settings, allow_input: false }))
+  // (The machine says so on its next report; until then, it refuses it itself.)
+  refused = await dash('inbox/answer', { id: id2, version: 1, answer: 'Keep' })
+  assert.ok(['typing_off', 'machine_refused'].includes(refused.parameters?.reason), JSON.stringify(refused))
+  assert.match(refused.description, /"allow_input": false|doesn't let the dashboard type/)
+  assert.ok(!screen('ia1').includes('GOT:Inbox #' + id2))
+  writeFileSync(join(hostDir, 'settings.json'), JSON.stringify(settings))
+  assert.ok((await dash('terminals/kill', { host: hostId, term: 'ia1' })).ok)
+})
+
 test('a copy of squadra-host keeps to its own sessions, and what is open stays out of the next server unless asked', { skip: !hasTmux && 'tmux not installed' }, () => {
   const script = join(ROOT, 'host/squadra-host.mjs')
   const dir = join(work, 'copy-a')

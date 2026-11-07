@@ -11,7 +11,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
   const { activityOf, eventView, activity } = observation
   const {
     PERSONA_ID_RE, listHosts, createEnrollment, renameHost, removeHost, changeHostFolders, hostPersonas,
-    openTerminalOn, killTerminalOn, newTerminalTicket,
+    openTerminalOn, killTerminalOn, newTerminalTicket, typeAnswer,
   } = machines
   const { messageView, closeGroup, handOverGroup, fileRow } = messaging
   const {
@@ -270,6 +270,20 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     return sessionView(name)
   }
 
+  // An answer from the inbox: closed as answered, then typed in the
+  // coordinator's terminal. If it can't be typed, it is open again.
+  async function answerFromInbox(p, actor) {
+    const taken = inbox.takeAnswer(p, actor?.email ?? 'server token')
+    const asked = taken.text.replace(/\s+/g, ' ')
+    try {
+      await typeAnswer(taken.session, `Inbox #${taken.id} ("${asked.length > 80 ? `${asked.slice(0, 80)}…` : asked}"), the user answers: ${taken.answer}`)
+    } catch (err) {
+      inbox.giveBack(taken.id)
+      throw err
+    }
+    return { id: taken.id, answered: true }
+  }
+
   const dashboardActions = {
     kick: p => kickSession(String(p.session ?? '')),
     approve: p => approveSession(String(p.session ?? '')),
@@ -300,6 +314,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     'terminals/kill': p => killTerminalOn(p),
     'terminal/ticket': (p, req) => newTerminalTicket(req.actor ?? null),
     'inbox/resolve': p => inbox.resolve(Number(p.id)),
+    'inbox/answer': (p, req) => answerFromInbox(p, req.actor),
   }
 
   // Who may do each thing, at least. Whatever isn't here nobody may do, and the
@@ -307,7 +322,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
   const dashboardRoles = {
     reads: { inbox: 'observer', timeline: 'observer', state: 'observer', events: 'observer', hosts: 'observer', messages: 'observer', stream: 'observer' },
     actions: {
-      'inbox/resolve': 'operator', kick: 'operator', clear: 'operator', archive: 'operator', unarchive: 'operator',
+      'inbox/resolve': 'operator', 'inbox/answer': 'operator', kick: 'operator', clear: 'operator', archive: 'operator', unarchive: 'operator',
       'terminals/open': 'operator', 'terminals/kill': 'operator', 'terminal/ticket': 'operator', 'hosts/personas': 'operator',
       approve: 'manager', delete: 'manager',
       'hosts/enroll': 'manager', 'hosts/rename': 'manager', 'hosts/remove': 'manager', 'hosts/folders': 'manager',

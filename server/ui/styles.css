@@ -239,6 +239,12 @@ code { font-family: var(--mono); font-size: .92em; background: var(--panel-2); p
 .arch .info .n { font-weight: 650; display: flex; gap: 8px; align-items: center; }
 .arch .info .m { color: var(--muted); font-size: 12.5px; }
 .arch .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+/* inbox: what coordinators left for the user, by coordinator */
+.inbox-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+.inbox-upd { color: var(--warn); font-weight: 600; font-size: 12px; }
+.inbox-opts { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 6px; }
+.people-form.inbox-answer { margin: 0; }
+.inbox-answer input { flex: 1 1 14em; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
 .nav-sep { border-top: 1px solid var(--line); margin: 10px 6px 4px; }
 
 /* section tabs (top bar) and the add-machine shortcut (sidebar) */

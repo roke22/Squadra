@@ -80,8 +80,8 @@ export async function startServer({ tokenApi = true } = {}) {
 }
 
 // A session as a plugin keeps it: logged in, long polling.
-export async function startSession(server, name, role, coordinator) {
-  const { secret } = await server.call('register', { name })
+export async function startSession(server, name, role, coordinator, secret) {
+  secret ??= (await server.call('register', { name })).secret
   const instance = `inst-${name}-0001`
   const opts = { auth: secret, instance }
   await server.call('claimSession', { instance, role, coordinator }, opts)
@@ -117,11 +117,13 @@ export async function startMachine(server, name, terminal) {
   const { code } = await server.call('api/hosts/enroll', { name })
   const { id, secret } = await server.call('host/enroll', { code, info: { hostname: name } })
   const typed = []
+  const answers = [] // what the inbox had it type, as { term, text }
+  const identities = new Map() // the sessions it opened -> their secret
   const ws = new WebSocket(`${server.url.replace('http', 'ws')}/host/connect`, ['squadra', `auth.${secret}`])
   const send = m => ws.send(JSON.stringify(m))
   const b64 = text => Buffer.from(text).toString('base64')
   const info = {
-    hostname: name, platform: 'linux', arch: 'x64', version: '0.0.7', folders: ['/srv/squad'], allow_input: true, max_sessions: 8,
+    hostname: name, platform: 'linux', arch: 'x64', version: '0.0.7', folders: ['/srv/squad'], allow_input: true, answers: true, max_sessions: 8,
     terminals: [{ id: terminal.id, role: terminal.role, coordinator: terminal.coordinator, folder: '/srv/squad', created_at: Date.now() }],
   }
   await new Promise((resolve, reject) => {
@@ -132,7 +134,9 @@ export async function startMachine(server, name, terminal) {
     ws.onmessage = e => {
       const m = JSON.parse(e.data)
       if (m.t === 'welcome') resolve()
+      if (m.t === 'answer') { answers.push({ term: m.term, text: m.text }); send({ t: 'reply', req: m.req, ok: true, result: { typed: true } }) }
       if (m.t === 'open') {
+        identities.set(m.spec.name, m.spec.identity)
         info.terminals.push({ id: m.spec.name, role: m.spec.role, coordinator: m.spec.coordinator, folder: '/srv/squad', created_at: Date.now() })
         send({ t: 'info', info })
         send({ t: 'reply', req: m.req, ok: true, result: { id: m.spec.name } })
@@ -142,5 +146,5 @@ export async function startMachine(server, name, terminal) {
     }
   })
   server.onClose(() => ws.close())
-  return { id, typed }
+  return { id, typed, answers, identities }
 }

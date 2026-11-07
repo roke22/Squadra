@@ -103,6 +103,24 @@ export function createMachines(platform, { sessions, observation }) {
     freshStart,
   }
 
+  // The user's answer to a question a coordinator left in their inbox, typed in
+  // that coordinator's terminal by its machine: it reaches it as the user's own
+  // words, not as a message from another session.
+  async function typeAnswer(coordinator, text) {
+    const row = db.prepare('SELECT host_id FROM identities WHERE name = ?').get(coordinator)
+    const link = row?.host_id ? hostLinks.get(row.host_id) : null
+    const conflict = (reason, text) => new ApiError(409, `Conflict: ${text}`, { parameters: { reason } })
+    if (!link) throw conflict('no_machine', `"${coordinator}" was not opened from the dashboard, or its machine is not connected: answer in its session`)
+    if (!link.info?.answers) throw conflict('old_machine', `the machine of "${coordinator}" is too old to type answers: update it, or answer in its session`)
+    if (!link.info.allow_input) throw conflict('typing_off', `the machine of "${coordinator}" doesn't let the dashboard type in its sessions: answer there`)
+    try {
+      await askHost(row.host_id, { t: 'answer', term: coordinator, text })
+    } catch (err) {
+      if (err instanceof ApiError && err.code !== 400) throw err
+      throw conflict('machine_refused', `its machine did not type it: ${err.message.replace(/^(Bad Request|Conflict): /, '')}`)
+    }
+  }
+
   // A host is squadra-host running on a machine. It joins with a one-time code
   // the dashboard generates (POST /host/enroll), gets its own secret, and keeps a
   // WebSocket open to /host/connect. Through it the server can only ask for a
@@ -277,6 +295,7 @@ export function createMachines(platform, { sessions, observation }) {
       max_sessions: Number.isInteger(info.max_sessions) ? info.max_sessions : null,
       allow_input: info.allow_input !== false,
       allow_resume: info.allow_resume === true, // (older machines don't say: taken as no)
+      answers: info.answers === true, // it types answers from the user's inbox (older machines can't)
       plugin: info.plugin && typeof info.plugin === 'object'
         ? { installed: info.plugin.installed === true, enabled: info.plugin.enabled === true, version: str(info.plugin.version, 40) }
         : null,
@@ -814,6 +833,6 @@ export function createMachines(platform, { sessions, observation }) {
   return {
     machineMethods, onUpgrade, wsClients, sanitizeHostInfo, ownTerminals, PERSONA_ID_RE, listHosts,
     createEnrollment, renameHost, removeHost, changeHostFolders, hostPersonas, openTerminalOn,
-    killTerminalOn, newTerminalTicket, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer, hasTicket, dropTickets, cancelEnrollments,
+    killTerminalOn, newTerminalTicket, typeAnswer, hostRow, hostLinks, askHost, enrollHost, hostTicketAnswer, hasTicket, dropTickets, cancelEnrollments,
   }
 }

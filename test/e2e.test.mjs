@@ -320,7 +320,7 @@ test('plugin: idle until login', async () => {
   assert.match(r.instructions, /ROLES\. Once logged in, the login tool's answer gives you the rules for your role/)
   assert.doesNotMatch(r.instructions, /COORDINATOR ROLE|WORKER ROLE/)
   const tools = (await p.request('tools/list', {})).result.tools.map(t => t.name).sort()
-  assert.deepEqual(tools, ['ask_user', 'download_attachment', 'edit_message', 'login', 'logout', 'ping', 'react', 'reply', 'status', 'tell_user'])
+  assert.deepEqual(tools, ['ask_user', 'download_attachment', 'edit_inbox', 'edit_message', 'login', 'logout', 'ping', 'react', 'reply', 'status', 'tell_user'])
   assert.match(await p.tool('status', {}), /not connected/)
   await assert.rejects(p.tool('reply', { chat_id: 'x', text: 'y' }), /\/squadra:login/)
   await sleep(300)
@@ -2760,5 +2760,34 @@ test('the inbox: a coordinator leaves a question or a result for the user, and n
   const w = new Plugin('inbw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'inb1', SQUADRA_ALLOW_FROM: 'inb1' })
   await w.init(); await w.waitConnected()
   await assert.rejects(w.tool('tell_user', { text: 'Me too' }), /only an approved coordinator/)
-  coord.close(); w.close()
+  await assert.rejects(w.tool('edit_inbox', { id: String(ask.id), close: 'mine now' }), /only an approved coordinator/)
+
+  // One decision per question: a numbered list without options is several.
+  await assert.rejects(coord.tool('ask_user', { text: 'Two things:\n1) Stack the discounts?\n2) Drop the old column?' }), /NOT SAVED: this reads like 2 decisions in one/)
+  assert.match(await coord.tool('ask_user', { text: 'Which discount rule?\n1) Stack them\n2) Keep the biggest', options: ['Stack', 'Biggest'] }), /#\d+/)
+
+  // Its coordinator changes it as it learns more: the user sees a new version,
+  // and an answer to the old one is refused.
+  const id = Number(/#(\d+)/.exec(await coord.tool('ask_user', { text: 'Drop legacy_discount?', options: ['Drop', 'Keep'], recommended: 'Drop' }))[1])
+  assert.match(await coord.tool('edit_inbox', { id: `#${id}`, text: 'Drop legacy_discount? It holds data in all 1240 rows', recommended: 'Back it up, then drop' }), /updated/)
+  let item = (await dash('/api/inbox')).result.find(i => i.id === id)
+  assert.deepEqual([item.version, item.text, item.options, item.recommended], [2, 'Drop legacy_discount? It holds data in all 1240 rows', ['Drop', 'Keep'], 'Back it up, then drop'])
+  assert.ok(item.updated_at)
+  let a = await dashPost('/api/inbox/answer', { id, version: 1, answer: 'Drop' })
+  assert.deepEqual([a.ok, a.parameters?.reason], [false, 'changed'])
+  // Not opened from the dashboard: nobody can type it in its terminal, and it stays open.
+  a = await dashPost('/api/inbox/answer', { id, version: 2, answer: 'Drop' })
+  assert.deepEqual([a.ok, a.parameters?.reason], [false, 'no_machine'])
+  item = (await dash('/api/inbox')).result.find(i => i.id === id)
+  assert.deepEqual([item.resolved_at, item.answer], [null, null])
+  // Only its own coordinator changes it, and closes it with why.
+  const other = new Plugin('inb2', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator' })
+  await other.init(); await other.waitConnected()
+  await assert.rejects(other.tool('edit_inbox', { id: String(id), close: 'not needed' }), /nothing of yours in the user's inbox/)
+  assert.match(await coord.tool('edit_inbox', { id: String(id), close: 'answered in the session' }), /closed/)
+  item = (await dash('/api/inbox')).result.find(i => i.id === id)
+  assert.ok(item.resolved_at)
+  assert.equal(item.closed_reason, 'answered in the session')
+  await assert.rejects(coord.tool('edit_inbox', { id: String(id), text: 'Again?' }), /no longer open \(it was closed\)/)
+  coord.close(); w.close(); other.close()
 })

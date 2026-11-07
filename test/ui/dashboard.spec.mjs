@@ -15,7 +15,8 @@ const test = base.extend({
     page.on('pageerror', err => errors.push(err.message))
     page.on('console', m => { if (m.type() === 'error' && !/status of 401/.test(m.text())) errors.push(m.text()) })
     await use(page)
-    expect(errors).toEqual([])
+    // (A test that causes one on purpose says which, in page.expectedErrors.)
+    expect(errors.filter(e => !(page.expectedErrors ?? []).some(re => re.test(e)))).toEqual([])
   },
 })
 
@@ -192,6 +193,37 @@ test('the inbox: what a coordinator left is there, with what it wrote kept as te
   await expect(page.locator('#nav [data-go="#/inbox"] .badge')).toHaveText('1')
   await box.locator('[data-resolve]').first().click()
   await expect(box).toContainText('Nothing is waiting for you')
+})
+
+test('the inbox: a question opened from the dashboard is answered there, and one changed meanwhile is read again first', async ({ page }) => {
+  await server.call('api/terminals/open', { host: machine.id, spec: { name: 'inboxm', role: 'coordinator' } })
+  const c = await startSession(server, 'inboxm', 'coordinator', undefined, machine.identities.get('inboxm'))
+  const { id } = await c.call('askUser', { text: 'Stack the discounts?', options: ['Stack', 'Biggest'], recommended: 'Stack, capped' })
+  const { id: id2 } = await c.call('askUser', { text: 'Drop the column?', options: ['Drop', 'Keep'] })
+  await signIn(page, '#/inbox')
+  const box = page.locator('#inbox')
+  await expect(box.locator('.squad-row')).toContainText('inboxm')
+  // An option, with the detail typed next to it.
+  const one = box.locator(`[data-inbox="${id}"]`)
+  await one.locator('input[name=answer]').fill('cap it at 25 %')
+  await one.locator('[data-option="0"]').click()
+  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id} ("Stack the discounts?"), the user answers: Stack. cap it at 25 %`)
+  await expect(box.locator(`[data-inbox="${id}"]`)).toContainText('answered: Stack. cap it at 25 %')
+  await expect(box.locator('.squad-row')).toContainText('1 open')
+  // Changed by its coordinator while open here: refused once, and it says so.
+  page.expectedErrors = [/status of 409/]
+  await c.call('editInbox', { id: String(id2), text: 'Drop the column? It holds data in all 1240 rows' })
+  const two = box.locator(`[data-inbox="${id2}"]`)
+  await expect(two).toContainText('1240 rows')
+  await expect(two.locator('[data-changed]')).toBeVisible()
+  await two.locator('input[name=answer]').fill('Keep it')
+  await two.locator('button.primary').click()
+  await expect(page.locator('.modal')).toContainText('read it again')
+  await page.locator('.modal .actions .btn').first().click()
+  expect(machine.answers.some(a => a.text.includes(`#${id2}`))).toBe(false)
+  await expect(two.locator('input[name=answer]')).toHaveValue('Keep it')
+  await two.locator('button.primary').click()
+  await expect.poll(() => machine.answers.map(a => a.text).join('\n')).toContain(`Inbox #${id2} ("Drop the column? It holds data in all 1240 rows"), the user answers: Keep it`)
 })
 
 test('disconnecting a machine: it offers to end the sessions opened there, ticked', async ({ page }) => {

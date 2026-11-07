@@ -91,7 +91,7 @@ export const TOOLS = [
   {
     name: 'ask_user',
     _meta: ALWAYS_LOAD,
-    description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. Once per decision, related ones together, with the choices and what you recommend. Ask before handing that part to a worker, and until the answer nobody does it, not even left ready and unapplied (a migration that deletes data, a changed password). Go on with whatever doesn\'t depend on it: they answer here, in this session, when they can.',
+    description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. ONE call per decision, with its choices in options and what you recommend, so they can answer each on its own; put two in one call only when the answer to one changes the other. Ask before handing that part to a worker, and until the answer nobody does it, not even left ready and unapplied (a migration that deletes data, a changed password). Go on with whatever doesn\'t depend on it. Their answer reaches this session as "Inbox #<id> (...), the user answers: ...", or they type it here. If what you learn later changes the question, or it no longer applies, use edit_inbox: they must never decide on what you no longer think.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -101,6 +101,23 @@ export const TOOLS = [
         ref: { type: 'string', description: 'Where it can be looked at, if anywhere: a link, a ticket, a path.' },
       },
       required: ['text'],
+    },
+  },
+  {
+    name: 'edit_inbox',
+    _meta: ALWAYS_LOAD,
+    description: 'Coordinator: change something you left in the user\'s inbox and that is still open, as soon as you learn something that changes it (a fact, the choices, what you recommend), so they never answer what you no longer think: they see it was updated. Or close it, with why, when it no longer applies or they already answered it in this session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Its id, from ask_user or tell_user ("#<id>").' },
+        text: { type: 'string', description: 'The new text, whole (not just what changed).' },
+        options: { type: 'array', items: { type: 'string' }, description: 'The new choices, all of them.' },
+        recommended: { type: 'string', description: 'What you recommend now.' },
+        ref: { type: 'string', description: 'Where it can be looked at.' },
+        close: { type: 'string', description: 'Instead of changing it: why it no longer applies (or "answered in the session").' },
+      },
+      required: ['id'],
     },
   },
   {
@@ -386,8 +403,21 @@ export async function callTool(name, args) {
         ...(name === 'ask_user' ? { recommended: clean(args.recommended), options: Array.isArray(args.options) ? args.options.map(clean) : undefined } : {}),
       })
       return name === 'ask_user'
-        ? `It is in the user's inbox (#${id}). They answer here when they can: go on with whatever doesn't depend on it.`
+        ? `It is in the user's inbox (#${id}). They answer when they can: go on with whatever doesn't depend on it. If you learn something that changes it, edit_inbox.`
         : `It is in the user's inbox (#${id}).`
+    }
+    case 'edit_inbox': {
+      const clean = v => (v == null ? undefined : maskOutgoing(String(v)).text)
+      const id = String(args.id ?? '').replace(/^#/, '')
+      const r = await call('editInbox', {
+        id,
+        text: clean(args.text),
+        options: Array.isArray(args.options) ? args.options.map(clean) : undefined,
+        recommended: clean(args.recommended),
+        ref: clean(args.ref),
+        close: clean(args.close),
+      })
+      return r?.closed ? `#${id} is closed.` : `#${id} is updated: the user sees it changed.`
     }
     case 'ping':
       return await ping(args.chat_id != null && args.chat_id !== '' ? String(args.chat_id) : null)

@@ -182,6 +182,11 @@ export function openDatabase(dir) {
     ['hosts', 'public_key', 'TEXT'],                     // the machine's key, from its first proof: its secret alone isn't enough after that
     ['identities', 'public_key', 'TEXT'],                // the same for a session
     ['identities', 'proven_instance', 'TEXT'],           // the session id that proved it holds that key
+    ['inbox', 'version', 'INTEGER NOT NULL DEFAULT 1'],  // goes up each time its coordinator changes it
+    ['inbox', 'updated_at', 'INTEGER'],                  // when it last did
+    ['inbox', 'answer', 'TEXT'],                         // what the user answered from the dashboard
+    ['inbox', 'answered_by', 'TEXT'],                    // and who
+    ['inbox', 'closed_reason', 'TEXT'],                  // why its coordinator closed it
   ]) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name)
     if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)

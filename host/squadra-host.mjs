@@ -1169,7 +1169,8 @@ function sessionCommand(s, claude, dir, env) {
   return argv
 }
 
-async function clearContext(target) {
+// One line typed in a session's input and sent, as the user would.
+async function typeLine(target, line, landed) {
   // What the server knows comes from hooks; the screen says what Enter would do.
   // On a question from Claude Code it would answer it: a permission prompt's
   // highlighted option is "Yes".
@@ -1177,11 +1178,22 @@ async function clearContext(target) {
   if (ASKING_ON_SCREEN.test(await screen())) throw new Error('it is waiting for an answer on its screen')
   // (Typed, then Enter a moment later: as one burst the menu of commands
   // could still be completing "/clear" when Enter arrives.)
-  await tmux(['send-keys', '-t', target, '-l', '/clear'])
+  await tmux(['send-keys', '-t', target, '-l', line])
   await new Promise(r => setTimeout(r, 300))
   // (Only if it landed where things are typed.)
-  if (!/(^|\s)\/clear\s*$/m.test(await screen())) throw new Error("what was typed didn't reach its input")
+  if (!landed.test(await screen())) throw new Error("what was typed didn't reach its input")
   await tmux(['send-keys', '-t', target, 'Enter'])
+}
+
+const clearContext = target => typeLine(target, '/clear', /(^|\s)\/clear\s*$/m)
+
+// The user's answer to a question its coordinator left in their inbox: one
+// line (Enter would send the rest as another message), checked by its end.
+async function typeAnswer(target, text) {
+  const line = String(text).replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!line || line.length > 2200) throw new Error('the answer must be one line of up to 2200 characters')
+  const end = line.split(' ').pop().slice(-20).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  await typeLine(target, line, new RegExp(`${end}\\s*│?\\s*$`, 'm'))
 }
 
 const ASKING_ON_SCREEN = /^\s*❯\s*\d+\.\s|Esc to cancel|Enter to confirm/m
@@ -1199,6 +1211,7 @@ const claudeCode = {
   sessionCommand,
   // Typed in a session's terminal, as the user would.
   clearContext,
+  typeAnswer,
   // The skills and agents a session opened in this folder could follow, as the dashboard sees them.
   personas: folder => listPersonas(folder).map(personaView),
   // The Squadra plugin in its config: installed, and how it is set up.
@@ -1350,6 +1363,20 @@ async function setLinks(name, coordinators) {
   writePrivate(claudeCode.plugin.stateDir(name), 'links.json', { name, coordinators: links })
   log(`links of "${plain(name)}": ${links.map(plain).join(', ') || '(none)'}`)
   return { name, links }
+}
+
+// The user answers from the dashboard a question its coordinator left in their
+// inbox: typed in that coordinator's terminal, as they would. It is typing from
+// the dashboard, so only if this machine allows that (allow_input).
+async function answerSession(id, text) {
+  if (!NAME_RE.test(String(id))) throw new Error('invalid session')
+  if (!loadSettings().allow_input) throw new Error('this machine does not let the dashboard type in its sessions ("allow_input": false in its settings.json)')
+  const t = (await listTerminals()).find(x => x.id === id)
+  if (!t) throw new Error('no such session on this machine')
+  if (t.role !== 'coordinator') throw new Error(`"${id}" is not a coordinator`)
+  await claudeCode.typeAnswer(`=${PREFIX}${id}:`, text)
+  log(`typed an answer from the user's inbox in "${plain(id)}"`)
+  return { typed: true }
 }
 
 // /clear typed in a worker's terminal, as the user would, when its
@@ -1597,6 +1624,8 @@ async function hostInfo() {
     allow_input: settings.allow_input,
     // (Whether a session may be opened again continuing its conversation.)
     allow_resume: settings.allow_resume,
+    // (It types answers from the user's inbox: older copies don't.)
+    answers: true,
     terminals: await listTerminals(),
   }
 }
@@ -1694,6 +1723,8 @@ async function connect(creds) {
     async links(m) { return setLinks(m.name, m.coordinators) },
     // A worker's coordinator wants it to start its next task from a clean context.
     async clear(m) { return clearSession(m.term, m.coordinator) },
+    // The user answered from their inbox a question this coordinator asked.
+    async answer(m) { return answerSession(m.term, m.text) },
     // The dashboard adds or removes an allowed folder: the same checks as
     // here, unless this machine keeps its folders to itself.
     async folders(m) {

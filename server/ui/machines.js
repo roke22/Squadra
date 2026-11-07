@@ -36,7 +36,9 @@ export async function postJson(path, body) {
     const why = j.description.replace(/^(Bad Request|Conflict|Forbidden): /, '')
     // (A machine's own words are said to be its own, never the dashboard's.)
     const r = j.parameters?.reason
-    throw new Error(r === 'name_in_use' ? T.nameTaken(body?.spec?.name ?? '') : r === 'open_on_host' ? T.openOnHost(body?.spec?.name ?? '') : r === 'machine_refused' ? `${T.machineSays}: «${why}»` : why)
+    const err = new Error(r === 'name_in_use' ? T.nameTaken(body?.spec?.name ?? '') : r === 'open_on_host' ? T.openOnHost(body?.spec?.name ?? '') : r === 'machine_refused' ? `${T.machineSays}: «${why}»` : why)
+    err.reason = r
+    throw err
   }
   return j.result
 }
