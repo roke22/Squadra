@@ -88,6 +88,9 @@ export function renderTop() {
     if (t && h?.online) acts.push(`<button class="btn danger" data-tact="kill">${T.closeSession}</button>`)
     acts.push(`<button class="btn" data-go="#/h/${encodeURIComponent(r.host)}">${T.back}</button>`)
     setHtml($('topRight'), acts.join(''))
+  } else if (r.view === 'inbox') {
+    setHtml($('topTitle'), T.inboxTitle)
+    $('topSub').textContent = T.inboxSub
   } else if (r.view === 'archived') {
     setHtml($('topTitle'), T.archivedTitle)
     $('topSub').textContent = T.archivedSub

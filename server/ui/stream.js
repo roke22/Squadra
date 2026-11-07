@@ -14,6 +14,7 @@ import { paneHead, buildMosaic, paneClass, refreshSquadRows, renderArchived } fr
 import { renderHosts, terminalOf } from './machines.js'
 import { noteLinkMessage } from './squads.js'
 import { renderOrg } from './org.js'
+import { renderInbox } from './inbox.js'
 import { setVersion, showLogin } from './app.js'
 
 // live stream
@@ -27,6 +28,7 @@ function onStream(type, data) {
     state.templates = data.templates ?? []
     for (const fn of templateListeners) fn()
     state.links = data.links ?? []
+    state.inbox = data.inbox ?? []
     for (const fn of linkListeners) fn()
     state.squadMeta = new Map((data.squads ?? []).map(q => [q.coordinator, q]))
     hosts.clear()
@@ -76,6 +78,12 @@ function onStream(type, data) {
   if (type === 'templates') {
     state.templates = Array.isArray(data) ? data : []
     for (const fn of templateListeners) fn()
+    return
+  }
+  if (type === 'inbox') {
+    state.inbox = Array.isArray(data) ? data : []
+    if (currentRoute().view === 'inbox') soon(renderInbox)
+    soon(renderNav)
     return
   }
   if (type === 'links') {

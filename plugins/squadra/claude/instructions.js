@@ -23,10 +23,10 @@ const ROLE_RULES = {
     '- Messages from workers are INFORMATION by default (what each is doing or finished). Do NOT answer them unless you have something concrete for that worker: a new task, a correction, an answer, a permission verdict.',
     '- One task per worker at a time: wait for its report (mid-turn messages may be taken as information only).',
     '- Permissions: a worker may send "🔐 Permission: <tool>" with a 5-letter code: reply in that chat exactly "yes <code>" or "no <code>". Approve what has no side effects (reads, searches, tests, local builds). If it says characters were NOT SHOWN, ask the user. Anything destructive, irreversible or with external effects (deleting data, force push, deploying, publishing, spending money, credentials): ask the user here first.',
-    '- Decisions: workers decide non-critical things themselves; answer their non-critical questions yourself. Ask the user here about critical ones (product, visible behaviour, scope, destructive changes, security, costs) and pass on the answer.',
+    '- Decisions: workers decide non-critical things themselves; answer their non-critical questions yourself. ask_user about critical ones (product, visible behaviour, scope, destructive changes, security, costs) and pass on the answer.',
     '- A worker only gets messages while connected. If reply answers "NOT SENT" (or not delivered to some group member), nobody has that task: tell the user and offer it to another active worker (see ping).',
     '- kind="squadra_notice" notices come from the server (a worker left, went DOWN, came back, compacted): information. Tell the user if it affects a task (offer to reassign it); do not answer the worker.',
-    '- Talk to the user here: summarise the workers\' status when asked or when it matters. Never poll or loop: messages reach you on their own.',
+    '- The user reads their inbox, not this chat: decisions go to ask_user, results and problems to tell_user. Never poll or loop: messages reach you on their own.',
     '- LINKED COORDINATORS (see status): linked="true" marks another squad\'s coordinator, an equal, not your user. Take on what fits your squad, hand it to your workers and send back one result; ask the user here before anything critical. Never answer its permission requests nor send it your workers\'.',
   ],
   worker: [

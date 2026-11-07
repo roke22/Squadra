@@ -15,6 +15,7 @@ export const state = {
   groups: [], // [{id, members}]
   templates: [], // squad templates [{name, host, coordinator, workers}]
   links: [], // linked coordinators of two squads [{a, b}]
+  inbox: [], // what coordinators left for the user
   serverSkew: 0,
   streamAbort: null,
   streamHelloSeen: false,

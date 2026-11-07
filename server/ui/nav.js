@@ -65,6 +65,8 @@ export function renderNav() {
   for (const s of list.filter(x => x.approval_pending)) {
     html += `<button class="nav-item" data-go="#/s/${encodeURIComponent(s.name)}" title="${esc(T.approveNote)}"><span>⚠️</span><span class="n">${esc(s.name)}</span><span></span><span class="s">${esc(T.approveNote)}</span></button>`
   }
+  const inboxN = state.inbox.filter(i => !i.resolved_at).length
+  html += `<button class="nav-item ${route.view === 'inbox' ? 'sel' : ''}" data-go="#/inbox"><span>📥</span><span class="n">${T.inbox}</span>${inboxN ? `<span class="badge">${inboxN}</span>` : '<span></span>'}</button>`
   const leadsN = list.filter(s => s.role === 'coordinator').length
   html += `<button class="nav-item ${route.view === 'leads' ? 'sel' : ''}" data-go="#/c"><span>🧭</span><span class="n">${T.leads}</span><span class="badge" hidden></span><span class="s">${T.leadsCount(leadsN)}</span></button>`
   html += `<button class="nav-item ${route.view === 'org' ? 'sel' : ''}" data-go="#/org"><span>🏢</span><span class="n">${T.org}</span><span class="badge" hidden></span><span class="s">${T.orgNavSub(orgSquads().squads.length, state.links.length)}</span></button>`

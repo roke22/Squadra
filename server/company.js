@@ -1,6 +1,6 @@
 import { createPlatform, guarded } from './platform/index.js'
 import { createSessions } from './sessions/index.js'
-import { createMessaging } from './messaging/index.js'
+import { createMessaging, createInbox } from './messaging/index.js'
 import { createObservation } from './observation/index.js'
 import { createMachines } from './machines/index.js'
 import { createOrganization } from './organization/index.js'
@@ -23,19 +23,21 @@ export function createCompany(server, options) {
   const platform = createPlatform(server, options)
   const sessions = createSessions(platform)
   const messaging = createMessaging(platform, { sessions })
+  const inbox = createInbox(platform, { sessions })
   const observation = createObservation(platform)
   const machines = createMachines(platform, { sessions, observation })
   const organization = createOrganization(platform, { sessions, messaging, observation, machines })
-  const dashboard = createDashboard(platform, { sessions, messaging, observation, machines, organization })
+  const dashboard = createDashboard(platform, { sessions, messaging, inbox, observation, machines, organization })
 
   // What a session can ask for, by its name in the request.
   const methods = {
     ...observation.observationMethods, ...machines.machineMethods, ...organization.organizationMethods,
-    ...sessions.sessionMethods, ...messaging.messagingMethods,
+    ...sessions.sessionMethods, ...messaging.messagingMethods, ...inbox.inboxMethods,
   }
 
   function cleanup() {
     messaging.cleanupMessages()
+    inbox.cleanupInbox()
     sessions.cleanupUpdates()
     observation.cleanupEvents()
     platform.cleanupLimits()

@@ -121,6 +121,17 @@ export function openDatabase(dir) {
   );
   CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
   -- Two coordinators (of two squads) that work with each other: a < b.
+  CREATE TABLE IF NOT EXISTS inbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    options TEXT,
+    recommended TEXT,
+    ref TEXT,
+    created_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
   CREATE TABLE IF NOT EXISTS squad_links (
     a TEXT NOT NULL,
     b TEXT NOT NULL,

@@ -320,7 +320,7 @@ test('plugin: idle until login', async () => {
   assert.match(r.instructions, /ROLES\. Once logged in, the login tool's answer gives you the rules for your role/)
   assert.doesNotMatch(r.instructions, /COORDINATOR ROLE|WORKER ROLE/)
   const tools = (await p.request('tools/list', {})).result.tools.map(t => t.name).sort()
-  assert.deepEqual(tools, ['download_attachment', 'edit_message', 'login', 'logout', 'ping', 'react', 'reply', 'status'])
+  assert.deepEqual(tools, ['ask_user', 'download_attachment', 'edit_message', 'login', 'logout', 'ping', 'react', 'reply', 'status', 'tell_user'])
   assert.match(await p.tool('status', {}), /not connected/)
   await assert.rejects(p.tool('reply', { chat_id: 'x', text: 'y' }), /\/squadra:login/)
   await sleep(300)
@@ -860,6 +860,7 @@ test('plugin: full coordinator/worker flow', async () => {
 // --- live observation -------------------------------------------------------------
 
 const dash = path => fetch(`${URL_}${path}`, { headers: { Authorization: `Bearer ${SERVER_TOKEN}` } }).then(r => r.json())
+const dashPost = (path, body) => fetch(`${URL_}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVER_TOKEN}` }, body: JSON.stringify(body) }).then(r => r.json())
 
 // Runs hook.js as Claude Code would: a child process with the hook JSON on stdin.
 // Its parent is this test process, which is also the plugin's parent, exactly
@@ -2726,4 +2727,31 @@ test('a name that moves to another company starts its list of who may write agai
   assert.ok(!existsSync(access) || !JSON.parse(readFileSync(access, 'utf8')).allowFrom.includes('reviewer'))
   assert.ok(readdirSync(stateDir).some(f => f.startsWith('access.json.other-')))
   moved.close()
+})
+
+test('the inbox: a coordinator leaves a question or a result for the user, and nobody else does', async () => {
+  const coord = new Plugin('inb1', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_ROLE: 'coordinator' })
+  const init = await coord.init()
+  assert.match(init.instructions, /ask_user/)
+  await coord.waitConnected()
+  const said = await coord.tool('ask_user', { text: 'Which way?', options: ['Migrate', 'Keep'], recommended: 'Migrate first', ref: 'https://example.com/issues/421' })
+  assert.match(said, /in the user's inbox \(#\d+\)/)
+  await coord.tool('tell_user', { text: 'The cart is done', ref: 'ACME-12' })
+  // Secrets are masked here too.
+  await coord.tool('tell_user', { text: 'Key AKIAABCDEFGHIJKLMNOP used' })
+  let list = (await dash('/api/inbox')).result
+  const ask = list.find(i => i.kind === 'ask')
+  assert.deepEqual([ask.session, ask.text, ask.options, ask.recommended, ask.ref, ask.resolved_at], ['inb1', 'Which way?', ['Migrate', 'Keep'], 'Migrate first', 'https://example.com/issues/421', null])
+  assert.equal(list.find(i => i.ref === 'ACME-12').kind, 'tell')
+  assert.ok(!JSON.stringify(list).includes('AKIAABCDEFGHIJKLMNOP'))
+  // Done: it stays, as done.
+  assert.ok((await dashPost('/api/inbox/resolve', { id: ask.id })).ok)
+  list = (await dash('/api/inbox')).result
+  assert.ok(list.find(i => i.id === ask.id).resolved_at)
+  assert.equal((await dashPost('/api/inbox/resolve', { id: ask.id })).ok, false)
+  // A worker, or a name nobody approved, doesn't write in it.
+  const w = new Plugin('inbw', { SQUADRA_ASSUME_CHANNEL: '1', SQUADRA_COORDINATOR: 'inb1', SQUADRA_ALLOW_FROM: 'inb1' })
+  await w.init(); await w.waitConnected()
+  await assert.rejects(w.tool('tell_user', { text: 'Me too' }), /only an approved coordinator/)
+  coord.close(); w.close()
 })

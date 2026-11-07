@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { unix, now, guarded, bad, ApiError, VERSION, ROLES } from '../platform/index.js'
 
-export function createDashboard(platform, { sessions, observation, machines, messaging, organization }) {
+export function createDashboard(platform, { sessions, observation, machines, messaging, inbox, organization }) {
   const { rotateJoinToken, db, bus, broadcast, sseClients, truncateLog, dataDir, log, every } = platform
   const {
     register, approveSession, presenceOf, personaView, identityCreatedAt, identityExists, isOnline, linksOf,
@@ -150,6 +150,7 @@ export function createDashboard(platform, { sessions, observation, machines, mes
         groups: allGroups(),
         templates: listTemplates(),
         links: listLinks(),
+        inbox: inbox.list(),
         squads: listSquads(),
       }
     },
@@ -164,6 +165,9 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     },
     hosts() {
       return listHosts()
+    },
+    inbox() {
+      return inbox.list()
     },
     messages(q) {
       const limit = Math.max(1, Math.min(Number(q.get('limit') ?? 200) || 200, 1000))
@@ -295,14 +299,15 @@ export function createDashboard(platform, { sessions, observation, machines, mes
     'terminals/open': p => openTerminalOn(p),
     'terminals/kill': p => killTerminalOn(p),
     'terminal/ticket': (p, req) => newTerminalTicket(req.actor ?? null),
+    'inbox/resolve': p => inbox.resolve(Number(p.id)),
   }
 
   // Who may do each thing, at least. Whatever isn't here nobody may do, and the
   // server refuses to start (see the end): every new action says who it is for.
   const dashboardRoles = {
-    reads: { timeline: 'observer', state: 'observer', events: 'observer', hosts: 'observer', messages: 'observer', stream: 'observer' },
+    reads: { inbox: 'observer', timeline: 'observer', state: 'observer', events: 'observer', hosts: 'observer', messages: 'observer', stream: 'observer' },
     actions: {
-      kick: 'operator', clear: 'operator', archive: 'operator', unarchive: 'operator',
+      'inbox/resolve': 'operator', kick: 'operator', clear: 'operator', archive: 'operator', unarchive: 'operator',
       'terminals/open': 'operator', 'terminals/kill': 'operator', 'terminal/ticket': 'operator', 'hosts/personas': 'operator',
       approve: 'manager', delete: 'manager',
       'hosts/enroll': 'manager', 'hosts/rename': 'manager', 'hosts/remove': 'manager', 'hosts/folders': 'manager',

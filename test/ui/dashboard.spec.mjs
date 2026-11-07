@@ -178,6 +178,22 @@ test('the machines: a connected one is listed with its terminal', async ({ page 
   await expect(hosts.locator('.term-row')).toContainText('worker1')
 })
 
+test('the inbox: what a coordinator left is there, with what it wrote kept as text, and it can be marked done', async ({ page }) => {
+  const c = await startSession(server, 'inboxc', 'coordinator')
+  await c.call('askUser', { text: 'Migrate the <b>column</b>?', options: ['Migrate', 'Keep'], recommended: 'Migrate first', ref: 'https://example.com/issues/421' })
+  await c.call('tellUser', { text: 'The cart is done', ref: 'javascript:alert(1)' })
+  await signIn(page, '#/inbox')
+  const box = page.locator('#inbox')
+  await expect(page.locator('#nav [data-go="#/inbox"] .badge')).toHaveText('2')
+  await expect(box).toContainText('Migrate the <b>column</b>?')
+  await expect(box.locator('a[href="https://example.com/issues/421"]')).toBeVisible()
+  await expect(box.locator('a[href^="javascript"]')).toHaveCount(0)
+  await box.locator('[data-resolve]').first().click()
+  await expect(page.locator('#nav [data-go="#/inbox"] .badge')).toHaveText('1')
+  await box.locator('[data-resolve]').first().click()
+  await expect(box).toContainText('Nothing is waiting for you')
+})
+
 test('disconnecting a machine: it offers to end the sessions opened there, ticked', async ({ page }) => {
   await signIn(page, '#/hosts')
   await page.locator('#hosts .host-head [data-hmenu]').first().click()

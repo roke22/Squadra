@@ -81,6 +81,32 @@ export const TOOLS = [
     },
   },
   {
+    name: 'ask_user',
+    description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. Once per decision, related ones together, with the choices and what you recommend. Then go on with whatever doesn\'t depend on it: they answer here, in this session, when they can.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The question, understandable without having read this conversation.' },
+        options: { type: 'array', items: { type: 'string' }, description: 'The concrete choices, if there are some (at most 6).' },
+        recommended: { type: 'string', description: 'What you would do, and in a few words why.' },
+        ref: { type: 'string', description: 'Where it can be looked at, if anywhere: a link, a ticket, a path.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'tell_user',
+    description: 'Coordinator: leave something in the user\'s inbox that they will want to know when they come back and that needs no answer: a piece of work finished, its outcome, or a problem they should see. Not routine progress: that stays in this conversation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What happened, understandable without having read this conversation.' },
+        ref: { type: 'string', description: 'Where it can be looked at, if anywhere: a link, a ticket, a path.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
     name: 'react',
     description: 'Add an emoji reaction to a message you received. Reactions never wake the other session.',
     inputSchema: {
@@ -334,6 +360,19 @@ export async function callTool(name, args) {
         reaction: [{ type: 'emoji', emoji: String(args.emoji) }],
       })
       return 'reacted'
+    }
+    case 'ask_user':
+    case 'tell_user': {
+      if (String(args.text ?? '').length > 1024 * 1024) throw new Error('that text is too long')
+      const clean = v => (v == null ? undefined : maskOutgoing(String(v)).text)
+      const { id } = await call(name === 'ask_user' ? 'askUser' : 'tellUser', {
+        text: clean(args.text),
+        ref: clean(args.ref),
+        ...(name === 'ask_user' ? { recommended: clean(args.recommended), options: Array.isArray(args.options) ? args.options.map(clean) : undefined } : {}),
+      })
+      return name === 'ask_user'
+        ? `It is in the user's inbox (#${id}). They answer here when they can: go on with whatever doesn't depend on it.`
+        : `It is in the user's inbox (#${id}).`
     }
     case 'ping':
       return await ping(args.chat_id != null && args.chat_id !== '' ? String(args.chat_id) : null)

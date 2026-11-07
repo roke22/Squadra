@@ -231,7 +231,7 @@ code { font-family: var(--mono); font-size: .92em; background: var(--panel-2); p
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* archived */
-#archived { flex: 1; overflow: auto; padding: 18px; }
+#archived, #inbox { flex: 1; overflow: auto; padding: 18px; }
 .arch-list { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
 .arch { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-left: 4px solid var(--idle); }
 .arch.coordinator { border-left-color: var(--coord); } .arch.worker { border-left-color: var(--worker); }
