@@ -1678,7 +1678,8 @@ test('task reports: a worker can\'t end a task without its final report, and its
   // Ending the turn without the report: Claude Code is told to send it first.
   const b = await stopHook()
   assert.equal(b.decision, 'block')
-  assert.match(b.reason, new RegExp(`your coordinator "trc" is waiting for your final report on its task #${t1}\\. Send it now with reply \\(chat_id "trc", report: done, blocked, failed or question\\)`))
+  assert.match(b.reason, new RegExp(`your coordinator "trc" is waiting for your final report on its task #${t1}\\. Send it now with ONE reply to chat_id "trc" whose report argument is set to "done", "blocked", "failed" or "question"`))
+  assert.match(b.reason, /writing "done" in the text doesn't count/)
   assert.match(b.reason, /nobody can waive it, not even your coordinator/)
   // Ending it again without one: the turn ends, and the coordinator is told.
   assert.equal(await stopHook(true), null)
@@ -1689,6 +1690,11 @@ test('task reports: a worker can\'t end a task without its final report, and its
   // With the report: nothing is asked, and the coordinator sees it is the final one.
   const t2 = idOf(await coord.tool('reply', { chat_id: 'trw', text: 'Task: the invoices page' }))
   await wk.waitChannel(p => p.content === 'Task: the invoices page', 'task 2')
+  await runHookOut(wk, { hook_event_name: 'UserPromptSubmit', prompt: `<channel source="squadra" chat_id="trc" message_id="${t2}" user="trc">Task: the invoices page</channel>`, session_id: 's', cwd: '/x' })
+  // "done" written in the text, without the argument: sent, but it says it is not the report.
+  const inText = await wk.tool('reply', { chat_id: 'trc', text: '✅ Report: done. Invoices page in src/invoices.js' })
+  assert.match(inText, /NOT taken as your final report: the report argument was not set\. If this was it, send it once more with report: "done"\./)
+  assert.doesNotMatch(await wk.tool('reply', { chat_id: 'trc', text: 'Halfway there' }), /NOT taken/)
   await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'finished' }), /report must be one of: done, blocked, failed, question/)
   await assert.rejects(wk.tool('reply', { chat_id: 'trc', text: 'x', report: 'done', fyi: true }), /either a report or fyi/)
   await wk.tool('reply', { chat_id: 'trc', text: 'Invoices page done: src/invoices.js', report: 'done' })

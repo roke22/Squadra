@@ -7,7 +7,7 @@ import {
   loadAccess, linkedCoordinators, assertAllowedChat, assertPeerIsPinned, call, ApiError, uploadFile,
   downloadFile,
 } from '../core/index.js'
-import { closeTasks } from './tasks.js'
+import { closeTasks, pendingTasks } from './tasks.js'
 import { login, logout, status } from './login.js'
 
 // Long replies are split, preferring paragraph boundaries when chunkMode is 'newline'.
@@ -33,6 +33,13 @@ function chunk(text, limit, mode) {
   if (rest) out.push(rest)
   return out
 }
+
+// Claude Code hides MCP tools behind its tool search until the model looks for
+// them, and a smaller model may never look: these are always in its prompt.
+const ALWAYS_LOAD = { 'anthropic/alwaysLoad': true }
+
+// A text that opens like a report ("done: …", "✅ report: blocked …").
+const REPORT_IN_TEXT_RE = new RegExp(`^[^\\p{L}]*(?:report\\W*)?(${REPORTS.join('|')})\\b`, 'iu')
 
 export const TOOLS = [
   {
@@ -61,6 +68,7 @@ export const TOOLS = [
   },
   {
     name: 'reply',
+    _meta: ALWAYS_LOAD,
     description: 'Send a message to another Squadra session (or a #group). Pass chat_id from the inbound message, or the session name to start a conversation with an allowlisted session. Optionally pass reply_to (message_id) for threading, and files (absolute paths) to attach images or documents.',
     inputSchema: {
       type: 'object',
@@ -82,6 +90,7 @@ export const TOOLS = [
   },
   {
     name: 'ask_user',
+    _meta: ALWAYS_LOAD,
     description: 'Coordinator: the user is usually away and doesn\'t follow this conversation: they read their inbox. Use this for a decision that is theirs to take (product, visible behaviour, scope, destructive changes, security, cost) or a block only they can lift (an access, a credential). When unsure whether it is theirs, ask. Once per decision, related ones together, with the choices and what you recommend. Then go on with whatever doesn\'t depend on it: they answer here, in this session, when they can.',
     inputSchema: {
       type: 'object',
@@ -96,6 +105,7 @@ export const TOOLS = [
   },
   {
     name: 'tell_user',
+    _meta: ALWAYS_LOAD,
     description: 'Coordinator: leave something in the user\'s inbox that they will want to know when they come back and that needs no answer: a piece of work finished, its outcome, or a problem they should see. Not routine progress: that stays in this conversation.',
     inputSchema: {
       type: 'object',
@@ -331,6 +341,9 @@ export async function callTool(name, args) {
         S.observer?.sync()
         const open = closeTasks(S, reply_to)
         if (open.length) stillOpen = `\nStill open: your coordinator's task ${open.map(i => `#${i}`).join(', ')}, after the message this report answers. Send a final report on it too, with reply_to "${open[open.length - 1]}": say if you already covered it here, or that you left it undone and why.`
+      } else if (!report && !fyi && S.role === 'worker' && chat_id === S.coordinator && pendingTasks(S).length && REPORT_IN_TEXT_RE.test(text)) {
+        // Models write "done: …" in the text and leave the argument out.
+        stillOpen = `\nNOT taken as your final report: the report argument was not set. If this was it, send it once more with report: "${REPORT_IN_TEXT_RE.exec(text)[1].toLowerCase()}".`
       }
       const result = (sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`) +
         (masked ? ` (${masked} secret${masked > 1 ? 's' : ''} masked as [REDACTED])` : '') + stillOpen

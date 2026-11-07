@@ -73,7 +73,7 @@ export async function stopCheck(s, { background = false } = {}) {
   const list = ids.map(i => `#${i}`).join(', ')
   if (!s.stopAsked) {
     s.stopAsked = true
-    return `[Squadra] Before you finish: your coordinator "${s.coordinator}" is waiting for your final report on its task ${list}. Send it now with reply (chat_id "${s.coordinator}", report: done, blocked, failed or question): what you did or what stopped you, and only the decisions that matter, in up to 3 lines. It is required: nobody can waive it, not even your coordinator.`
+    return `[Squadra] Before you finish: your coordinator "${s.coordinator}" is waiting for your final report on its task ${list}. Send it now with ONE reply to chat_id "${s.coordinator}" whose report argument is set to "done", "blocked", "failed" or "question" (that argument is what makes it a report: writing "done" in the text doesn't count), and in its text what you did or what stopped you, and only the decisions that matter, in up to 3 lines. It is required: nobody can waive it, not even your coordinator.`
   }
   // Asked once already: the turn ends, and the coordinator is told.
   for (const id of ids) s.tasks.delete(id)
